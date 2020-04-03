@@ -1,0 +1,450 @@
+@Degrade注解中的动态代理，并没有使用Spring的AOP，而是自己实现了BeanPostProcessor和BeanFactoryPostProcesser接口，另外也实现了PriorityOrdered接口。
+AbstractAutoProxyCreator
+BeanFactory
+BeanFactoryAware
+FactoryBean
+ConfigurableBeanFactory
+ConfigurableListableBeanFactory
+SmartInstantiationAwareBeanPostProcessor
+目前使用k8s版本：Kubernetes v1.12.6-aliyun.1
+目前使用docker版本:Docker version 18.09.2
+
+Kubernetes(K8s) is an open-source system for automating deployment, scaling, and management of containerized applications.
+
+三种限流算法的优缺点：
+计数器算法：实现简单；会有突刺现象
+漏桶算法：消除了突刺现象；无法应对短时间的突发流量。
+令牌桶算法：能够在限制调用的平均速率的同时还允许一定程度的突发调用。
+单机限流/集群限流
+
+GC的一次坑: 现象real > usr + sys，GC完成后需要写GC日志，GC日志比较多，导致需要大量磁盘IO，导致应用无法及时响应请求，系统反应缓慢。
+JVM的堆使用分代的原因：
+1. 更好的解决内存碎片;每次对象移动只是堆的一部分，更快移动完毕。
+2. 弱分代假说-weak generational hypothesis:大部分对象都在年轻的时候死亡，这个假说在不同类型的编译语言中得到了证实。可以利用这个特性，尽量提高回收效益，同时减少回收时的时间开销。对于一些长期活跃的对象，甚至大对象来说，尽量减少被复制移动的次数，其实就是避免每次垃圾回收都进行复制。
+3. 方便对不同代的不同特征，使用不同的算法。
+
+大对象直接在Old区分配，这样可以有效的防止在YGC的时候进行移动。
+如果一个对象经历了多次YGC后(默认15次，这个值是动态变化的)，会进入老年代。
+
+YGC耗时和Eden空间的大小不是正比关系，原因：YGC有下列三个因素：
+1. 找出所有存活对象，从GC Roots开始，遍历对象，找出所有可达的对象，打上标记。正常情况下，GC Roots包括：类的静态引用，业务线程栈中的引用类型变量(包含参数),部分老年代的对象(持有新生代的对象)；这是标记过程的耗时。
+2. 存活对象被标记出来后，将其从Eden区复制到To区(包括From区的对象)，这个过程和存活对象的数量有关系；这是复制过程的耗时。
+3. 如果开启了GC日志-XX:+PrintGCDetails，那么在YGC过程中，还会记录数据到日志，这也是YGC的耗时。
+已经废弃的方法: Thread.stop, Thread.suspend, Thread.resume
+调用当前线程的interrupt()，并不是中断线程，而是设置一个标识，通知该线程可以被中断了，到底是继续执行还是中断返回，由线程本身决定。具体来说，当对一个线程调用了interrupt()之后，如果该线程处于被阻塞状态(比如执行了wait,sleep,join等方法)，那么会立即退出阻塞状态，并抛出一个InterruptedException异常，在代码中catch这个异常进行后续处理。如果线程一直处于运行状态，那么只会把该线程的中断标识设置为true，仅此而已。
+
+如何实现线程的超时中断？
+方法1: 利用(直接Callable或者ThreadPoolExecutor或者Executors提供的线程池)Future的get(long timeout, TimeUnit unit);
+方法2: 利用ScheduledThreadPoolExecutor提供的定时任务，在到达超时后，如果还没执行完毕，则调用interrput()。如果执行完毕，则取消ScheduledThreadPoolExecutor里的任务。
+方法3:利用DelayQueue，执行时将实现Runnable和Delayed接口的类作为DelayQueue的泛型类，到指定时间后，判断Thread.isAlive(),如果true，调用interrupt()。
+
+Object.clone()的实现原理：
+函数原型：protected native Object clone() throws CloneNotSupportedException;代码在C++里
+根据对象或者数据的大小，从堆中开辟一块同等大小的内存，然后把原始对象的数据都复制到新的内存地址，对于基本类型，把原始值copy过来，但是对于内部对象，其保存的是和原来一样的地址，最终两者还是指向同一个对象。是一种浅拷贝。
+
+经过JMH性能测试可知，Calendar(非线程安全)在高并发下性能远远比不上DateTime(joda线程安全)。对代码和安全性要求高的可以放弃使用Calendar和SimpleDateFormat(底层实现是Calendar)，转而使用joda-time。
+jdk8中的java.time包中的时间日期API是线程安全并且类是不可变的。性能是joda-time的一半
+
+Gaea:小米开源的基于mysql协议的数据库中间件。
+
+在ConcurrentHashMap(jdk8)中，内部使用一个volatile的数组table保存数据，每次在获取元素时，采用Unsafe类的getObjectVolatile方法，在设置元素时，采用Unsafe类的compareAndSwapObject方法，而不是直接通过下标去操作。原因如下：
+因为Java数组在元素层面的元数据设计上的缺失，无法表达元素final,volatile等语义，所以开了后门，使用getObjectVolatile用来弥补无法表达元素是volatile的坑，@Stable用来弥补final的坑，数组元素就和没有标volatile的成员字段一样，无法保证线程之间的可见性。
+
+当一个变量定义为volatile之后，将具备两个特性:
+1. 保证此变量对所有线程的可见性，当一个线程修改了这个变量的值，volatile保证新值立即同步到主内存，以及每次使用前立即从主内存刷新。
+2. 禁止指令重排优化(有序性),volatile修饰的变量，赋值后多执行了一个"load add1 $0x0,(%esp)"操作，这个操作相当于内存屏障(指令重排时不能把后面的指令重排到内存屏障之前的位置)，只有一个CPU访问内存时，并不需要内存屏障。
+volatile性能：volatile的读性能消耗与普通变量几乎相同，但是写操作稍慢，因为它需要在本地代码中插入许多内存屏障指令来保证处理器不发生乱序执行。
+
+当线程启动的时候，会分配一块内存当作该线程的栈，每个栈由一系列的栈帧组成。每个栈帧对应一个方法，当线程执行方法时，就是栈帧出栈入栈的过程。每个栈帧包含三部分数据：本地变量(参数+方法内的变量)，操作数栈和其他数据。
+
+内存屏障：1:CPU的数据可见性;2:禁止指令重排序。
+重排序的发生地方：编译器，运行时，JIT。
+
+在Java内存模型中，描述了在多线程代码中，哪些行为是正确的，合法的，以及多线程之间如何进行通信，代码中变量的读写行为如何反应到内存，CPU缓存的底层细节。
+在Java中包含的几个关键字:volatile,final和synchronized，帮助程序员把代码中的并发需求描述给编译器。Java内存模型中定义了它们的行为，确保正确同步的代码在所有的处理器架构上都能正确执行。
+
+对于两个线程来说，在相同的monitor对象上同步是很重要的，以便正确的设置happens-before关系。
+
+final: 如果一个类包含final字段，且在构造函数中初始化，那么正确的构造一个对象后，final字段被设置后对于其他线程是可见的。这里所说的正确构造对象，意思是在对象的构造过程中，不允许该对象进行引用，不然的话，可能存在其他线程在对象还没构造完成时，就对该对象进行访问，造成脏读。
+
+-XX:+UnlockDiagnosticVMOptions
+-XX:ParGCCardsPerStrideChunk=4096
+
+public clsss SoftReference<T> extends Reference<T> {
+	//Timestamp clock, updated by the garbage collector
+	static private long clock;
+	//Timestamp updated by each invocation of the get method. The VM may use this field 
+	//when selecting soft reference to be cleared, but it is not required to do so.
+	private long timestamp;
+	
+	public SoftReference(T referent) {
+		super(referent);
+		this.timestamp = clock;
+	}
+	public SoftReference(T referent, ReferenceQueue<? super T> q) {
+		super(referent, q);
+		this.timestamp = clock;
+	}
+	
+	public T get() {
+		T o = super.get();
+		if (o != null && this.timestamp != clock) {
+			this.timestamp = clock;
+		}
+		return o;
+	}
+}
+
+SoftReference什么时候被回收：All soft reference to softly-reachable objects are guaranteed to hava been cleared before the VM throws an OutOfMemoryError.
+
+当一个对象，和GC Root没有强引用关系时，可能会被回收(因为可能还有其他引用)，如果没有任何引用关系，GC之后，该对象就被回收了。
+
+在JDK的WeakHashMap中，很好的应用了弱引用，其中Entry继承了WeakReference，如果一个Entry对象，一旦没有指向key的强引用，WeakHashMap在GC后会自动删除相关的Entry。
+
+虚引用(PhantomReference)的使用场景很窄，在JDK中，目前只有在申请堆外内存时用到，申请堆外内存时，在JVM堆中会创建一个对应的Cleaner对象，这个Cleaner类继承了PhantomReference，当DirectByteBuffer对象被回收时，可以执行对应的Cleaner对象的clean方法，做一些后续工作，这里是释放之前申请的堆外内存。
+
+Reference中有一个重要的线程 Reference Handler，运行优先级极高，启动之后负责轮询pending变量是否有数据，如果pending被JVM设置了一个值，就把它拿出来放到queue中，这里有个例外，就是之前说的堆外内存申请时的Cleaner对象，只会执行它的clean方法，并不会放到queue中。
+当Reference对象被放进queue之后，就可以使用一个线程，依次拿出来进行处理。
+
+public PhantomReference<T> extends Reference<T> {
+	public T get() {
+		return null;
+	}
+	public PhantomReference(T referent, ReferenceQueue<? super T> q) {
+		super(referent, q);
+	}
+}
+
+ThreadLocal中的ThreadLocalMap中的Entry定义如下：
+static class Entry extends WeakReference<ThreadLocal<?>> {
+	Object value;
+	Entry(ThreadLocal<?> k, Object v) {
+		super(k);
+		value = v;
+	}
+}
+当使用ThreadLocal保存一个value时，会在ThreadLocalMap中的数组插入一个Entry对象，按常规来说key-value应该以强引用保存在Entry对象中，但在ThreadLocalMap的实现中，key被保存在了WeakReference中。这就导致了一个问题，ThreadLocal在没有外部强引用时，发生GC时会被回收，如果创建ThreadLocal的线程一直持续运行，那么这个Entry对象中的value就有可能一直得不到回收，发生内存泄露。
+
+REST原则：
+1. 网络上的所有事物都被抽象为资源;
+2. 每个资源都有一个唯一的资源标识符;
+3. 同一个资源具有多种表现形式(xml,json等);
+4. 对资源的各种操作不会改变资源标识符;
+5. 所有的操作都是无状态的;
+
+REST: Representation State Transfer，表现层状态转移。比较通俗的说法: URL定位资源，用HTTP动词(get, put, post, delete, push等)描述操作。
+Restful：基于REST构建的API就是Restful风格。
+Restful API有下列特征：
+1. Resource资源。资源总是要通过一种载体来反应它的内容。文本可以用txt，也可以用html/xml，图片可以用jpg或者png，json是现在最常用的资源表现形式。
+2. 统一接口。Restful风格的数据元操作CRUD分别对应http方法：get用来获取资源，post用来新建资源(或者更新资源)，put用来更新资源，delete用来删除资源，这样就统一了数据操作的接口。
+3. http状态码。在REST中都有特定的意义：200，201，202，204，400，401，403，500. 比如401表示用户身份认证失败，403表示验证身份通过，但这个资源不能操作。
+4. 无状态。所谓无状态即所有的资源都可以用URI定位，而且这个定位与其他资源无关，也不会因为其他资源的变化而变化。Restful是典型的基于http的协议，http连接最显著的特点是客户端发送的每次请求都需要服务器回送响应，在请求结束后，会主动释放连接。从建立连接到关闭连接的过程称为一次连接。前面一次请求与后面一次请求没有必然的联系，所以是无状态的。
+5. 将APID的版本号放入URL。
+6. 过滤信息。如果记录数量很多，服务器不可能都将它们返回给用户。API应该提供参数，过滤返回结果。比如：?limit=50,?current_page=&showCount=50, ?search_type=1等
+7. 规范返回的数据。为了保证前后端的数据交互的顺畅，建议规范数据的返回，并采用固定的数据个数封装。
+
+SpringMVC项目可以通过整合springfox和swagger-ui来构建Restful风格的API接口文档。
+Restful的WEB服务是一种ROA(The Resource-Oriented Architecture)(面向资源的架构)
+
+规格模式(Specification Pattern)： 组合模式+策略模式，巧妙的实现了对象筛选功能，其抽象规格书如下：
+public interface ISpecification {
+	boolean isSatisfiedBy(Object candidate);
+	ISpecification and(ISpecification spec);
+	ISpecification or(ISpecification spec);
+	ISpecification not();
+} 
+组合规格书实现与或非的算法如下：
+public abstract class CompositeSpecification implements ISpecification {
+	@Override
+	public ISpecification and(ISpecification spec) {
+		return new AndSpecification(this, spec);
+	}
+	
+	@Override
+	public ISpecification or(ISpecification spec) {
+		return new OrSpecification(this, spec);
+	}
+	
+	@Override 
+	public ISpecification not() {
+		return new NotSpecification(this);
+	}
+}
+
+public class AndSpecification extends CompositeSpecification {
+	private ISpecification left;
+	private ISpecification right;
+	
+	public AndSpecification(ISpecification left, ISpecification right) {
+		this.left = left;
+		this.right = right;
+	}
+	
+	@Override 
+	public boolean isSatisfiedBy(Object candidate) {
+		return this.left.isSatisfiedBy(candidate) & this.right.isSatisfiedBy(candidate);
+	} 
+}
+
+public class OrSpecification extends CompositeSpecification {...}
+public class NotSpecification extends CompositeSpecification {...}
+上面1个接口，1个抽象类，3个实现类，实现了规格模式，对于业务具体的规格模式，只需要extends CompositeSpecification，实现isSatisfiedBy即可，这就是典型的策略模式。
+规格模式已经是非常具体的应用框架了(相对于23种设计模式)，对于类似多个对象种筛选查找，或者业务规则不适用放在任何已有实体或者值对象中，而且规则的变化和组合会掩盖那些领域对象的基本含义，或者自己编写一个类似LINQ的语义工具的场景下，即可使用规格书，只要实现自己的逻辑规格书即可。
+
+CMS的GC触发机制：周期性Old GC(被动)和主动Old GC。
+周期性Old GC,执行的逻辑也就Background Collect，对老年代进行回收，在GC日志中比较常见，由后台线程ConcurrentMarkSweepThread循环判断(默认2S)是否需要触发，触发条件如下：
+1. 如果没有设置-XX:+UseCMSInitiatingOccupancyOnly，虚拟机会根据收集的数据决定是否触发(建议带上这个参数，方便问题排查)
+2. 老年代使用率达到阈值CMSInitiatingOccupancyFraction，默认92%
+3. 永久代的使用率达到阈值CMSInitiatingPermOccupanyFraction,默认92%，前提是开启CMSClassUnloadingEnabled
+4. 新生代的晋升担保失败。
+周期性OldGC的整个过程：InitialMarking(初始标记)->Marking(并发标记)->Precleaning AbortablePreclean(预处理)->FinalMarking(重新标记)->Sweeping(并发清理)->Resizing(调整堆大小)->Resetting(重置)->Idling(闲置等待)
+
+主动OldGC：触发条件比较苛刻：
+1. YGC过程发生Promotion Failed，进而堆老年代进行回收
+2. 执行了System.gc(),前提是没有参数ExplicitGCInvokesConcurrent
+3. 其他情况...
+主动GC开始时，需要判断本次GC是否要堆老年代的空间进行Compact(因为长时间的周期性GC会造成大量的碎片)
+在三种情况下会进行压缩：
+1. 参数UseCMSCompactAtFullCollection和CMSFullGCBeforeCompaction，默认每次主动GC都会对老年代的内存空间进行压缩，就是把对象移动到内存的最左边；
+2. 执行了System.gc(),并且没有参数ExplictGCInvokersConcurrent，也会进行压缩
+3. 如果新生代的晋升担保失败，也会压缩。
+
+容器网络通信：单主机容器上的互相通信和跨主机的容器互相通信
+南北向通信指容器与宿主机外界的访问机制，东西向通信指同一宿主机上，与其他容器互相访问的机制。
+Docker单主机容器通信模式有五种：
+1. bridge模式, --net=bridge(默认)
+2. host模式, --net=host 
+3. none模式, --net=none 
+4. 其他容器模式(即container模式，join模式)， --net=container:NAME_or_ID
+5. 用户自定义: docker1.9版本以后新增的特性，允许容器使用第三方的网络实现或者创建单独的bridge网络，提供网络隔离能力。
+
+intel手册对lock前缀的说明如下：
+1. 确保后续指令执行的原子性。
+在Pentium及之前的处理器中，带有lock前缀的指令在执行期间会锁住总线，使得其它处理器暂时无法通过总线访问内存，很显然，这个开销很大。在新的处理器中，Intel使用缓存锁定来保证指令执行的原子性，缓存锁定将大大降低lock前缀指令的执行开销。
+2. 禁止该指令与前面和后面的读写指令重排序。
+3. 把写缓冲区的所有数据刷新到内存中。
+上面的第2点和第3点所具有的内存屏障效果，保证了CAS同时具有volatile读和volatile写的内存语义。
+
+ABA问题：AtomicStampedReference
+
+规约模式(Specification Pattern)的作用可以自由组装业务逻辑元素，Specification类有一个IsSatisfiedBy函数，用于校验某个对象是否满足该Specification所表达的条件。多个Specification对象可以组装起来，生成新的Specification对象，这样可以通过组装的方式来定制新的条件。简单地说，规约模式就是对查询条件表达式用类的形式进行封装。
+规约模式是DDD引入解决下面问题的一种模式：
+1. 今后如果需要添加新的查询逻辑，结果一大堆相关代码都需要修改，设计不便于扩展；
+2. 由于业务的扩展，上面的设计会导致接口变得越来越大，团队成员可能会对这个接口进行修改，添加新的接口方法。
+jmap,jstack等工具可以访问JVM中的堆对象，线程信息等，可以通过两种方式实现：
+1. attach方式
+2. sa(Serviceability Agent)方式
+
+如果出现real time比user+sys时间大很多，原因有可能如下：
+1. 在对应的时间点是否有内存swap，导致磁盘IO；当物理内存不足时，会把内存中暂时不用的数据移动到特殊的硬盘区域，这个过程就是swap，当发生swap时，real time可能变大。
+2. GC Log是否被阻塞。
+
+Guava提供了一系列的静态方法用于校验函数和类的构造器是否符合预期，并称其为前置条件(preconditions)。如果前置条件校验失败，就会抛出一个指定的异常。
+
+规约模式是DDD引入用来解决查询条件复杂化/需求变化快的模式。规约是一种布尔断言，它表述了给定的对象是否满足当前约定的语义。经典的规约模式实现中，规约类只有一个方法，就是IsSatisifiedBy(Object)。
+
+通过jmap和jvm之间进行通信，有两种实现方式: attach和SA。
+在JVM中，有一个叫"Attach Listener"的线程，专门负责监听attach的请求，并执行对应的操作。
+
+
+对于System.gc(),可以采用-XX:+DisableExplicitGC直接避免FGC，同时也可以用-XX:+UseConcMarkSweepGC -XX:+ExplicitGCInvokesConcurrent使用并发的方式执行FGC。
+
+
+-verbose:jni Displays information about the use of native methods and other Java Native Interface(JNI) activity.
+
+通过添加-XX:+PrintJNIGCStalls可以打印进入临界区的线程信息。
+
+
+G1中提供了三种模式垃圾回收模式：young GC, mixed GC和full GC，在不同的条件下被触发。
+-XX:MaxGCPauseMillis(设置G1收集过程目标时间，默认值200ms)
+-XX:G1NewSizePerecnt(新生代最小值,默认值50%)
+-XX:G1MaxNewSizePercent(新生代最大值，默认值60%)
+在mixed GC中有一个阈值参数: -XX:InitiatingHeapOccupancyPercent, 当老年代占整个堆大小百分比达到该阈值时，会触发一次mixed GC。 
+
+为了记录对象经历的YGC次数，在对象头的mark word数据结构中有一个位置记录着对象的YGC次数，也叫对象的年龄，如果扫描到的对象其年龄小于某个阈值(tenuring threshold)，该对象会被拷贝到To-Space，并增加该对象的年龄。如果该对象的年龄大于某个阈值，会晋升到Old Generation。
+
+当触发CMS GC对老年代进行垃圾收集时，算法中会使用_collectorState变量记录执行状态，整个周期分成以下9个状态:
+1. Idling: 一次CMS GC生命周期的初始化状态
+2. InitialMarking: 根据GC Roots，标记出直接可达的活跃对象，这个过程需要STW。
+3. Marking：根据InitialMarking阶段标记出的活跃对象，并发迭代遍历所有的活跃对象，这个过程可以和用户线程并发执行。
+4. Precleaning：并发预清理。
+5. AbortablePreclean:因为某些原因终止预清理。
+6. FinalMarking:由于Marking阶段是和用户线程并发执行的，该过程中可能有用户线程修改某些活跃对象的字段，指向了一个非标记过的对象，在这个阶段需要重新标记出这些遗漏的对象，防止在下一阶段被清理掉，这个阶段需要重新标记出这些遗漏的对象，防止在下一阶段被清理掉，这个过程需要STW。
+7. Sweeping: 并发清理掉未标记的对象。
+8. Resizing: 如果有需要，重新调整堆大小。
+9. Resetting: 重置数据，为下一次的CMS GC做准备。
+
+-XX:+CMSScavengeBeforeRemark: 执行CMS remark之前进行一次YGC，这样能有效降低remark的时间。
+
+/* Replaces all linked nodes in bin at given index unless table is 
+	too small, in which case resizes instead
+*/
+private final void treeifyBin(Node<K, V>[] tab, int index) {
+	Node<K, V> b; int n, sc;
+	if (tab != null) {
+		if ((n = tab.length) < MIN_TREEIFY_CAPACITY)
+			tryPresize(n << 1);
+		else if ((b = tabAt(tab, index)) != null && b.hash >= 0) {
+			synchronized (b) {
+				if (tabAt(tab, index) == b) {
+					TreeNode<K, V> hd = null, tl = null;
+					for (Node<K, V> e = b; e != null;e = e.next) {
+						TreeNode<K, V> p = new TreeNode<K, V>(e.hash, e.key, e.val, null, null);
+						if ((p.prev = tl) == null)
+							hd = p;
+						else 
+							tl.next = p;
+						tl = p;
+					}
+					setTabAt(tab, index, new TreeBin<K, V>(hd));
+				}
+			}
+		}
+	}
+}
+
+/*
+	Table initialization and resizing control. When negative, the 
+	table is being initialized or resized: -1 for initialization,
+	else -(1 + the number of active resizing threads). Otherwise,
+	when table is null, holds the initial table size to use upon
+	creattion, or 0 for default. After initialization, holds the 
+	next element count value upon which to resize the table.
+*/
+private transient volatile int sizeCtl;
+
+/*
+	Tries to presize table to accommodate the given number of elements.
+*/
+private final void tryPresize(int size) {
+	int c = (size >= (MAXIMUM_CAPACITY >>> 1)) ? MAXIMUM_CAPACITY : 
+		tableSizeFor(size + (size >>> 1) + 1);
+	int sc;
+	while ((sc = sizeCtl) >= 0) {
+		Node<K, V>[] tab = table; int n;
+		if (tab == null || (n = tab.length) == 0) {
+			n = (sc > c) ? sc : c;
+			if (U.compareAndSwapInt(this, SIZECTL, sc, -1) {
+				try {
+					if (table == tab) {
+						@SuppressWarning("unchecked")
+						Node<K, V>[] nt = (Node<K, V>[])new Node<?, ?>[n];
+						table = nt;
+						sc = n - (n >>> 2);
+					}
+				} finally {
+					sizeCtl = sc;
+				}
+			}
+		} else if (c <= sc || n >= MAXIMUM_CAPACITY) 
+			break;
+		else if (tab == table) {
+			int rs = resizeStamp(n);
+			if (sc < 0) {
+				Node<K, V>[] nt;
+				if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
+					sc == rs + MAX_RESIZEERS || (nt = nextTable) == null ||
+					transferIndex <= 0)
+					break;
+				if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+					transfer(tab, nt);
+			} else if (U.compareAndSwapInt(this, SIZECTL, sc, (rs << RESIZE_STAMP_SHIFT) + 2))
+				transfer(tab, null);
+		}
+	}
+}
+
+Eureka的自我保护模式: 如果在15分钟内超过85%的客户端节点都没有正常的心跳，那么Eureka就认为客户端与注册中心出现了网络故障(比如网络故障或频繁的启动关闭客户端),Eureka Server自动进入自我保护模式。不再剔除任何服务，当网络故障恢复后，该节点自动退出自我保护模式。
+
+创建对象时，需要在堆上申请指定大小的内存，如果同时有大量线程申请内存的话，可以通过锁机制或者指针碰撞的方式确保不会申请到同一块内存，在JVM运行中，内存分配是一个极其频繁的动作，这种方式势必会降低性能。因此在Hotspot1.6的实现中引入了TLAB技术。
+-XX:UseTLAB
+
+通过设置JVM参数： -XX:+PrintGCApplicationStoppedTime，可以打印系统停止时间，如果有出现某些暂停时间特别长，原因有可能如下：
+一个大概率的原因是当发生GC时，有线程迟迟进入不到safepoint进行阻塞，导致其他已经停止的线程也一直等待，VM Thread也在等待所有的Java线程挂起才能开始GC，这里需要分析业务代码中是否存在有界的大循环逻辑，可能在JIT优化时，这些循环操作没有插入safepoint检查。
+
+在JVM内部提供多种方式来实现新生代的内存，如DefNewGeneration, ParNewGeneration和ASParNewGeneration等，由虚拟机的启动参数决定最终采用哪种方式进行实现。
+
+public interface ConcurrentNavigableMap<K, V>
+	extends ConcurrentMap<K, V>, NavigableMap<K, V> {
+	ConcurrentNavigableMap<K, V> subMap(K fromKey, boolean fromInclusive,
+										K toKey, boolean toInclusive);
+	ConcurrentNavigableMap<K, V> headMap(K toKey, boolean inclusive);
+	ConcurrentNavigableMap<K, V> tailMap(K fromKey, boolean inclusive);
+	ConcurrentNavigableMap<K, V> subMap(K fromKey, K toKey);
+	ConcurrentNavigableMap<K, V> headMap(K toKey);
+	ConcurrentNavigableMap<K, V> tailMap(K fromKey);
+	ConcurrentNavigableMap<K, V> descendingMap();
+	public NavigableSet<K> navigableKeySet();
+	NavigableSet<K> keySet();
+	public NavigableSet<K> descendingKeySet();
+}
+
+
+常用加密算法: 
+RSA是第一个既用于数据加密也能用于数字签名的算法。
+RSA算法原理如下：
+1. 随机选择两个大质数p和q，p不等于q，计算N=pq；
+2. 选择一个大于1小于N的自然数e,e必须与(p-1)(q-1)互素；
+3. 用公式计算出d: d ✖ e = 1 (mod(p-1)(q-1))
+4. 销毁p和q，最终得到的N和e就是"公钥"，d就是“私钥”，发送方使用N去加密数据，接收方只有使用d才能解开数据内容。
+RSA的安全性依赖于大数分解，小于1024位的N已经被证明是不安全的，而且由于RSA算法进行的都是大数计算，使得RSA最快的情况也比DES慢数倍，这是RSA的最大缺陷，因此通常只能用于加密少量数据或者加密密钥，但RSA仍然为一种高强度的算法。
+
+APP与后台的token RSA加密登录认证与安全方式：
+1. 客户端向服务器第一次发起登录请求（不传输用户名和密码）。
+服务器利用RSA算法产生一对公钥和私钥。并保留私钥， 将公钥发送给客户端。
+2. 客户端收到公钥后， 加密用户密码，向服务器发送用户名和加密后的用户密码；同时另外产生一对公钥和私钥，自己保留私钥,
+3. 向服务器发送公钥；于是第二次登录请求传输了用户名和加密后的密码以及客户端生成的公钥。
+4. 服务器利用保留的私钥对密文进行解密，得到真正的密码。 经过判断，确定用户可以登录后，生成sessionId和token，
+5. 同时利用客户端发送的公钥，对token进行加密。最后将sessionId和加密后的token返还给客户端。
+6. 客户端利用自己生成的私钥对token密文解密， 得到真正的token。
+
+BASE64:编码方式
+MD5(Message Digest algorithm 5): 信息摘要算法  (为了防止穷举，加盐)
+SHA(Secure Hash Algorithm)安全散列算法
+HMAC(Hash Message Authentication Code): 散列消息鉴别码
+DES(Data Encryption Standard): 数据加密算法
+3DES
+AES
+PBE(Passoword-based encryption)：基于密码验证
+DSA(Digital Signature Algorithm): 数字签名算法，是一种标准的DSS(数字签名标准)
+ECC(Elliptic Curves Cryptography): 椭圆曲线密码编码学。是目前已知的公钥体制中，对每比特锁提供加密强度最高的一种体制。在软件注册保护方面起到了很大的作用，一般的序列号通常由该算法产生。
+DH(Diffie-Hellman算法): 密钥一致性协议
+-XX:SurvivorRatio=** : eden/survivor的比例
+-XX:NewRatio=** : young/old的比例
+-Xss1024k : Sets the thread stack size(in bytes). This option is equivalent to -XX:ThreadStackSize
+-XX:+UseGCOverheadLimit:Enables the use of a policy that limits the proportion of time spent by the JVM on GC before an OutOfMemoryError exception is thrown. This option is enabled, by default and the parallel GC will throw an OutOfMemoryError if more than 98% of the total time is spent on GC and less than 2% of the heap is recovered. When the heap is small, this feature can be used to prevent applications from running for long periods of time with little or no progress. To disable, specify -XX:-UseGCOverheadLimit. 
+
+JVM的源码的oopDesc包含两个数据成员:_mark和_metadata，如下:
+1. _mar是markOop类型对象，用于存储对象自身的运行时数据，如哈希码(HashCode),GC分代年龄，锁状态标志，线程持有的锁，偏向线程ID，偏向时间戳等，占用内存大小与虚拟机位长一致。
+2. _metadata是一个联合体，其中wideKlassOop和narrowOop都是指向InstanceKlass对象的指针，wide版是普通指针，narrow版是压缩类指针(compressed Class pointer)。
+
+在HotSpot实现中，内存被划分成:Java堆，方法区，Java栈，本地方法栈和寄存器。其中方法区分成PermGen和CodeCache: PermGen存放Java类的相关信息，如静态遍历，成员方法和抽象方法等；CodeCache存放JIT编译之后的本地代码。
+HotSpot JVM并没有根据Java对象直接通过虚拟机映射到新建的C++对象，而是设计了一个oop/klass model，其中oop:Ordinary Object Pointer,用来表示对象的实例信息;klass用来保存描述元数据。
+
+Class文件在虚拟机的整个生命周期包括加载，验证，准备，解析，初始化，使用和卸载7个阶段。
+排查占用CPU最高的Java线程的情况，步骤如下:
+1. 使用top查看占用CPU最高的Java进程ID;
+2. 使用top -Hp <进程ID>查看该进程下各个线程的CPU使用情况,记录CPU最高的线程ID
+3. 使用jstack <进程ID>查看Java进程的堆栈状态;
+4. 找出jstack里nid=步骤2中的线程ID(需要转换成16进制)
+5. 隔个几秒(或者一段时间)，重复3-4步骤;
+6. 线程堆栈的代码行数，问题基本就在这里。
+
+在线调试/监控工具:
+1. Arthas
+2. BTrace
+3. Tomcat的JPDA远程调试
+4. Greys
+
+HotSpot虚拟机中，对象在内存中的布局分为三块区域：对象头，实例数据和对齐填充。
+对象头包括两部分：Mark Word和类型指针。
+Mark Word用于存储对象自身的运行时数据，如哈希码(HashCode)，GC分代年龄，锁状态标志，线程持有的锁，偏向线程ID，偏向时间戳等等，占用内存大小和虚拟机位长一致。
+类型指针指向对象的类元数据，虚拟机通过这个指针确定该对象是哪个类的实例。
+
+TCP_NODELAY: "http.tcp.nodelay", 确定是否使用Nagle算法，什么是Nagle算法? Nagle算法试图最大限度减少发送的段数，以节省带宽。当应用希望减少网络延迟，并提供性能，可以禁用Nagle算法，即开启TCP_NODELAY，数据将提前发送，代价是增加带宽。
+MAX_LINE_LENGTH:"http.connection.max-line-length", 设置http请求行的最大值，如果超出则抛出IOException，0和负数表示禁止检查。
+STALE_CONNECTION_CHECK: "http.connection.stalecheck"，提交请求之前检查连接是否可用，每次检查需要30毫秒的开销，如果考虑性能问题，应该禁止该检查，默认是开启状态。
+SO_KEEPALIVE: "http.socket.keepalive"，是否在一定时间内自动发送一个tcp请求嗅探对方是否存活。
+CONN_MANAGER_TIMEOUT: "http.conn-manager.timeout"，当连接池没有可用连接时，等待的超时时间，这个值一定要设置，且不能太长，不然会出现大量请求等待。
+
+volatile变量的内存可见性是基于内存屏障(Memory Barrier)实现的。什么是内存屏障？内存屏障，又称内存栅栏，是一个CPU指令。在程序运行时，为了提高执行性能，编译器和处理器会对指令进行重排序，JMM为了保证在不同的编译器和CPU上有相同的结果，通过插入特定类型的内存屏障来禁止特定类型的编译器重排序和处理器重排序，插入一条内存屏障会告诉编译器和CPU：不管什么指令都不能和这条Memory Barrier指令重排序。

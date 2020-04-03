@@ -1,0 +1,706 @@
+相比于memcache，redis的每个value值最大可存储1GB，而memcache只有10MB，同时redis在速度上也快于memcache，还可以持久化。redis最大的特点则是，它可以支持五种基本数据类型，分别是字符串（string），列表（list），集合（set），有序集合（zset）以及哈希（hash）。
+在redis中每个value都是一个redisObject结构，如下：
+typedef struct redisObject {
+	unsigned type;   //类型
+	unsigned encoding;   //编码
+	void *prt;   //指向底层数据结构的指针
+	int refCount;   //引用计数器
+	unsigned lru;   //最后一次的访问时间
+}
+type: 就是指这个对象的数据类型，即我们平常所认知的redis的五种数据类型，可以通过TYPE命令查看一个对象的数据类型.
+encoding：表示redisObject对象的底层编码实现，主要有简单动态字符串、链表、字典、跳跃表、整数集合以及压缩列表，每一个value都是由两种及以上的上述编码所构成。
+*ptr:
+lru:最后访问的时间，可以通过Object idletime查看当前时间距离该键的lru时间，即空转时间。
+refCount: 引用计数器，当创建一个对象的时间便将它的值初始化为1，当它被其它程序引用之时则加1，不再被引用则减1，当它的引用计数值变为0时，对象所占用的内存就会被释放。因此它主要有两个用途，内存回收的标志以及用于对象共享。
+对象共享：当新建的两个或多个键都是整数值并且相同时，则它们的键会共享这一个值对象，这样可以减少内存的分配和回收，可以用OBJECT REFCOUNT查看引用情况.
+
+Redis在初始化服务器时，会默认创建包含了值为0-9999的对象，当新建的键的值处于这个范围之时，则直接添加引用即可。
+简单动态字符串(SDS)：Simple dynamic string。在Redis中，并未使用C语言中的字符串，而是实现了一种SDS的数据结构，如下：
+struct sdshdr {
+	int len;
+	int free;
+	char buf[];
+}
+
+字符串的编码：可以是int, embstr, raw。其中int表示整型数值，embstr表示小于等于39字节的字符串值，剩下的均用raw表示。并且int和embstr都是只读的，一旦发生append操作，即会转换为raw。
+列表的编码：压缩列表和双端链表。
+双端链表(linkedlist)结构如下：
+type struct list {
+	listNode *head;
+	listNode *tail;
+	unsigned long len;
+	//其他操作：dup, free, match...
+}; 其中每个节点都有一个prev指针和一个next指针，而节点中的value则是列表对象具体的值。
+
+压缩列表(ziplist)结构如下：
+type struct ziplict {
+	uint32_t zlbytes;   //整个压缩列表的字节数
+	uint32_t zltail_offset;   //记录压缩列表尾节点到头节点的字节数，直接可以求节点的地址
+	uint16_t zllength;   //记录节点数
+	entryX;   //节点
+};
+一个压缩列表示例如下：
+zlbytes|zltail_offset|zllength|entry1|entry2|...|entryN|zlend:0xFF
+而每个列表节点中主要包括以下几项：previous_entry_length,记录了压缩列表中前一个节点的字节长度，当小于254字节时，它的长度为1字节，当大于254字节时，长度为5字节且后4字节保存真正的长度，用于表尾向表头遍历；content,字节所存储的内容，可以是一个字节数组或整数；encoding，记录content属性中所保存的数据类型以及长度。
+编码：当列表对象所存储的字符串元素长度小于64字节且元素数量小于512时，使用ziplist编码，否则使用linkedlist编码。
+
+set的编码可以是整数集合(intset)或者字典(hashtable)。
+typedef struct intset {
+	uint32_t encoding;   //编码方式 
+	uint32_t length;   //元素数量
+	int8_t contents[];   //存储元素的数组
+}
+整数集合的每个元素都是contents数组的一个数组项，各个项在数组中按值的大小从小到大有序排列，并且不包含重复项。contents数组中元素的类型由encoding决定，当新加入元素之时，如果元素的编码大于contents的数组编码，则会将所有元素的编码升级为新加入元素的编码。编码不会发生降级。
+字典结构如下：
+typedef struct dict {
+	dictType *type;   //类型特定函数
+	dictht ht[2];   //两个hash表，一个用于实时存储，一个用于rehash
+	unsigned rehashidx;   //rehash索引，数据迁移时使用
+}
+而哈希表的结构如下：
+typedef struct dictht {
+	dictEntry **table;   //哈希表数组
+	unsigned long size;   //哈希表大小
+	unsigned long sizemask;   //哈希表掩码，总是等于size - 1,存储时计算索引值
+	unsigned long used;   //已有元素数量
+}
+其中键值对都保存在节点dictEntry之中，并且通过拉链表解决哈希冲突，存储时通过MurmurHash算法来计算键的hash值，能够更好的提供随机分布性且速度也很快。扩容时采用渐进性的rehash，采用分而治之的方法，通过改变rehashidx的值，来一个个将元素移动到ht[1]中，完成以后将ht[1]变为ht[0]，原来的ht[0]变为ht[1]，同时将rehashidx置为-1。
+编码：当set中所保存的元素都是整数值并且元素数量512时，使用intset编码，否则使用hashtable编码。
+有序集合的编码可以是压缩列表(ziplist)或者跳跃表(skiplist)。
+跳跃表的结构如下：
+typedef struct zskiplist {
+	zskiplistNode header;   //跳跃表的头节点
+	zskiplistNode tail;   //尾节点
+	unsigned long level;   //跳跃表中层数最大的节点的层数(不包括头节点)
+	unsigned int length;   //跳跃表长度(不包括头节点)
+};
+其中，跳跃表节点结构如下：
+typedef struct zskiplistNode {
+	struct zskiplistNode *backward;   //后退指针
+	double score;   //分数
+	robj *obj;   //成员变量
+	struct zskiplistLevel {
+		struct zskiplistNode *forward;
+		unsigned int span;   //跨度
+	}level[];   //层
+};
+每个level数组可以包含多个元素，里面存储有指向其他节点(不是xiayig)的指针，可以加速访问速度；跨度用于表示两个节点之间的距离，排位时使用；后退指针依次从后向前访问；分值用于排序；成员是一个指向字符串对象的指针。
+编码：当元素数量小于128并且所有元素成员的长度小于64字节之时使用ziplist编码，否则使用skiplist编码。
+
+hash的编码可以是压缩列表(ziplist)或者字典(hashtable)，当hash所保存的键值对的键和值长度都小于64字节并且元素数量小于512时使用ziplist，否则使用hashtable。使用ziplist时，依次将键和值压入链表之中，两者相邻。使用hashtable是将键值对存于dictEntry之中。
+
+用过哪些设计模式：
+	1. 单例：DataBus(初始化耗费资源，需要从kafka获取offset，有比较复杂的逻辑), 各种计费算法；
+	2. 工厂：不同的还款日计算方式，不同的资金源；
+	3. 责任链：binlog同一个表不同业务逻辑的处理；
+	4. 观察者：业务处理完毕后给binlog-consumer发送消息
+	5. 适配器： ConsumerWrapper，new InternalCommonRecord(commonRecord);
+	6. 模板：AbstractSaturnJob
+	7. 代理：分布式锁，MaxCompute的操作接口
+	8. 迭代器：包装的MaxCompute的ODPSResult的hasNext()
+	9. 策略：不同的金融产品使用不同的计费策略
+	10. 外观：api-gateway
+	11. 命令：HystrixCommand/HystrixObservableCommand
+	12. 
+
+/* Used to wrap code that will execute potentially risky functionality (typically meaning a service call over the network) with default and latency tolerance, statistics and performance metrics capture, circuit breaker and bulkhead functionality.
+This command should be used for a purely non-blocking call pattern. The caller of this command will be subscribed to the Observable returned by the run() method.
+*/
+public abstract class HystrixObservableCommand<R> extends AbstractCommand<R>
+					implements HystrixObservable<R>, HystrixInvokableInfo<R> {
+	protected HystrixObservableCommand(HystrixCommandGroupKey group) {
+		this(new Setter(group));
+	}
+
+	@Override
+	protected boolean shouldOutputOnNextEvents() {
+		return true;
+	}
+	
+	@Override
+	protected String getFallbackMethodName() {
+		return "resumeWithFallback";
+	}
+	
+	@Override
+	protected boolean isFallbackUserDefined() {
+		Boolean containsFromMap = commandContainsFallback.get(commandKey);
+		if (containsFromMap != null) {
+			return containsFromMap;
+		} else {
+			Boolean toInsertIntoMap;
+			try {
+				getClass().getDeclaredMethod("resumeWithFallback");
+				toInsertIntoMap = true;
+			} catch (NoSuchMethodException nsme){
+				toInsertIntoMap = false;
+			}
+			commandContainsFallback.put(commandKey, toInsertIntoMap);
+			return toInsertIntoMap;
+		}
+	}
+	
+	@Override
+	protected boolean commandIsScalar() {
+		return false;
+	}
+	
+	protected HystrixObservableCommand(Setter setter) {
+		this(setter.groupKey, setter.commandKey, setter.threadPoolKey, null, null, 
+				setter.commandPropertiesDefaults, setter.threadPoolPropertiesDefaults,
+				null, null, null, null, null);
+	}
+	
+	HystrixObservableCommand(HystrixCommandGruopKey group, HystrixCommandKey key, 
+		HystrixThreadPoolKey threadPoolKey, HystrixCircuitBreaker circuitBreaker, 
+		HystrixThreadPool threadPool, HystrixCommandProperties.Setter commandPropertiesDefaults, 
+		HystrixThreadPoolProperties.Setter threadPoolPropertiesDefaults, HystrixCommandMetrics metrics,
+		TryableSemaphore fallbackSemaphore, TryableSemaphore executionSemaphore,
+		HystrixPropertiesStrategy propertiesStrategy, HystrixCommandExecutionHook executionHook) {
+		super(group, key, threadPoolKey, circuitBreaker, threadPool, commandPropertiesDefaults,
+			threadPoolPropertiesDefaults, metrics, fallbackSemaphore, executionSemaphore,
+			propertiesStrategy, executionHook);
+	}
+	
+	final public static class Setter {
+		protected final HystrixCommandGroupKey groupKey;
+		protected HystrixCommandKey commandKey;
+		protected HystrixThreadPoolKey threadPoolKey;
+		protected HystrixCommandProperties.Setter commandPropertiesDefaults;
+		protected HystrixThreadPoolProperties.Setter threadPoolPropertiesDefaults;
+		
+		protected Setter(HystrixCommandGroupKey groupKey) {
+			this.groupKey = groupKey;
+			//default to using SEMAPHORE for ObservableCommand
+			commandPropertiesDefaults = setDefaults(HystrixCommandProperties.Setter());
+		}
+		
+		public static Setter withGroupKey(HystrixCommandGroupKey groupKey) {
+			return new Setter(groupKey);
+		}
+		
+		public Setter andCommandKey(HystrixCommandKey commandKey) {
+			this.commandKey = commandKey;
+			return this;
+		}
+		
+		public Setter andCommandPropertiesDefaults(HystrixCommandProperties.Setter commandPropertiesDefaults) {
+			this.commandPropertiesDefaults = setDefaults(commandPropertiesDefaults);
+			return this;
+		}
+		
+		private HystrixCommandProperties.Setter setDefaults(HystrixCommandProperties.Setter commandPropertiesDefaults) {
+			if (commandPropertiesDefaults.getExecutionIsolationStrategy() == null) {
+				
+			//default to using SEMAPHORE for ObservableCommand if the user didn't set it	commandPropertiesDefaults.withExecutionIsolationStrategy(ExecutionIsolationStrategy.SEMAPHORE);
+			}
+			return commandPropertiesDefaults;
+		}
+	}
+	
+	protected abstract Observable<R> construct();
+	protected Observable<R> resumeWithFallback() {
+		return Observable.error(new UnsupportedOperationException("No fallback available.));
+	}
+	@Override
+	final protected Observable<R> getExectionObservable() {
+		return construct();
+	}
+	@Override
+	final protected Observalbe<R> getFallbackObservable() {
+		return resumeWithFallback();
+	}
+}
+
+When you evaluate and fine-tune G1 GC, keep the following recommendations in mind:
+	- Young Generation Size: Avoid explicitly setting young generation size with the -Xmn option or any or other related option such as -XX:NewRatio. Fixing the size of the young generation overrides the target pause-time goal.
+	- Pause Time Goals: When you evaluate or tune any garbage collection, there is always a latency versus throughput trade-off. The G1 GC is an incremental garbage collector with uniform pauses, but also more overhead on the application threads. The throughput goal for the G1 GC is 90 percent application time and 10 percent garbage collection time. Compare this to the Java HotSpot VM parallel collector. The throughput goal of the parallel collector is 99 percent application time and 1 percent garbage collection time. Therefore, when you evaluate the G1 GC for throughput, relax your pause time target. Setting too aggressive a goal indicates that you are willing to bear an increase in garbage collection overhead, which has a direct effect on throughput. When you evaluate the G1 GC for latency, you set your desired (soft) real-time goal, and the G1 GC will try to meet it. As a side effect, throughput may suffer. See the section Pause Time Goal in Garbage-First Garbage Collector for additional information.
+	- Taming Mixed Garbage Collections: Experiment with the following options when you tune mixed garbage collections. See the section Important Defaults for information about these options:
+		-XX:InitiatingHeapOccupancyPercent: Use to change the marking threshold.
+		-XX:G1MixedGCLiveThresholdPercent and -XX:G1HeapWastePercent: Use to change the mixed garbage collection decisions.
+		-XX:G1MixedGCCountTarget and -XX:G1OldCSetRegionThresholdPercent: Use to adjust the CSet for old regions.
+
+Overflow and Exhausted Log Messages
+When you see to-space overflow or to-space exhausted messages in your logs, the G1 GC does not have enough memory for either survivor or promoted objects, or for both. The Java heap cannot because it is already at its maximum. Example messages:
+924.897: [GC pause (G1 Evacuation Pause) (mixed) (to-space exhausted), 0.1957310 secs]
+924.897: [GC pause (G1 Evacuation Pause) (mixed) (to-space overflow), 0.1957310 secs]
+
+To alleviate the problem, try the following adjustments:
+	- Increase the value of the -XX:G1ReservePercent option (and the total heap accordingly) to increase the amount of reserve memory for "to-space".
+	- Start the marking cycle earlier by reducing the value of -XX:InitiatingHeapOccupancyPercent.
+	- Increase the value of the -XX:ConcGCThreads option to increase the number of parallel marking threads.
+
+Humongous Objects and Humongous Allocations:
+For G1 GC, any object that is more than half a region size is considered a humongous object. Such an object is allocated directly in the old generation into humongous regions. These humongous regions are a contiguous set of regions. StartsHumongous marks the start of the contiguous set and ContinuesHumongous marks the continuation of the set.
+Before allocating any humongous region, the marking threshold is checked, initiating a concurrent cycle, if necessary.
+Dead humongous objects are freed at the end of the marking cycle during the cleanup phase and also during a full garbage collection cycle.
+To reduce copying overhead, the humongous objects are not included in any evacuation pause. A full garbage collection cycle compacts humongous objects in place.
+Because each individual set of StartsHumongous and ContinuesHumongous regions contains just one humongous object, the space between the end of the humongous object and the end of the last region spanned by the object is unused. For objects that are just slightly larger than a multiple of the heap region size, this unused space can cause the heap to become fragmented.
+If you see back-to-back concurrent cycles initiated due to humongous allocations and if such allocations are fragmenting your old generation, then increase the value of -XX:G1HeapRegionSize such that previous humongous objects are no longer humongous and will follow the regular allocation path.
+
+Kubernetes作为容器编排生态圈中重要一员，是Google大规模容器管理系统borg的开源版本实现，吸收借鉴了google过去十年间在生产环境上所学到的经验与教训。 Kubernetes提供应用部署、维护、 扩展机制等功能，利用Kubernetes能方便地管理跨机器运行容器化的应用。当前Kubernetes支持GCE、vShpere、CoreOS、OpenShift、Azure等平台，除此之外，也可以直接运行在物理机上.kubernetes是一个开放的容器调度管理平台，不限定任何一种言语，支持java/C++/go/python等各类应用程序 。
+Kubernetes是一个完备的分布式系统支持平台，支持多层安全防护、准入机制、多租户应用支撑、透明的服务注册、服务发现、内建负载均衡、强大的故障发现和自我修复机制、服务滚动升级和在线扩容、可扩展的资源自动调度机制、多粒度的资源配额管理能力，完善的管理工具，包括开发、测试、部署、运维监控，一站式的完备的分布式系统开发和支撑平台。
+
+当使用线程池(ExecutorSerivce)时，InheritableThreadLocal在父线程修改ThreadLocal值后，线程池中的线程将还是之前的值，不会同步修改，原因如下：
+线程池会缓存使用过的线程，当线程需要被重复利用的时候，并不会再重新执行init()方法，而是直接使用已经创建过的线程，所以值不会发生变化，怎么做到真正的父子线程数据传递呢：阿里的transmittable-thread-local。
+
+dubbo重连机制会不会造成错误：会的
+	- 重连会重复发起请求，有可能导致Provider处理多次，如没做幂等性，影响业务正确性；
+	- 在业务高峰期的重连，会加重系统的负载，甚至导致雪崩；
+	- 如果超时时间设置的不正确，会导致无效的重连，或者无限重连，并最终往上层传导；
+
+Kafka分区中的所有副本统称为AR（Assigned Repllicas）。所有与leader副本保持一定程度同步的副本（包括Leader）组成ISR（In-Sync Replicas），ISR集合是AR集合中的一个子集。消息会先发送到leader副本，然后follower副本才能从leader副本中拉取消息进行同步，同步期间内follower副本相对于leader副本而言会有一定程度的滞后。前面所说的“一定程度”是指可以忍受的滞后范围，这个范围可以通过参数进行配置。与leader副本同步滞后过多的副本（不包括leader）副本，组成OSR(Out-Sync Relipcas),由此可见：AR=ISR+OSR。在正常情况下，所有的follower副本都应该与leader副本保持一定程度的同步，即AR=ISR,OSR集合为空。
+Leader副本负责维护和跟踪ISR集合中所有的follower副本的滞后状态，当follower副本落后太多或者失效时，leader副本会吧它从ISR集合中剔除。如果OSR集合中follower副本“追上”了Leader副本，之后再ISR集合中的副本才有资格被选举为leader，而在OSR集合中的副本则没有机会（这个原则可以通过修改对应的参数配置来改变）
+
+Kafka的LW:是Low Watermark的缩写，俗称低水位，代表AR集合中最小的logStartOffset值，副本的拉取请求(FetchRequest, 有可能触发新建日志分段而旧的被清理，进而导致logStartOffset的增加)和删除请求(DeleteRecordRequest)都可能促使LW的增长。
+Kafka的HW:是High Watermark的缩写，俗称高水位，它表示了一个特定消息的偏移量(offset)，消费只能拉取到这个offset之前的消息。
+Kafka的LEO:是LogEndOffset的缩写，它表示当前日志文件中下一条待写入消息的offset。LEO的大小相当于当前日志分区中最后一条消息的offset值加1。分区ISR集合中的每个副本都会维护自身的LEO，而ISR集合中最小的LEO即为分区的HW。对消费而言只能消费HW之前的消息。
+Kafka的LSO:特指LastStableOffset，它具体与Kafka的事务有关。消费端参数-isolation.level这个参数用来配置消费者事务的隔离级别。字符串类型：read_uncommitted和read_committed，表示消费者所消费到的位置。如果设置为read_committed，那么消费会忽略事务未提交的消息，即只能消费到LSO(LastStableOffset)的位置，默认情况：read_uncommitted，即可以消费到HW(High Watermark)的位置。注：follow副本的事务隔离级别也为read_uncommitted，并且不可修改。在开启Kafka事务的同时，生产者发送了若干消息(msg1, msg2)到broker中，如果生产者没有提交事务(CommitTransaction)，那么对于isolation.level=read_committed的消费者而言是看不到这些消息的，而isolation_level=read_uncommitted则可以看到。事务中的第一条消息的位置可以标记为firstUnstableOffset(也就是msg1的位置)。这个LSO还会影响到Kafka消费之后的量(也就是Kafka Lag，也称为Kafka堆积量)。对于每个分区而言，它的Lag = HW - ConsumerOffset的值，其中ConsumerOffset表示当前的消费位移，当然这只是针对普通情况。如果引入了事务，那么Lag的计算方式会有所不同。如果当消费者客户端的isolation_level的参数配置为:read_uncommitted，那么Lag的计算方式不受影响。如果这个参数配置为read_committed，那么就要引入LSO进行计算了。对于未完成的事务而言，LSO的值等于事务中的第一条消息所在的位置(firstUnstableOffset)。对于已经完成的事务而言，LSO的值等于HW的值，可以得出一个结论：LSO <= HW <= LEO。所以对于分区中未完成的事务，并且消费者客户端的isolation.level配置为read_committed的情况，Lag = LSO - ConsumerOffset。
+
+Kafka的分区器，序列化器，拦截器的顺序：拦截器->序列化器->分区器。
+
+public interface ApplicationContext extends EnviromentCapable, ListableBeanFactory, HierarchicalBeanFactory,
+		MessageSource, ApplicationEventPublisher, ResourcePatternResolver {
+	String getId();
+	String getApplicationName();
+	String getDisplayName();
+	long getStartupDate();
+	ApplicationContext getParent();
+	AutowireCapableBeanFactory getAutowireCapableBeanFactory() throws IllegalStateException;
+}
+
+ListableBeanFactory: 支持获取Bean工厂的所有Bean实例
+HierarchicalBeanFactory: 支持继承关系的BeanFactory
+MessageSource: 提供国际化支持
+ApplicationEventPublisher:支持事件驱动模型中的事件发布器，这些事件和Bean的生命周期的结合为Bean的管理提供了便利
+ResourcePatternResolver:资源解析器
+FileSystemXmlApplicationContext:
+ClassPathXmlApplicationContext:
+XmlWebApplicationContext:
+DefaultResourceLoader:该类设置了classLoader，并且将配置文件封装为Resource
+AbstractApplicationContext:该类完成了大部分的IOC容器初始化工作，同时也提供了扩展接口留给子类去重载，该类的refresh()函数
+AbstractRefreshableApplicationContext:该类支持刷新BeanFactory
+AbstractRefreshableConfigApplicationContext:该类保存了配置文件路径
+AbstractXmlApplicationContext:该类支持解析bean定义文件
+ClassPathXmlApplicationContext:只根据具体情况提供了简单的构造函数。
+Spring将类职责分开，形成职责链，每一层次的扩展都只是添加了某个功能，然后父类定义了大量的模板，让子类实现，父类层层传递到子类，直到某个子类重载了抽象方法。这里应用了职责链设计模式和模板设计模式，IOC是一个容器工厂设计模式。
+
+public class ClassPathXmlApplicationContext extends AbstractXmlApplicationContext {
+	private Resource[] configResources;
+	public ClassPathXmlApplicationContext() {}
+	public ClassPathXmlApplicationContext(ApplicationContext parent) {
+		super(parent);
+	}
+	public ClassPathXmlApplicationContext(String configLocation) throws BeansException {
+		this(new String[] {configLocation}, true, null);
+	}
+	public ClassPathXmlApplicationContext(String... configLocations) throws BeansException {
+		this(configLocations, true, null);
+	}
+	public ClassPathXmlApplicationContext(String[] configLocations, ApplicationContext parent) throws BeansException {
+		this(configLocations, true, parent);
+	}
+	public ClassPathXmlApplicationContext(String[] configLocations, boolean refresh) throws BeansException {
+		this(configLocations, refresh, null);
+	}
+	public ClassPathXmlApplicationContext(String[] configLocations, boolean refresh, ApplicationContext parent) 
+		throws BeansException {
+		super(parent);
+		setConfigLocations(configLocations);
+		if (refresh) {
+			refresh();
+		}
+	}
+	public ClassPathXmlApplicationContext(String path, Class<?> clazz) throws BeansException {
+		this(new String[]{path}, clazz);
+	}
+	public ClassPathXmlApplicationContext(String[] paths, Clss<?> clazz) throws BeansException {
+		this(paths, clazz, null);
+	}
+	public ClassPathXmlApplicationContext(String[] paths, Class<?> clazz, ApplicationContext parent)
+		throws BeansException {
+		super(parent);
+		Assert.notNull(paths, "Path array must not be null");
+		Assert.notNull(clazz, "Class argument must not be null");
+		this.configResources = new Resource[paths.length];
+		for (int i = 0; i < paths.length; i ++) {
+			this.configResources[i] = new ClassPathResourc(paths[i], clazz);
+		}
+		refresh();
+	}
+	@Override
+	protected Resource[] getConfigResources() {
+		return this.configResources;
+	}
+}
+/*
+Abstract implementation of the ApplicationContext interface. Doesn't mandate the type of storage 
+used for configuration; simply implements common context functionality. Uses the Template Method design 
+pattern, requiring concrete subclass to implement abstract methods.
+In contrast to a plain BeanFactory, an ApplicationContext is supposed to detect special beans defined in 
+its internal bean factory:
+Therefore, this class automatically registers
+	- BeanFactoryPostProcessor
+	- BeanPostProcessor
+	- ApplicationListeners
+which are defined as beans in the context.
+
+A MessageSource may also be supplied as a bean int the context, with the name "messageSource"; otherwise, 
+message resolution is delegated to the parent context. Furthermore, a multicaster for application events 
+can be supplied as "applicationEventMulticaster" bean of type ApplicationEventMulticaster in the context;
+otherwise, a default multicaster of type SimpleApplicationEventMulticaster will be used.
+Implements resource loading through extending DefaultResourceLoader. Consequently treats non-URL resource 
+paths as class path resources(supporting full class path resource names that include the package path, e.g. 
+"mypackage/myresource.dat"), unless the getResourceByPath() method is overwritten in a subclass.
+*/
+public abstract class AbstractApplicationContext extends DefaultResourceLoader 
+			implements ConfigurableApplicationContext, DisposableBean {
+	public static final String MESSAGE_SOURCE_BEAN_NAME = "messageSource";
+	public static final String LIFECYCLE_PROCESSOR_BEAN_NAME = "lifecycleProcessor";
+	public static final String APPLICATION_EVENT_MULTICASTER_BEAN_NAME = "applicationEventMulticaster";
+	static {
+		// Eagerly load the ContextClosedEvent class to avoid weird classloader issues
+		//  on application shutdown in WebLogic 8.1. (Reported by Dustin Woods.)
+		ContextClosedEvent.class.getName();
+	}
+	protected final Log logger = LogFactory.getLog(getClass());
+	private String id = ObjectUtils.identityToString(this);
+	private String displayName = ObjectUtils.identityToString(this);
+	private ApplicationContext parent;
+	private ConfigurableEnvironment environment;
+	// BeanFactoryPostProcessor to apply on refresh
+	private final List<BeanFactoryPostProcessor> beanFactoryPostProcessors = 
+		new ArrayList<BeanFactoryPostProcessor>();
+	private long startupDate;
+	private final AtomicBoolean active = new AtomicBoolean();
+	private final AtomicBoolean closed = new AtomicBoolean();
+	// Synchronization monitor for the "refresh" and "destroy"
+	private final Object startupShutdownMonitor = new Object();
+	// Reference to the JVM shutdown hook, if registered
+	private Thread shutdownHook;
+	private ResourcePatternResolver resourcePatternResolver;
+	//LifecycleProcessor for managing the lifecycle of beans within this context 
+	private LifecycleProcessor lifeCycleProcessor;
+	private MessageSource messageSource;
+	private ApplicationEventMulticaster applicationEventMulticaster;
+	private final Set<ApplicationListener<?>> applicationListeners = new LinkedHashSet<>();
+	private Set<ApplicationEvent> earlyApplicationEvents;
+	
+	...
+	@Override
+	public void refresh() throws BeansException, IllegalStateExceptin {
+		synchronized (this.startupShutdownMonitor) {
+			// Prepare this context for refreshing.
+			prepareRefresh();
+			// Tell the subclass to refresh the internal bean factory.
+			ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+			// Prepare the bean factory for use in this context.
+			prepareBeanFactory(beanFactory);
+			try {
+				// Allow post-processing of the bean factory in context subclasses.
+				postProcessBeanFactory(beanFactory);
+				// Invoke factory processors registered as beans in the context. 
+				invokeBeanFactoryPostProcessors(beanFactory);
+				// Register bean processors that intercept bean creation.
+				registerBeanPostProcessors(beanFactory);
+				// Initialize message source for this context.
+				initMessageSource();
+				// Initialize event multicaster for this context
+				initApplicationEventMulticaster();
+				// Initialize other special beans in specific context subclasses.
+				onRefresh();
+				// Check for listener beans and register them.
+				registerListeners();
+				// Instantiate all remaining (non-lazy-init) singletons
+				finishBeanFactoryInitialization(beanFactory);
+				// Last step: publish corresponding event. 
+				finishRefresh();
+			} catch (BeansException ex) {
+				// Destroy already created singletons to avoid dangling resources.
+				destroyBeans();
+				// Reset 'active' flag.
+				cancelRefresh(ex);
+				// Propagate exception to caller.
+				throw ex;
+			} finally {
+				// Reset common introspection caches in Spring's core, since we might not ever 
+				// need metadata for singleton beans anymore... 
+				resetCommonCaches();
+			}
+		}
+	}
+	
+	/* Prepare this context for refreshing, setting its startup date and active flag as well 
+		as performing any initialization of property sources.
+	*/
+	protected void prepareRefresh() {
+		this.startupDate = System.currentTimeMillis();
+		this.closed.set(false);
+		this.active.set(true);
+		if (logger.isInfoEnabled()) {
+			logger.info("Refreshing" + this);
+		}
+		
+		// Initialize any placeholder property sources in the context environment
+		initPropertySources();
+		// Validate that all properties marked as required are resolvable
+		// see ConfigurableProppertyResolver.setRequiredProperties()
+		getEnvironment().validateRequiredProperties();
+		// Allow for the collection of early ApplicationEvents, to published once 
+		// the multicaster is availabe...
+		this.earlyApplicationEvents = new LinkedHashSet<ApplicationEvent>();
+	}
+	
+	// Tell the subclass to refresh the internal bean factory 
+	protected ConfigurableListableBeanFactory obtainFreshBeanFactory() {
+		refreshBeanFactory();
+		ConfigurableListableBeanFactory beanFactory = getBeanFactory();
+		if (logger.isDebugEnabled()) {
+			logger.debug("Bean factory for " + getDisplayName() + ": " + beanFactory);
+		}
+		return beanFactory;
+	}
+	
+	//Configure the factory's standard context characteristics,
+	//such as the context's ClassLoader and post-processors.
+	protected void prepareBeanFactory(ConfigurableListableBeanFactory beanFactory) {
+		// Tell the internal bean factory to use the context's class loader etc.
+		beanFactory.setBeanClassLoader(getClassLoader());
+		beanFactory.setBeanExpressionResolver(new StandardBeanExpressionResolver(beanFactory.getBeanClassLoader()));
+		beanFactory.addPropertyEditorRegistrar(new ResourceEditorRegistrar(this, getEnvironment()));
+		
+		// Configure the bean factory with context callbacks.
+		beanFactory.addBeanPostProcessor(new ApplicationContextAwareProcessor(this));
+		beanFactory.ignoreDependencyInterface(EnvironmentAware.class);
+		beanFactory.ignoreDependencyInterface(EmbeddedValueResolverAware.class);
+		beanFactory.ignoreDependencyInterface(ResourceLoaderAware.class);
+		beanFactory.ignoreDependencyInterface(ApplicationEventPublisherAware.class);
+		beanFactory.ignoreDependencyInterface(MessageSourceAware.class);
+		beanFactory.ignoreDependencyInterface(ApplicationContextAware.class);
+		
+		// BeanFactory interface not registered as resolvable type in a plain factory.
+		// MessageSource registered (and found for autowiring) as a bean.
+		beanFactory.registerResolvableDependency(BeanFactory.class, beanFactory);
+		beanFactory.registerResolvableDependency(ResourceLoader.class, this);
+		beanFactory.registerResolvableDependency(ApplicationEventPublisher.class, this);
+		beanFactory.registerResolvableDependency(ApplicationContext.class, this);
+		
+		// Register early post-processor for detecting inner beans as ApplicationListeners.
+		beanFactory.addBeanPostProcessor(new ApplicationListenerDetector(this));
+		
+		//Detect a LoadTimeWeaver and prepare for weaving, if found.
+		if (beanFactory.containsBean(LOAD_TIME_WEAVER_BEAN_NAME)) {
+			beanFactory.addBeanPostProcessor(new LoadTimWeaverAwareProcessor(beanFactory);
+			// Set a temporary ClassLoader for type matching
+			beanFactory.setTempClassLoader(new ContextTypeMatchClassLoader(beanFactory.getBeanClassLoader()));
+		}
+		
+		// Register default environment beans.
+		if (!beanFactory.containLocalBean(ENVIRONMENT_BEAN_NAME)) {
+			beanFactory.registerSingleton(ENVIRONMENT_BEAN_NAME, getEnvironment());
+		}
+		if (!beanFactory.containLocalBean(SYSTEM_PROPERTIES_BEAN_NAME)) {
+			beanFactory.registerSingleton(SYSTEM_PROPERTIES_BEAN_NAME, getEnvironment());
+		}
+		if (!beanFactory.containLocalBean(SYSTEM_ENVIRONMENT_BEAN_NAME)) {
+			beanFactory.registerSingleton(SYSTEM_ENVIRONMENT_BEAN_NAME, getEnvironment());
+		}
+	}
+	
+	//Modify the application context's internal bean factory after its standard initialization.
+	//All bean definitions will have been loaded, but no beans will have bean instantiated yet.
+	//This allows for registering special BeanPostProcessor etc in certain Application implementations.
+	protected void postProcessBeanFactory(ConfigurableListableBeanFacory beanFactory) {}
+	
+	//Instantiate and invoke all registered BeanFactoryPostProcessor beans, respecting explicit order if given. 
+	protected void invokeBeanFactoryPostProcessors(ConfigurableListableBeanFactory beanFactory) {
+		PostProcessorRegistrationDelegate.invokeBeanFactoryPostProcessors(beanFactory, getBeanFactoryPostProcessors());
+		
+		// Detect a LoadTimeWeaver and prepare for weaving, if found in the meantime
+		// (e.g. through an @Bean method registered by ConfigurationClassPostProcessor)
+		if (beanFactory.getTempClassLoader() == null && beanFactory.containsBean(LOAD_TIME_WEAVER_BEAN_NAME)) {
+			beanFactory.addBeanPostProcessor(new LoadTimeWeaverAwareProcessor(beanFactory));
+			beanFactory.setTempClassLoader(new ContextTypeMatchClassLoader(beanFactory.getBeanClassLoader()));
+		}
+	}
+	
+	//Instantiate and invoke all registered BeanPostProcessor beans, respecting explicit order if given.
+	//Must be called before any instantiation of application beans. 
+	protected void registerBeanPostProcessors(ConfigurableListableBeanFactory beanFactory) {
+		PostProcessorRegistrationDelegate.registerBeanPostProcessors(beanFactory, this);
+	}
+	
+	//Initialize the MessageSource. Use parent's if none defined in this context
+	protected void initMessageSource() {
+		ConfigurableListableBeanFactory beanFactory = getBeanFactory();
+		if (beanFactory.containsLocalBean(MESSAGE_SOURCE_BEAN_NAME)) {
+			this.messageSource = beanFactory.getBean(MESSAGE_SOURCE_BEAN_NAME, MessageSource.class);
+			// Make MessageSource aware of parent MessageSource.
+			if (this.parent == null && this.messageSource instanceof HierarchicalMessageSource) {
+				HierarchicalMessageSource hms = (HierarchicalMessageSource)this.messageSource;
+				if (hms.getParentMessageSource() == null) {
+					// Only set parent context as parent MessageSource if no parent MessageSource 
+					// registered already.
+					hms.setParentMessageSource(getInternalParentMessageSource());
+				}
+			}
+			if (logger.isDebugEnabled()) {
+				logger.debug("Using MessageSource [" + this.messageSource + "]");
+			}
+		} else {
+			//Use empty MessageSource to be able to accept getMessage calls.
+			DelegatingMessageSource dms = new DelegatingMessageSource();
+			dms.setParentMessageSource(getInternalParentMessageSource());
+			this.messageSource = dms;
+			beanFactory.registerSingleton(MESSAGE_SOURCE_BEAN_NAME, this.messageSource);
+			if (logger.isDebugEnabled()) {
+				logger.debug("Unable to locate MessageSource with name '" + MESSAGE_SOURCE_BEAN_NAME +
+						"': using default [" + this.messageSource + "]");
+			}
+		}
+	}
+	
+	//Initialize the ApplicationEventMulticaster. Uses SimpleApplicationEventMulticaster 
+	// if non defined in the context.
+	protected void initApplicationEventMulticaster() {
+		ConfigurableListableBeanFactory beanFactory = getBeanFactory();
+		if (beanFactory.containsLocalBean(APPLICATION_EVENT_MULTICASTER_BEAN_NAME)) {
+			this.applicationEventMulticaster =
+					beanFactory.getBean(APPLICATION_EVENT_MULTICASTER_BEAN_NAME, ApplicationEventMulticaster.class);
+			if (logger.isDebugEnabled()) {
+				logger.debug("Using ApplicationEventMulticaster [" + this.applicationEventMulticaster + "]");
+			}
+		}
+		else {
+			this.applicationEventMulticaster = new SimpleApplicationEventMulticaster(beanFactory);
+			beanFactory.registerSingleton(APPLICATION_EVENT_MULTICASTER_BEAN_NAME, this.applicationEventMulticaster);
+			if (logger.isDebugEnabled()) {
+				logger.debug("Unable to locate ApplicationEventMulticaster with name '" +
+						APPLICATION_EVENT_MULTICASTER_BEAN_NAME +
+						"': using default [" + this.applicationEventMulticaster + "]");
+			}
+		}
+	}
+	
+	//Template method which can be overridden to add context-specific refresh work.
+	//Called on initialization of special beans, before instantiation of singletons.
+	//This implementation is empty.
+	protected void onRefresh() throws BeansException {
+		// For subclasses: do nothing by default
+	}
+	
+	// Add beans that implement ApplicationListener as listeners.
+	// Doesn't affect other listeners, which can be added without being beans.
+	protected void registerListeners() {
+		// Register statically specified listeners first.
+		for (ApplicationListener<?> listener : getApplicationListeners()) {
+			getApplicationEventMulticaster().addApplicationListener(listener);
+		}
+		
+		// Do not initialize FactoryBeans here: We need to leave all regular beans
+		// uninitialized to let post-processors apply to them!
+		String[] listenerBeanNames = getBeanNamesForType(ApplicationListener.class, true, false);
+		for (String listenerBeanName : listenerBeanNames) {
+			getApplicationEventMulticaster().addApplicationListenerBean(listenerBeanName);
+		}
+		
+		// Publish early application events now that we finally have a multicaster...
+		Set<ApplicationEvent> earlyEventsToProcess = this.earlyApplicationEvents;
+		this.earlyApplicationEvents = null;
+		if (earlyEventsToProcess != null) {
+			for (ApplicationEvent earlyEvent : earlyEventsToProcess) {
+				getApplicationEventMulticaster().multicastEvent(earlyEvent);
+			}
+		}
+	}
+	
+	// Finish the initialization of this context's bean factory, 
+	// initializing all remaining singleton beans.
+	protected void finishBeanFactoryInitialization(ConfigurableListableBeanFactory beanFactory) {
+		// Initialize conversion service for this context.
+		if (beanFactory.containsBean(CONVERSION_SERVICE_BEAN_NAME) &&
+				beanFactory.isTypeMatch(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class)) {
+			beanFactory.setConversionService(
+					beanFactory.getBean(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class));
+		}
+		
+		// Register a default embedded value resolver if no bean post-processor 
+		// (such as a PropertyPlaceholderConfigurer bean) registered any before:
+		// at this point, primarily for resolution in annotation attribute values.
+		if (!beanFactory.hasEmbeddedValueResolver()) {
+			beanFactory.addEmbddedValueResolver(new StringValueResolver() {
+				@Override
+				public String resolveStringValue(String strVal) {
+					return getEnvironment().resolvePlaceholders(strVal);
+				}
+			});
+		}
+		
+		// Initialize LoadTimeWeaverAware beans early to allow for registering their transformers early.
+		String[] weaverAwareNames = beanFactory.getBeanNamesForType(LoadTimeWeaverAware.class, false, false);
+		for (String weaverAwareName : weaverAwareNames) {
+			getBean(weaverAwareName);
+		}
+		
+		// Stop using the temporary ClassLoader for type matching.
+		beanFactory.setTempClassLoader(null);
+		
+		// Allow for caching all bean definition metadata, not expecting further changes.
+		beanFactory.freezeConfiguration();
+		
+		// Instantiate all remaining (non-lazy-init) singletons.
+		beanFactory.preInstantiateSingletons();
+	}
+	
+	// Finish the refresh of this context, invoking the LifecycleProcessor's onRefresh() 
+	// method and publishing the ContextRefreshedEvent
+	protected void finishRefresh() {
+		// Initialize lifecycle processor for this context.
+		initLifecycleProcessor();
+		// Propagate refresh to lifecycle processor first.
+		getLisfecycleProcessor().onRefresh();
+		// Publish the final event. 
+		publishEvent(new ContextRefreshedEvent(this));
+		
+		// Participate in LiveBeansView MBean, if active.
+		LiveBeansView.registerApplicationContext(this);
+	}
+	
+	/* Template method for destroying all beans that this context manages. The default implementation 
+	 destroy all cached singletons in this context, invoking DisposableBean.destroy() and/or the specified 
+	 "destroy-method".
+	 Can be overridden to add context-specific bean destruction steps right before or right after standard 
+	 singleton destruction, while the context's BeanFactory is still active. 
+	*/
+	protected void destroyBeans() {
+		getBeanFactory().destroySingletons();
+	}
+	
+	// Cancel this context's refresh attempt, resetting the active flag after an exception got thrown. 
+	protected void cancelRefresh(BeansException ex) {
+		this.active.set(false);
+	}
+	
+	// Reset Spring's common core caches, in particular the ReflectionUtils, ResolvableType and 
+	// CachedIntrospectionResults caches. 
+	protected void resetCommonCaches() {
+		ReflectionUtils.clearCache();
+		ResolvableType.clearCache();
+		CachedIntrospectionResults.clearClassLoader(getClassLoader());
+	}
+	/**
+	 * Subclasses must implement this method to perform the actual configuration load.
+	 * The method is invoked by {@link #refresh()} before any other initialization work.
+	 * <p>A subclass will either create a new bean factory and hold a reference to it,
+	 * or return a single BeanFactory instance that it holds. In the latter case, it will
+	 * usually throw an IllegalStateException if refreshing the context more than once.
+	**/
+	protected abstract void refreshBeanFactory() throws BeansException, IllegalStateException;
+}
+
+
+public abstract class AbstractRefreshableApplicationContext extends AbstractApplicationContext {
+	
+}
+
+

@@ -1,0 +1,405 @@
+/*
+@return the value to return from the method invocation on the proxy instance. If the declared return type of the interface method must be an instance of the corresponding primitive wrapper class; otherwise, it must be a type assignable to the declared return type. If the value returned by this method is null and the interface method's return type is primitive, then a NullPointerException will be thrown by the method invocation on the proxy instance. If the value returned by this method is otherwise not compatible with the interface method's declared return type as described above, a ClassCastException will be thrown by the method invocation on the proxy instance. 
+*/
+public interface InvocationHandler {
+	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable;
+}
+
+public class Proxy implements java.io.Serializable {
+	private static final long serialVersionUID = -2222568056686623797L;
+	private static final Class<?>[] constructorParams = {InvocationHandler.class};
+	//a cache of proxy classes
+	private static final WeakCache<ClassLoader, Class<?>[], Class<?>> proxyClassCache = 
+		new WeakCache<>(new KeyFactory(), new ProxyClassFactory());
+	protected InvocationHandler h;
+	private static final Object key0 = new Object();
+	...
+	private static final class ProxyClassFactory
+		implements BiFunction<ClassLoader, Class<?>[], Class<?>> {
+		private static final String proxyClassNamePrefix = "$Proxy";
+		private static final AtomicLong nextUniqueNumber = new AtomicLong();
+		
+		@Override
+		public Class<?> apply(ClassLoader loader, Class<?>[] interfaces) {
+			Map<Class<?>, Boolean> interfaceSet = new IdentityHashMap<>(interfaces.length);
+			for (Class<?> intf : interfaces) {
+				Class<?> interfaceClass = null;
+				try {
+					interfaceClass = Class.forName(intf.getName(), false, loader);
+				} catch (ClassNotFoundException e) {
+				}
+				if (interfaceClass != intf) {
+					throw new IllegalArgumentException(intf + " is not visible from class loader");
+				}
+				if (!interfaceClass.isInterface()) {
+					throw new IllegalArgumentException(interfaceClass.getName() + " is not an interface");
+				}
+				if (interfaceSet.put(interfaceClass, Boolean.TRUE) != null) {
+					throw new IllegalArgumentException("repeated interface: " + interfaceClass.getName());
+				}
+			}
+			
+			String proxyPkg = null;
+			int accessFlags = Modifier.PUBLIC | Modifier.FINAL;
+			for (Class<?> intf : interfaces) {
+				int flags = intf.getModifiers();
+				if (!Modifier.isPublic(flags)) {
+					accessFlags = Modifier.FINAL;
+					String name = intf.getName();
+					int n = name.lastIndexOf('.');
+					String pkg = ((n == -1) ? "" : name.subString(0, n + 1));
+					if (proxyPkg == null) {
+						proxyPkg = pkg;
+					} else if (!pkg.equals(proxyPkg)) {
+						throw new IllegalArgumentException("non-public interfaces from different packages");
+					}
+				}
+			}
+			if (proxyPkg == null) {
+				proxyPkg = ReflectUtil.PROXY_PACKAGE + ".";
+			}
+			
+			long num = nextUniqueNumber.getAndIncrement();
+			String proxyName = proxyPkg + proxyClassNamePrefix + num;
+			byte[] proxyClassFile = ProxyGenerator.generateProxyClass(proxyName, 
+				interfaces, accessFlags);
+			try {
+				return defineClass0(loader, proxyName, proxyClassFile, 0, 
+					proxyClassFile.length);
+			} catch (ClassFormatError e) {
+				throw new IllegalArgumentException(e.toString());
+			}
+		}
+	}
+	...
+}
+
+由于Java面向对象的思想，在JVM中需要存储对象，存储时为了实现额外的功能，需要在对象中添加一些标记字段用于增强对象功能，这些标记字段组成了对象头。
+JVM中对象头有两种：
+1. 普通对象：Mark Word, Klass Word 
+2. 数组对象: Mark Word, Klass Word, Array Length
+
+对于Mark Word, mark word的位长度位JVM的一个word大小，32位JVM为32位，64位JVM为64位。为了让一个word存储更多信息，JVM将最低的两个位设置为标记位，不同的标记位的Mark Word有不同的含义。
+
+|------------------------------------------------------------------------|
+|Mark Word(32 bits)                                   |      State       |
+|------------------------------------------------------------------------|
+|identity_hascode:25 | age:4 | biased_lock:1 | lock:2 |      Normal      |
+|------------------------------------------------------------------------|
+|thread:23 | epoch:2 | age:4 | biased_lock:1 | lock:2 |     Biased       |
+|------------------------------------------------------------------------|
+|           ptr_to_lock_record:30            | lock:2 |Lightweight Locked|
+|------------------------------------------------------------------------|
+|         ptr_to_heavyweight_monitor:30      | lock:2 |Heavyweight Locked|
+|------------------------------------------------------------------------|
+|                                            | lock:2 |  Marked for GC   |
+|------------------------------------------------------------------------|
+对于lock的2位，表示如下：
+biased_lock    lock     状态
+      0         01     无锁
+	  1         01     偏向锁
+	  0         00     轻量级锁
+	  0         10     重量级锁
+	  0         11     GC标记
+biased_lock:对象是否启用偏向锁标记，1表示启用偏向锁
+age:4位的Java对象年龄。由于age只有4位，所以最大值为15.这就是-XX:MaxTenuringThreshold最大值为15
+identity_hashcode:25位对象标识Hash码，次啊用延迟加载技术。调用System.identityHashCode()计算，并将结果写到对象头中，当对象被锁定时，该值会移动到管程Monitor中。
+thread:持有偏向锁的线程ID
+epoch:偏向时间戳
+ptr_tolock_record:指向栈中锁记录的指针。
+ptr_to_heavyweight_monitor:指向管程Monitor的指针。
+对于Klass Word，这部分用于存储对象的类型指针，该指针指向它的类元数据，JVM通过这个指针确定对象是哪个类的实例。该指针的位长度为JVM的一个字大小，即32JVM为32位，64位JVM为64位。
+如果应用的对象过多，使用64位的指针将浪费大量内存，统计而言，64位的JVM将会比32位的JVM多耗费50%的内存。为了节约内存可以使用选项+UseCompressedOops开启指针压缩，其中,oop即ordinary object pointer普通对象指针。开启该选项后，下列指针将压缩至32位：
+1. 每个Class的属性指针(即静态变量)
+2. 每个对象的属性指针(即对象变量)
+3. 普通对象数组的每个元素指针。
+当然，也不是所有的指针都会压缩，一些特殊类型的指针JVM不会优化，比如指向PermGen的Class对象指针(JDK8中指向元空间的Class对象指针)、本地变量、堆栈元素、入参、返回值和NULL指针等。
+
+如果对象是一个数组，那么对象头还有空间用于存储数组的长度，也是32位的JVM，长度为32，64位的JVM长度为64位的空间。64位JVM如果开启+UseCompressedOops，该区域也将由64位压缩至32位。
+
+JDK11的ZGC是Oracle为OpenJDK开源的新垃圾收集器。专注于减少暂停时间的同时仍然压缩堆。 
+DDD中的基本概念：
+	1. 实体(Entity)
+	2. 值对象(Value Object)
+	3. 领域服务(Domain Service)
+	4. 聚合及聚合根(Aggregate, Aggregate Root)
+	5. 工厂(Factory)
+	6. 仓储(Repository)
+
+数据库模型的粒度如果很小，那么大量的表连接很快就会让数据库跑不动了。如果数据库模型的粒度很大(这是大部分项目的选择)，代码的质量(重用性、稳定性、扩展性)就很差。由于没有从业务的角度去仔细定义每个对象，每个人会根据自己的需要建立各种QueryModel或ViewModel，慢慢地类会很多。或如果不建立各种Model，强行重用DataModel的话，那么接口提供的内容往往都不是想要的。
+
+DDD领域驱动设计的优点：
+	1. 从技术维度实现分层: 能够在每层关注自己的事情，比如领域层关注业务逻辑的事情，仓储关注持久化数据的事情，应用服务层关注用例的事情，接口层关注暴露给前端的事情。
+	2. 业务维度: 将大系统划分成多个上下文，可以让不同团队和不同人只关注当前上下文的开发。
+	3. 时间维度：通过敏捷式迭代快速验证，快速修正。
+
+命令查询职责分离(CQRS: Command Query Responsibility Segregation)
+界限上下文(Bounded Context): 通常来说，一个领域有且只有一个核心问题，我们称之为该领域的“核心领域”。在核心领域、通用领域、支撑领域梳理的同时，会定义子域中的"限界上下文"及其关系，用来阐述子域之间的关系。界限上下文可以简单理解成一个子系统或组件模块。
+
+Dubbo的集群容错模式：
+	1. 自行扩展集群容错策略;
+	2. Failover Cluster
+	3. Failfast Cluster 
+	4. Failsafe Cluster 
+	5. Failback Cluster 
+	6. Forking Cluster 
+	7. Broadcast Cluster 
+Dubbo的负载均衡策略:
+	1. 自行扩展负载均衡策略
+	2. Random LoadBalance
+	3. RoundRobin LoadBalance 
+	4. LeastActive LoadBalance 
+	5. ConsistentHash LoadBalance 
+Dubbo支持以下注册中心-Registry:
+	1. Zookeeper
+	2. Redis 
+	3. Simple
+	4. Multicast
+	5. Etcd3 
+
+try-with-resource: 
+public interface AutoCloseable {
+	void close() throws Exception;
+}
+public interface Closeable extends AutoCloseable {
+	public void close() throws IOException;
+}
+1. 当外部资源的句柄对象实现了AutoCloseable接口，JDK7可以利用try-with-resource语法更优雅的关闭资源，消除样板式代码。
+2. try-with-resource时，如果对外部资源的处理和对外部资源的关闭都遇到了异常，"关闭异常"将被抑制，"处理异常"将被抛出，但"关闭异常"并没有丢弃，而是存放在"处理异常"的被抑制的异常列表中(可以通过Throwable的Throwable[] getSuppressed()获取)。
+
+/* A package-local class holding common representation and mechanics for classes supporting dynamic
+striping on 64bit values. The class extends Number so that concrete subclasses must publicly do so.
+*/
+@SuppressWarnings("serial")
+abstract class Striped64 extends Number {
+	...
+}
+
+ForkJoinPool核心是work-stealing算法，工作窃取算法。
+ForkJoinPool里有三个重要的角色：
+	1. ForkJoinWorkerThread: 即worker, 包装Thread
+	2. WorkQueue: 任务队列，双向 
+	3. ForkJoinTask: worker执行的对象，实现了Future。。两种类型: submission和task。
+ForkJoinPool使用数组保存所有的WorkQueue，每个worker有属于自己的WorkQueue，但不是每个WorkQueue都有对应的worker。
+	- 没有worker的WorkQueue：保存的是submission，来自外部提交，在WorkQueue[]的下标是偶数。
+	- 属于worker的WorkQueue: 保存的是Task，在WorkQueu[]的下标是奇数。
+WorkQueue是一个双端队列，同时支持LIFO的push和pop操作，和FIFO的poll操作，分别操作top端和base端。worker操作自己的WorkQueue是LIFO操作(可选FIFO)，除此之外，worker会尝试steal其他WorkQueue里的任务，这个时候执行的是FIFO操作。
+分开两端取任务的好处：
+	- LIFO操作只有对应的worker才能执行，push和pop不需要考虑并发；
+	- 拆分时，越大的任务越在WorkQueue的base端，尽早分解，能够尽快进入计算。
+ForkJoinPool执行任务的对象是ForkJoinTask,是一个抽象类，有两个具体实现类：RecursiveAction和RecursiveTask。
+ForkJoinTask的抽象方法exec由RecursiveAction和RecursiveTask实现，它被定义为final，具体的执行步骤compute延迟到子类实现。很容易看出RecursiveAction和RecursiveTask的区别，前者没有result，getRawResult返回空，它们对应不需要返回结果和需要返回结果两种场景。
+
+/*
+Central dispatcher for HTTP request handlers/controllers, e.g. for Web UI controllers 
+or HTTP-based remote service exporters. Dispatchers to registered handlers for processing 
+a web request, providing convenient mapping and exception handling facilities.
+
+This servlet is very flexible: It can be used with just about any workflow, with the 
+installation of the appropriate adapter classed. It offers the following functionality 
+that distinguishes it from other request-driven web MVC frameworks:
+
+It is based around a JavaBeans configuration mechanism.
+
+
+*/
+@SuppressWarnings("serial")
+public class DispatcherServlet extends FrameworkServlet {
+	...
+}
+
+支付掉单的原因:
+	1. 银行根本没有收到支付请求，严格来说不算掉单，只能算未支付成功。
+	2. 网络阻塞/系统BUG，导致支付成功/失败的通知没有及时返回回来。
+	3. 系统BUG或者未告知所有结果，导致没有覆盖全所有的支付结果。
+	4. 数据库宕机/不可用，系统不可用等，导致没有将支付结果逻辑处理完毕。
+	5. 前端跳转和后台交互没有考虑周全，比如付款按钮后，立即取消，但已经发起了付款等等情况。
+怎么减少掉单:
+	1. 超时的请求，及时查询结果，然后进行处理。
+	2. 确认支付结果后，进行正确的补单操作(自动补单/手工补单)
+	3. 日切后的对账
+	4. 前后端交互需仔细考虑各种情况，以及做好各种限制。
+	5. 平台方需要保证支付通知在失败时，进行重试通知，直到一定次数；并提供接口查询。
+
+@SuppressWarnings("serial")
+public abstract class AbstractAutoProxyCreator extends ProxyProcessorSupport
+	implements SmartInstantiationAwareBeanPostProcessor, BeanFactoryAware {
+	protected static final Object[] DO_NOT_PROXY = null;
+	protected static final Object[] PROXY_WITHOUT_ADDITIONAL_INTERCEPTORS = new Object[0];
+	protected final Log logger = LogFactory.getLog(getClass());
+	private boolean freezeProxy = false;
+	private String[] interceptorNames = new String[0];
+	private boolean applyCommonInterceptorsFirst = true;
+	private TargetSourceCreator[] customTargetSourceCreators;
+	private BeanFactory beanFactory;
+	private final Set<String> targetSourcedBeans = 
+		Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>(16));
+	private final Set<Object> earlyProxyReferences = 
+		Collections.newSetFromMap(new ConcurrentHashMap<Object, Boolean>(16));
+	private final Map<Object, Class<?>> proxyTypes = new ConcurrentHashMap<Object, Class<?>>(16);
+	private final Map<Object, Boolean> advisedBeans = new ConcurrentHashMap<Object, Boolean>(256);
+}
+
+/* Default is global AdvisorAdapterRegistry */
+private AdvisorAdapterRegistry advisorAdapterRegistry = GlobalAdvisorAdapterRegistry.getInstance();
+
+@SuppressWarnings("serial")
+public class BeanNameAutoProxyCreator extends AbstractAutoProxyCreator {
+	private List<String> beanNames;
+	public void setBeanNames(String... beanNames) {
+		Assert.notEmpty(beanNames, "'beanNames' must not be empty");
+		this.beanNames = new ArrayList<String>(beanNames.length);
+		for (String mappedName : beanNames) {
+			this.beanNames.add(StringUtils.trimWhitespace(mappedName));
+		}
+	}
+	
+	@Override
+	protected Object[] getAdvicesAndAdvisorsForBean(Class<?> beanClass, String beanName, TargetSource targetSource) {
+		if (this.beanNames != null) {
+			for (String mappedName : this.beanNames) {
+				if (FactoryBean.class.isAssignableFrom(beanClass)) {
+					if (!mappedName.startsWith(BeanFactory.FACTORY_BEAN_PREFIX)) {
+						continue;
+					}
+					mappedName = mappedName.substring(BeanFactory.FACTORY_BEAN_PREFIX.length());
+				}
+				if (isMatch(beanName, mappedName)) {
+					return PROXY_WITHOUT_ADDITIONAL_INTERCEPTORS;
+				}
+				BeanFactory beanFactory = getBeanFactory();
+				if (beanFactory != null) {
+					String[] aliases = beanFactory.getAliases(beanName);
+					for (String alias : aliases) {
+						if (isMatch(alias, mappedName)) {
+							return PROXY_WITHOUT_ADDITIONAL_INTERCEPTORS;
+						}
+					}
+				}
+			}
+		}
+		return DO_NOT_PROXY;
+	}
+	
+	protected boolean isMatch(String beanName, String mappedName) {
+		return PatternMatchUtils.simpleMatch(mappedName, beanName);
+	}
+}
+
+public interface NavigableMap<K, V> extends SortedMap<K, V> {
+	Map.Entry<K, V> lowerEntry(K key);
+	K lowerKey(K key);
+	Map.Entry<K, V> floorEntry(K key);
+	K floorKey(K key);
+	Map.Entry<K, V> ceilingEntry(K key);
+	K ceilingKey(K key);
+	Map.Entry<K, V> higherEntry(K key);
+	K higherKey(K key);
+	Map.Entry<K, V> firstEntry();
+	Map.Entry<K, V> lastEntry();
+	Map.Entry<K, V> pollFirstEntry();
+	Map.Entry<K, V> pollLastEntry();
+	NavigableMap<K, V> descendingMap();
+	NavigableSet<K> navigableKeySet();
+	NavigableSet<K> descendingKeySet();
+	NavigableMap<K, V> subMap(K fromKey, boolean fromInclusive, K toKey, boolean toInclusive);
+	NavigableMap<K, V> headMap(K toKey, boolean inclusive);
+	NavigableMap<K, V> tailMap(K fromKey, boolean inclusive);
+	SortedMap<K, V> subMap(K fromKey, K toKey);
+	SortedMap<K, V> headMap(K toKey);
+	sortedMap<K, V> tailMap(K fromKey);
+}
+
+skip list是一种随机化的数据结构，基于并联的链表，实现简单，插入、删除、查找的复杂度均为O(logN)(大多数情况下)，因为其性能匹敌红黑树且实现简单，很多著名项目使用跳表来代替红黑树，例如LevelDB, Redis的底层存储结构使用SkipList。
+目前常用的key-value数据结构有三种: Hash, 红黑树, SkipList。他们有各自的优缺点:
+	1. Hash：插入、查找最快，为O(1);如使用链表实现则可以实现无锁;数据有序性需要显式的排序操作;
+	2. 红黑树: 插入、查找为O(logN), 但常数项较少；无锁化实现复杂性很高，一般需要加锁；数据天然有序；
+	3. SkipList: 插入、查找为O(logN)，但常数项比红黑树要大；底层结构为链表，可无锁实现；数据天然有序；
+一个跳表，具有以下几个特征：
+	1. 一个跳表应该有几个层(level)组成；通常是10-20层，levelDB中默认为12层；
+	2. 跳表的第0层包含所有的元素；且节点值是有序的；
+	3. 每一层都是一个有序的链表；层数越高越稀疏，这样在高层中能跳过很多不符合条件的数据
+	4. 如果元素x出现在第i层，则所有比i小的层都包含x；
+	5. 每个节点包含key及其对应的value和一个指向第n层的下个节点的指针数组x->next[level]表示第level层的x的下一个节点。
+
+public class ConcurrentSkipListSet<E> extends AbstractSet<E>
+	implements NavigableSet<E>, Cloneable, java.io.Serializable {
+	private static final long serialVersionUID = -2479143111061671589L;
+	private final ConcurrentNavigableMap<E, Object> m;
+	
+	public ConcurrentSkipListSet() {
+		m = new ConcurrentSkipListMap<E, Object>();
+	}
+	
+	public ConcurrentSkipListSet(Comparator<? super E> comparator) {
+		m = new ConcurrentSkipListMap<E, Object>(comparator);
+	}
+	
+	public ConcurrentSkipListSet(Collection<? extends E> c) {
+		m = new ConcurrentSkipListMap<E, Object>();
+		addAll(c);
+	}
+	
+	public ConcurrentSkipListSet(SortedMap<E> s) {
+		m = new ConcurrentSkipListMap<E, Object>(s.comparator());
+		addAll(s);
+	}
+	
+	ConcurrentSkipListSet(ConcurrentNavigableMap<E,Object> m) {
+        this.m = m;
+    }
+	
+	private static final sum.misc.Unsafe UNSAFE;
+	private static final long mapOffset;
+	static {
+		try {
+			UNSAFE = sun.misc.Unsafe.getUnsafe();
+			Class<?> k = ConcurrentSkipListSet.class;
+			mapOffset = UNSAFE.objectFieldOffset(k.getDeclaredField("m));
+		} catch (Exception e) {
+			throw new Error(e);
+		}
+	}
+}
+
+JDK5中引入的Executor框架把任务的提交和执行进行解耦，只需要定义好任务，然后提交给线程池，而不用关系该任务是如何执行、被哪个线程执行，以及什么时候执行。
+Executors是java线程池的工厂类，通过它可以快速初始化一个符合业务需求的线程池，如Executors.newFixedThreadPool方法。
+public static ExecutorService newFixedThreadPool(int nThreads) {
+	return new ThreadPoolExecutor(nThreads, nThreads, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<Runnable>());
+}
+
+public class ThreadPoolExecutor extends AbstractExecutorSerive {
+	...
+	/* Starts a core thread, causing it to idly wait for work. This override the default policy of 
+		starting core threads only when new tasks are executed. This method return false if all 
+		core threads have already been started.
+	*/
+	public boolean prestartCoreThread() {
+		return workerCountOf(ctl.get()) < corePoolSize && addWorker(null, true);
+	}
+	public int prestartAllCoreThreads() {
+		int n = 0;
+		while (addWorker(null, true))
+			++n;
+		return n;
+	}
+	...
+}
+
+JDK中提供了几种BlockingQueue: ArrayBlockingQueue, DelayedWorkQueue, DelayQueue, LinkedBlockingQueue, PriorityBlockingQueu, SynchronousQueue。
+
+public static ExecutorService newCachedThreadPool() {
+	return new ThreadPoolExecutor(0, Integer.MAX_VALUE,
+									60L, TimeUnit.SECONDS,
+									new SynchronousQueu<Runnable>());
+}
+
+
+ThreadPoolExecutor, Creating new Threads:
+New Threads are created using a ThreadFactory. If not otherwise specified, a Executors.defaultThreadFactory is used, that crates threads to all be in the same ThreadGroup and with same NORM_PRIORITY priority and non-daemon status. By supplying a different ThreadFactory, you can alter the thread's name, thread group, priority, daemon status, etc. If a ThreadFactory fails to create a thread when asked by returning null from newThread(), the executor will continue, but might not be able to execute any tasks. Threads should possess the "modifyThread" RuntimePermission. If worker threads or other threads using the pool do not possess this permission, service may be degraded: configuration changes may not take effect in a timely manner, and a shutdown pool may remain in a state in which termination is possible but not completed.
+
+By default, the keep-alive policy applies only when there are more than corePoolSize threads. But method allowCoreThreadTimeOut(boolean) can be used to apply this time-out policy to core threads as well, so lang as the KeepAliveTime value is non-zero.
+
+RejectedExecutionHandler
+
+Eclipse的插件: AmastersUML,可以生成Activity Diagram, Class Diagram, Sequence Diagram, Use case Diagram. 

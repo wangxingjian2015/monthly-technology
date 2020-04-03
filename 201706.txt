@@ -1,0 +1,419 @@
+JMX不可用，往往是由于垃圾回收时间停顿时间过长，内存溢出等问题引起的。
+线上故障分析的原则首先是采取措施快速恢复故障对业务的影响，然后才是采集信息，分析定位问题，并最终给出解决办法。
+通过查看日志，确定是哪种内存溢出，堆内存溢出可发生的地方：Java heap space(堆空间), perm space(持久代)
+Exception in thread "main" java.lang.OutOfMemoryError: Java heap space
+收集Dump文件的几种方式:
+	1. 设置JVM启动参数:-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/jvm/dump
+	2. 打印GC日志，设置5个参数
+	3. 使用jmap命令收集: jmap -dump:live, format=b, file=/opt/jvm/dum.hprof pid
+	4. 使用其他jdk工具，jconsole, jvisualvm
+
+响应式框架:Spring WebFlux, 默认使用Reactor框架
+JProfiler
+public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
+	implements ScheduledExecutorService {
+	private volatile boolean continueExistingPeriodicTaskAfterShutdown;
+	private volatile boolean executeExistingDelayedTasksAfterShutdown = true;
+	private bolatile boolean removeOnCancel = false;
+	private static final AtomicLong sequencer  = new AtomicLong();
+}
+
+Redis的过期策略：定时删除+惰性删除
+Redis的内存淘汰策略：volatile-ttl, volatile-lru, volatile-random, noevication, allkeys-lru,allkeys-random
+分布式系统中实现幂等性的几种方式：
+1. MVCC方案
+2. 去重表
+3. 悲观锁
+4. select + insert
+5. 状态机幂等
+6. token机制，防止页面重复提交
+7. 对外提供接口的api如何保证幂等
+8. 全局唯一ID
+
+年老代堆空间被占满：
+异常：java.lang.OutOfMemoryError:Java heap space
+持久代被占满:
+异常：java.lang.OutOfMemoryError:PermGen space
+堆栈溢出：
+异常: java.lang.StackOverflowError
+线程堆栈满：
+异常：Fatal: Stack size too small
+系统内存被占满：
+异常：java.lang.OutOfMemoryError:unable to create new native thread 
+Metaspace内存溢出：
+异常：java.lang.OutOfMemoreyError:Metaspace 
+直接内存溢出：
+异常：java.lang.OutofMemoryError:Direct buffer memory
+
+根据JVM8规范，JVM运行时内存共分为虚拟机栈，元空间，虚拟机堆，程序计数器，本地方法栈5个部分，还有直接内存，属于操作系统的本地内存，也是可以直接操作的。
+-XX:MetaspaceSize
+-XX:MaxMetaspaceSize
+-XX:MinMetaspaceFreeRatio
+-XX:MaxMetaspaceFreeRatio
+-XX:MaxDirectMemorySize
+-Xss
+-XX:+PrintGCDetails参数用于告诉虚拟机在发生垃圾收集时打印内存回收日志，并且在进程退出的时候输出当前内存的各区域分配情况。
+jinfo可以通过-flag选项动态修改指定的Java进程中的某些JVM flag的值。但只有少数的flag。
+java -XX:+PrintFlagsFinal -version|grep manageable
+通过选项-XX:+PrintFlagsFinal可以列出所有JVM flag，其中manageable的flag可以通过JDK management interface动态修改
+乐观锁的实现方式：(增加版本号或者时间戳)
+1. select version from tb where id = ?;update tb set name = ?, version=version + 1 where id = ? and version = ?
+2. update tb set name = ? where id = ? and status = ?
+Redis提供了RDB持久化和AOF持久化
+
+缓存穿透(缓存和数据库中都没有数据)解决方案：
+1. 将不存在的也进行缓存，时间设置短一点，防止大流量攻击
+2. 对查询主键进行规则校验(比如设置一个校验位)，防止暴力攻击
+3. 布隆过滤
+缓存雪崩(缓存中大量数据到过期时间)解决方案：
+1. 设置缓存的过期时间为随机时间，热数据缓存更长时间，冷数据较短时间。
+2. 设置热点数据永不过期
+3. 数据预热
+缓存击穿(缓存中没有数据但数据库中有数据)解决方案：
+1. 设置热点数据永不过期
+2. 加互斥锁
+
+select/poll/epoll都是IO多路复用机制，就是通过一种机制，可以监视多个描述符，一旦某个描述符就绪(accept,read,write,close)，就能够通知程序进行相应的读写操作。但select/poll/epoll本质上都是同步IO，因为都需要在读写事件就绪后自己负责进行读写，也就是读写过程是阻塞的，而异步IO无需自己负责读写，异步IO的实现会负责把数据从内核拷贝到用户空间。
+
+Reactor线程模型：(Reactor线程模型是基于同步非阻塞IO实现的，对于异步非阻塞IO的实现是Proactor模型)
+1. Reactor单线程模型
+2. Reactor多线程模型
+3. Reactor主从多线程模型
+
+SoftReference<T> sf: 内存不足时回收
+WeakReference<T> wf: 下次垃圾回收时回收
+wf.isEnQueued(); 返回是否被垃圾回收器标记为即将回收
+PhantomReference<T> pf:垃圾回收时回收，无法通过引用取到对象值。
+pf.isEnQueued(); 返回是否从内存中已经删除
+虚引用主要用于检测对象是否已经从内存中删除
+
+CoutDownLatch:一个线程A或者组线程A等待其他线程等待其他线程执行完毕后，一个线程或者组线程A才继续执行；
+CyclicBarrier:一组线程使用await()指定barrier，所有线程都到达各自的barrier后，再同时执行各自barrier下面的代码；
+Semaphore:用来控制同时访问特定资源的线程数量，它通过协调各个线程，以保证合理的使用公共资源。
+CountDownLatch的countDown()方法不会引起阻塞，只是计数器减一，并返回。
+Redis没有直接使用C语言中的字符串结构，对其进行了封装，使用自己的简单动态字符串(simple dynamic string, SDS)的抽象类型。Redis中，默认以SDS作为自己的字符串表示，只有在一些字符串不可能出现变化的地方使用C字符串。
+SDS的定义如下:
+struct sdshdr {
+	int len;
+	int free;
+	char buf[];   //buf的大小=(len + free + 1)
+}
+Redis这样封装String的好处：
+1. 常数复杂度获取字符串长度
+2. 杜绝缓冲区溢出
+3. 减少修改字符串时带来的内存重分配次数：空间预分配和惰性空间释放
+4. 二进制安全
+5. 兼容部分C字符串函数
+哪些用了AQS(整个JDK8就这5个类):
+1. ReentrantLock 
+2. CountDownLatch
+3. Semaphore
+4. ReentrantReadWriteLock
+5. ThreadPoolExecutor
+哪些基于ReentrantLock:
+1. ArrayBlockingQueue(基于ReentrantLock和Condition)
+2. DelayQueue
+3. CyclicBarrier 
+4. 
+5. 
+哪些使用了LockSupport:
+1. ReentrantLock(LockSupport.park, LockSupport.unpack, LockSupport.parkNanos)
+2. LinkedTransferQueue
+3. 
+4. 
+5. 
+public class BoundedBuffer {
+	final Lock lock = new ReentrantLock();
+	final Condition notFull = lock.newCondition();
+	final Condition notEmpty = lock.newCondition();
+	final Object[] items = new Object[100];
+	int putIndex, takeIndex, count;
+	
+	public void put(Object item) throws InterruptedException {
+		lock.lock();
+		try {
+			while (count == items.length) {
+				notFull.await();
+			}
+			items[putIndex ++] = item;
+			if (putIndex == items.length) {
+				putIndex = 0;
+			}
+			count ++;
+			notEmpty.signal();
+		} finally {
+			lock.unlock();
+		}
+	}
+	
+	public Object take() throws InterruptedException {
+		lock.lock();
+		try {
+			while (count == 0) {
+				notEmpty.await();
+			}
+			Object o = items[takeIndex--];
+			count --;
+			if (takeIndex < 0) {
+				takeIndex = items.length - 1;
+			}
+			notFull.signal();
+			return o;
+		} finally {
+			lock.unlock();
+		}
+	}
+}
+
+condition是依赖于ReentrantLock的，不管是调用await进入等待还是signal唤醒，都必须取到锁才能进行操作。在AQS里有一个阻塞队列，用于保存等待获取锁的线程的队列，还有一个保存ConditionObject的条件队列。阻塞队列是双向链表，条件队列是单向链表。
+public interface Condition {
+	void await() throws InterruptedException;
+	void awaitUninterruptibly();
+	long awaitNanos(long nanosTimeout) throws InterruptedException;
+	boolean await(long time, TimeUnit unit) throws InterruptedException;
+	boolean awaitUnitl(Date deadline) throws InterruptedException;
+	void signal();
+	void signalAll();
+}
+
+支持延迟消息的消息队列：RocketMQ
+RocketMQ怎么实现延迟消息: 在Broker中，根据设置的不同级别，投递到不同的Schedule队列，然后这些Schedule通过各自的Schedule Task获取消息，如果已经到了，那投递到实际的队列，否则，进入下次Schedule。
+缓存和数据的一致性：
+1. 先淘汰缓存，再更新数据库。(如果数据库成功之前，有读请求，会导致旧数据进入缓存，引发数据不一致)
+2. 双删+超时: 写库前后删除缓存，并且设置缓存的超时时间
+3. 异步淘汰：订阅数据库的binlog
+@Retryable
+@EnableRetry
+<dependency>
+	<groupId>org.springframework.retry</groupId>
+	<artifactId>spring-retry</artifactId>
+</dependency>
+spring-retry注意点：
+1. spring-retry使用aspectJ，会有aspectJ的使用限制，如果是方法内部调用，会使spring-retry失效
+2. 重试机制，不能在接口实现类里面写，所以要做重试，必须单独写个@service
+3. maxAttemps说是重试次数，但实际上是最多调用次数。
+Spring-Retry的重试策略:
+1. NeverRetryPolicy
+2. AlwaysRetryPolicy
+3. SimpleRetryPolicy
+4. TimeoutRetryPolicy
+5. ExceptionClassifierRetryPolicy
+6. CircuitBreakerRetryPolicy
+7. CompositeRetryPolicy
+Spring-Retry的回退策略：
+1. NoBackOffPolicy
+2. FixedBackOffPolicy
+3. UniformRandomBackOffPolicy
+4. ExponentialBackOffPolicy
+5. ExponentialRandomBackOffPolicy
+CMS重要参数
+1. UseCMSCompactAtFullCollection
+2. CMSFullGCBeforeCompaction 
+3. -XX:CMSInitiatingOccupancyFraction
+4. -XX:+UseCMSInitiatingOccupancyOnly
+5. -XX:+CMSScavengeBeforeRemark: 采用并行标记方式降低停顿
+6. -XX:+UseConcMarkSweepGC
+7. -XX:UseParNewGC()
+8. -XX:ConcGCThreads=<value>
+9. -XX:+DisableExplicitGC
+10. -XX:+UseCompressedOops
+ZK是一个分布式的，开源的分布式应用程序协调服务，是Google的Chubby一个开源实现，它是集群的管理者，监视着集群中各个节点提交的反馈进行下一步合理操作。
+Zookeeper提供了文件系统和通知机制。
+Zookeeper有4种类型的znode:persistent, persistent_sequential, ephemeral, ephemeral_sequential
+ZK的通知机制：客户端注册关心的目录节点，当目录节点发生变化(数据改变，被删除，子目录节点增加删除)时，ZK会通知客户端。
+ZK可以做命名服务，配置管理，集群管理，分布式锁，队列管理。
+ZK的角色：1. Leader; 2. Follower; 3. Observer; 4. Client 
+ZK的核心是原子广播，这个机制保证了各个Server之间的同步。实现这个机制的协议叫做Zab协议。Zab协议有两种模式：恢复协议(选主)和广播协议(同步);为了保证事务的顺序一致性，ZK采用了递增的事务id号(zxid)来标识事务。所有的提议(proposal)都在被提出的时候加上了zxid。zxid是一个64位数字，它高32位是epoch用来标识leader关系是否改变，每次一个leader被选出来，它都会有一个新的epoch，标识当前属于哪个leader的统治时期。低32位用于递增计数。
+
+原子广播协议Zab是一致性协议，ZK把其作为数据一致性的算法。Zab是在Paxos算法基础上进行扩展而来的。Zookeeper使用单一进程Leader用于处理客户端所有事务请求，采用Zab协议将服务器状态以事务形式广播到所有Follower上，由于事务间可能存在着依赖关系，Zab协议保证Leader广播的变更序列被顺序的处理，一个状态被处理那么它所依赖的状态也已经提前被处理。
+ZK下server的三种工作状态: looking, leading, following
+当leader崩溃或者leader失去大多数的follower，这时候zk进入恢复模式，恢复模式需要重新选举出一个新的leader，让所有的Server都恢复到一个正确的状态。Zk的选举算法有两种：一种是基于basic paxos实现的，另外一种是基于fast paxos算法实现的。系统默认的选举算法为fast paxos。
+ZK的选主流程(basic paxos)：
+1.选举线程由当前Server发起选举的线程担任，其主要功能是对投票结果进行统计，并选出推荐的Server； 
+2.选举线程首先向所有Server发起一次询问(包括自己)； 
+3.选举线程收到回复后，验证是否是自己发起的询问(验证zxid是否一致)，然后获取对方的id(myid)，并存储到当前询问对象列表中，最后获取对方提议的leader相关信息(id,zxid)，并将这些信息存储到当次选举的投票记录表中； 
+4.收到所有Server回复以后，就计算出zxid最大的那个Server，并将这个Server相关信息设置成下一次要投票的Server； 
+5.线程将当前zxid最大的Server设置为当前Server要推荐的Leader，如果此时获胜的Server获得n/2 + 1的Server票数，设置当前推荐的leader为获胜的Server，将根据获胜的Server相关信息设置自己的状态，否则，继续这个过程，直到leader被选举出来。 通过流程分析我们可以得出：要使Leader获得多数Server的支持，则Server总数必须是奇数2n+1，且存活的Server的数目不得少于n+1. 每个Server启动后都会重复以上流程。在恢复模式下，如果是刚从崩溃状态恢复的或者刚启动的server还会从磁盘快照中恢复数据和会话信息，zk会记录事务日志并定期进行快照，方便在恢复时进行状态恢复。
+ZK选主流程(fast paxos):
+fast paxos流程是在选举过程中，某Server首先向所有Server提议自己要成为leader，当其它Server收到提议以后，解决epoch和 zxid的冲突，并接受对方的提议，然后向对方发送接受提议完成的消息，重复这个流程，最后一定能选举出Leader。
+分布式一致性算法:1. CAP理论; 2. 2P; 3. Paxos; 4. Zab; 5. Raft
+RocketMQ:支持全局顺序和分区顺序消息;可以按照sharding key进行分区
+JVM常用启动参数:
+1. -Xms
+2. -Xmx
+3. -Xmn 
+4. -Xss
+5. -XX:+PrintCommandLineFlags
+6. -XX:-UseBiasedLocking
+7. 具体GC算法的参数：CMS_GC_OPTS="-XX:NewRatio=1 -XX:+UseConcMarkSweepGC -XX:CMSInitiatingOccupancyFraction=75 -XX:+UseCMSInitiatingOccupancyOnly -XX:MaxTenuringThreshold=6 -XX:+ParallelRefProcEnabled -XX:+ExplicitGCInvokesConcurrent"
+8. GC日志参数：GCLOG_OPTS="-Xloggc:${LOGDIR}/gc.log  -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCDateStamps -XX:+PrintGCDetails"
+  CRASH_OPTS="-XX:ErrorFile=${LOGDIR}/hs_err_%p.log -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=${LOGDIR}/"
+9. JMX参数：JMX_OPTS="-Dcom.sun.management.jmxremote.port=${JMX_PORT} -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dsun.rmi.transport.tcp.threadKeepAliveTime=75000 -Djava.rmi.server.hostname=${LOCALIP}"
+10. 自定义参数
+
+Spring的三种注入方式：构造函数注入/属性注入/工厂注入(静态工厂和非静态工厂)
+Spring构造函数循环依赖的解决方法:
+1. 重新设计;
+2. 使用注解@Lazy
+3. 通过Setter/Field注入
+4. 使用@PostConstruct
+5. 实现ApplicationContextAware和InitializingBean
+在构造器注入和prototype类型的属性注入的循环依赖会导致实例化Bean失败。
+ClassPathXmlApplicationContext
+AnnotationConfigWebApplicationContext
+finishBeanFactoryInitialization里面的preInstantiateSingletons方法：
+DefaultListableBeanFactory类中的几个关键属性：
+//一级缓存：保存所有singletonBean的实例
+private final Map<String, Object> singletonObjects = new ConcurrentHashMap<>(64);
+//二级缓存：保存所有早期创建的Bean对象，这个Bean还没有完成依赖注入
+private final Map<String, Object> earlySingletonObjects = new HashMap<>(16);
+//三级缓存：singletonBean的生产工厂
+private final Map<String, ObjectFactory<?>> singletonFactories = new HashMap<>(16);
+//保存所有完成初始化的Bean的名字
+private final Set<String> registeredSingletons = new LinkedHashSet<>(64);
+//标识指定name的Bean对象是否处于创建状态，这个状态很重要
+private final Set<String> singletosCurrentlyInCreation = Collections.newSetFromMap(new ConcurrentHashMap<Stringm, Boolean>(16));
+
+年轻代为什么采用的是复制算法：年轻代中的对象都是短暂的，基本思想是将内存分为两块，每次只用其中一块，当一块内存用完，将存活的复制到另外一块上，这样不会产生内存碎片。
+
+年轻代优化算法：在实际运行中，由于Eden区总是会保存大量的新对象，所以HotSpot虚拟机为了加快此空间的内存分配，而使用"Bump-The-Pointer"和"TLAB(Thread-Local-Allocation-Buffers)"两种技术。
+Bump-The-Pointer：该技术的主要特点是跟踪在Eden区保存的最后一个对象，这个最后保存的对象一般会保存在Eden区的顶部，这样在每次创建新对象时只需要检查最后保存的对象后面是否有足够的空间就可以很快的判断出Eden区中是否还有剩余空间，这个做法可以极大的提高内存分配速度
+TLAB(Thread-Local-Allocation-Buffers):虽然Bump-The-Pointer算法可以提高内存的分配速度，但是这种做法并不适合多线程操作情况。所以又采用了TLAB算法将Eden区分为多个数据块，每个数据块分别使用Bump-The-Pointer技术进行对象保存与分配。
+年轻代调整参数：
+1. -Xmn 2. -Xss 3. -XX:SurvivorRate 4. -XX:NewSize 5. -XX:NewRatio
+-XX:InitialTenuringThreshold和-XX:MaxTenuringThrehold
+用于设置晋升到老年代的对象年龄的最小值和最大值，每个对象坚持过一次Minor GC之后，年龄加1.
+
+CMS:Concurrent Mark-Sweep Collector，一是使用并发收集，二是使用的算法是Mark-Sweep。该GC的特点是低延迟并且会有浮动垃圾的问题。
+CMS是为了低延迟，通过尽可能并行执行垃圾回收的几个阶段来把延迟控制到最低。CMS是老年代的垃圾GC，一般情况下会有ParNew来配合执行(默认情况下也是ParNew)，ParNew也是使用并行的算法来执行年轻代的回收。也可以选主使用Serial收集器来收集年轻代，不过一般很少这样使用。通过说的CMS是指广义上的CMS，包含以下几个：ParNew(Young) GC + CMS(Old) GC + Serial(应对核心的CMS GC某些时候失败的情况)
+CMS垃圾收集器的触发条件：
+1. 如果没有设置-XX:+UseCMSInitiatingOccupancyOnly，虚拟机会根据收集的数据决定是否触发
+2. 老年代使用率达到阈值CMSInitiatingOccupancyFraction，默认92%，前提是设置了第一个参数
+3. 永久代的使用率达到阈值CMSInitiatingPermOccupancyFraction，默认92%，前提是开启CMSClassUnloadingEnabled并且配置了第一个参数
+4. 新生代的晋升担保失败。
+CMS的收集阶段7个阶段：
+1. 初始标记：可以通过-XX:+CMSParallelInitialMarkEnabled开启该阶段的并行标记，使用多个线程进行标记，减少暂停时间。
+2. 并发标记 
+3. 预清理
+4. 可中断预清理
+5. 最终标记 
+6. 并发清除
+7. 并发重置 
+
+CMS失败处理，在运行CMS的时候，可能会出现两种类型的失败：
+1. 并发模式失败日志(concurrent mode failure):当老年代无法容纳新生代GC晋升的对象时，并发模式失败，意味着CMS退化为STW的Full GC，也就是Serial GC。
+针对这种情况，有两个方面需要考虑：
+	1、给后台线程更多的运行机会。也就是说更早的启动并发收集周期。CMS收集器在老年代使用占到60%的时候启动比占到70%才启动，显然前者完成垃圾回收的几率更大。为了实现这种配置，可以同时设置以下两个参数：-XX:CMSInitiatingOccupancyFraction=N和-XX:+UseCMSInitiatingOccupancyOnly。如果同时设置了这两个参数就可以让CMS只根据老年代的使用比例来决定是否启动CMS垃圾收集。
+	2、更多的线程来运行CMS。之所以出现并发模式失败，是因为CMS的速度跑不赢对象晋升到老年代的速度了。所以可以通过给CMS更多的线程来加快CMS的速度。可以通过-XX:ConGCThreads=N来设置后台线程的数量。默认情况下线程数ConcGCThreads=(3+ParallelGCThreads)/4，是根据ParallelGCThreads来计算的，ParallelGCThreads的值可以通过-XX:ParallelGCThreads参数来设置。并不是说设置越多的线程来运行CMS越好，因为CMS在运行的时候会完整的占用一颗CPU，所以在CPU比较紧张的情况下，这个值还是要谨慎设置的。
+2. 晋升失败(promoration failure)：老年代有足够的空间，但由于碎片化严重，无法容纳新生代中晋升的对象，发生晋升失败。
+晋升失败的原因是碎片化严重，所以这个问题的解决方案就是如何减少碎片化的问题。CMS提供了两个参数来对碎片进行整理和压缩。-XX:+UseCMSCompactAtFullCollection这个设置的作用是在进行FullGC的时候对碎片进行整理和压缩。-XX:CMSFullGCsBeforeCompaction=*这个参数是设置在进行多少次FullGC的时候对老年代的内存进行一次碎片整理压缩。通过设置这两个参数可以有效的对碎片问题进行优化。同样需要注意的是对碎片进行整理压缩是一个比较耗时的操作，所以也需要谨慎设置。
+下面给出CMS的一些参数说明：
+-XX:+UseConcMarkSweepGC 激活CMS收集器
+-XX:ConcGCThreads 设置CMS线程的数量
+-XX:+UseCMSInitiatingOccupancyOnly 只根据老年代使用比例来决定是否进行CMS
+-XX:CMSInitiatingOccupancyFraction 设置触发CMS老年代回收的内存使用率占比
+-XX:+CMSParallelRemarkEnabled 并行运行最终标记阶段，加快最终标记的速度
+-XX:+UseCMSCompactAtFullCollection 每次触发CMS Full GC的时候都整理一次碎片
+-XX:CMSFullGCsBeforeCompaction=* 经过几次CMS Full GC的时候整理一次碎片
+-XX:+CMSClassUnloadingEnabled 让CMS可以收集永久带，默认不会收集
+-XX:+CMSScavengeBeforeRemark 最终标记之前强制进行一个Minor GC
+-XX:+ExplicitGCInvokesConcurrent 当调用System.gc()的时候，执行并行gc，只有在CMS或者G1下该参数才有效
+分布式锁的需求:
+	1. 本身的需求:保证在分布式的应用集群中，同一个方法在同一时间只能被一台机器上的一个线程执行。
+	2. 需要是一个可重入锁(避免死锁)
+	3. 最好是阻塞锁(看具体业务需求)
+	4. 最好是公平锁(看具体业务需求)
+	5. 有高可用的获取锁和释放锁
+	6. 获取锁和释放锁的性能要好
+
+基于Redis做分布式锁的基本要素: setnx(), expire(), getset(0;
+Redlock是Redis的作者antirez给出的集群模式的Redis分布式锁，它基于N个完全独立的Reids节点
+基于Redisson的分布式锁
+Zookeeper的分布式锁，容易引起羊群效应。可以进行优化，比如创建临时-顺序节点，只watch比自己小的最大节点
+ZooKeeper的分布式锁优点：有效的解决单点问题/不可重入/非阻塞问题/锁无法释放的问题
+ZooKeeper的分布式锁缺点：性能上并没有缓存服务那么高，因为每次创建锁和释放锁的过程中，都要动态创建，删除临时节点来实现锁功能。ZK中创建和删除节点只能通过Leader来执行，然后将数据同步到所有Follower。
+基于Consul做分布式锁
+
+在Java中可以使用堆外内存，比如Netty，大量使用堆外内存，但这部分内存并不归JVM管理，GC算法并不会对它们进行回收，所以在使用堆外内存时，防止内存一直得不到释放，造成线上故障。
+JDK的ByteBuffer类提供了一个接口allocateDirect(int capacity)进行堆外内存的申请，底层通过unsafe.allocateMemory(size)实现
+DirectByteBuffer:JDK中使用DirectByteBuffer对象来表示堆外内存，每个DirectByteBuffer对象在初始化时，都会创建一个对应的Cleaner对象，这个Cleaner对象会在合适的时候执行unsafe.freeMemory(address),从而回收堆外内存。
+其中first是Cleaner类的静态变量，Cleaner对象在初始化时，会被添加到Cleaner链表中，和first形成引用关系，ReferenceQueue是用来保存需要回收的Cleaner对象。
+如果该DirectByteBuffer对象在一次GC中被回收，此时只有Cleaner对象唯一保存了堆外内存的数据(开始地址，大小和容量),在下次Full GC时，把该Cleaner对象放入到ReferenceQueue中，并触发clean方法。
+Cleaner对象的clean方法有两个作用：1. 把自身从Cleaner链表删除，从而在下次GC被回收；2. 释放堆外内存
+如果JVM一直没有执行Full GC的话，无效的Cleaner对象就无法放入到ReferenceQueue中，从而堆外内存也一直得不到释放，其实在初始化DirectByteBuffer对象时，如果当堆外内存条件苛刻时，会主动调用System.gc()强制执行Full GC。
+不过很多线上环境的JVM参数有-XX:+DisableExplicitGC，导致了System.gc()等于一个空函数，根本不会触发FGC，这一点在使用Netty框架时需要注意是否会出问题。
+MySQL在RC, RR两个隔离级别下都会使用到MVCC，并且只在这两个级别下使用。
+1.读不影响写：事务以排他锁的形式修改原始数据，读时不加锁，因为 MySQL 在事务隔离级别Read committed 、Repeatable Read下，InnoDB 存储引擎采用非锁定性一致读－－即读取不占用和等待表上的锁。即采用的是MVCC中一致性非锁定读模式。因读时不加锁，所以不会阻塞其他事物在相同记录上加 X锁来更改这行记录。
+2.写不影响读：事务以排他锁的形式修改原始数据，当读取的行正在执行 delete 或者 update 操作，这时读取操作不会因此去等待行上锁的释放。相反地，InnoDB 存储引擎会去读取行的一个快照数据。
+
+public DelayQueue<E extends Delayed> extends AbstractQueue<E>
+	implements BlockingQueue<E> {
+	private final transient ReetrantLock lock = new ReentrantLock();
+	private final PriorityQueue<E> q = new PriorityQueue<E>();
+	private Thread leader = null;
+	private final Condition available = lock.newCondition();
+	...
+}
+DelayQueue类的主要作用：是一个无界的BlockingQueue，用于放置实现了Delayed接口的对象，其中的对象只能在其到期时才能从队列中取走。这种队列是有序的，即队头对象的延迟到期时间最长。注意：不能将null元素放置到这种队列中。
+RocketMQ既支持Push也支持Pull，两种模式的区别：
+Push：消费者订阅主题，然后自动进行集群内消息队列的动态负载，自动拉取消息，准实时；
+Pull: 消费者无需订阅主题，由应用程序直接根据MessageQueue拉取消息。
+在RocketMQ里Consumer分为2类：MQPullConsumer和MQPushConsumer，本质上都是拉模式，即Consumer轮询从Broker拉取消息。
+区别：
+Push:Consumer把轮询过程封装了，并注册MessageListener监听器，取到消息后，唤醒MessageListener的consumeMessage()来消费，对用户来说，感觉消息是被推过来的。
+Pull:取消息需要用户写，首先通过Topic拿到MessageQueue的集合，遍历MessageQueue集合，然后针对每个MessageQueue批量取消息，一次取完后，记录该队列下一次要取的offset，直到取完，再换另一个MessageQueue。
+整个类的生命周期：加载(Loading)->验证(Verification)->准备(Preparation)->解析(Resuolution)->初始化(Initialization)->使用(Using)->卸载(Unloading)，其中验证/准备/解析统称为连接(Linking)
+类加载器在类层次划分，OSGI，热部署，代码加密等领域应用广泛。
+The reason for having the three basic class loaders(Bootstrap, extension, system) is mostly security.
+划分不同的ClasssLoader还有一个目的：为了隔离
+ExtClassLoader和AppClassLoader都是URLClassLoader的子类
+Trie树(又叫字典树)：是一种树形结构，是一种哈希树的变种，典型应用是用于统计，排序和保存大量的字符串（但不仅限于字符串），所以经常被搜索引擎系统用于文本词频统计。它的优点是：利用字符串的公共前缀来减少查询时间，最大限度地减少无谓的字符串比较，查询效率比哈希树高。
+public class CountDownLatch {
+	//Synchronization control For CountDownLatch 
+	//Uses AQS state to represent count.
+	private static final class Sync extends AbstractQueuedSynchroinzer {
+		private static final long serialVersionUID = *L;
+		Sync(int count) {
+			setState(count);
+		}
+		int getCount() {
+			return getState();
+		}
+		protected int tryAcquireShared(int acquires) {
+			return (getState() == 0) ? 1 : -1;
+		}
+		protected boolean tryReleaseShared(int release) {
+			//Decrement count; signal when transition to zero 
+			for(;;) {
+				int c = getState();
+				if (c == 0) return false;
+				int nextc = c - 1;
+				if (compareAndSetState(c, nextc)) {
+					return nextc == 0;
+				}
+			}
+		}
+	}
+	
+	private final Sync sync;
+	public CountDownLatch(int count) {
+		if (count < 0) throw new IllegalArgumentException("count < 0");
+		this.sync = new Sync(count);
+	}
+	
+	public void await() throws InterruptedException {
+		sync.acquireSharedInterruptibly(1);
+	}
+	public void await(long timeout, TimeUnit unit) throws InterruptedException {
+		return sync.tryAcquireSharedNanos(1, unit.toNanos(timeout));
+	}
+	public void countDown() {
+		sync.releaseShared(1);
+	}
+	public void getCount() {
+		return sync.getCount();
+	}
+	public String toString() {
+		return super.toString() + "[Count = " + sync.getCount() + "]";
+	}
+}

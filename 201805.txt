@@ -1,0 +1,516 @@
+在ThreadPoolExecutor类中，最核心的任务提交方法是execute()方法，虽然通过submit也可以提交任务，但实际上sumbit里面最终调用的还是execute()方法。
+
+Http的版本发展历史：
+版本       产生时间                       内容                                          发展现状
+http/0.9   1991年     不涉及数据包传输，规定客户端和服务器之间通信格式，只能GET请求   没有作为正式标准
+http/1.0   1996年     传输格式不限制，增加PUT,PATCH,HEAD,OPTIONS,DELETE命令           正式作为标准
+http/1.1   1997年     持久连接(长连接),节约带宽，HOST域，管道机制，分块传输编码       2015年前使用最广泛
+http/2     2015年     多路复用, 服务器推送, 头信息压缩,二进制协议等                   逐渐覆盖市场
+
+Http特点：
+	1. 无状态:协议对客户端没有状态存储；
+	2. 无连接:Http/1.1之前，由于无状态特点，每次请求需要通过TCP三次握手四次挥手，和服务器重新建立连接；
+	3. 基于请求和响应模式；
+	4. 简单快速、灵活；
+	5. 通信使用明文、请求和响应不会对通信方进行确认、无法保护数据的完整性。
+Https特点：
+	1. 内容加密：采用混合加密技术，中间者无法直接查看明文内容；
+	2. 验证身份：通过证书认证客户端访问的是自己的服务器；
+	3. 保护数据完整性：防止传输的内容被中间人冒充或者篡改；
+为什么需要三次握手？为了防止已经失效的连接请求报文突然又传送到了服务端，因而产生错误。
+比如：client发出的第一个连接请求报文段并没有丢失，而是在某个网络节点长时间的滞留了，以致于延误到连接释放以后的某个时间才到达server。本来这是一个早已失效的报文段，但是server收到此失效的连接报文段后，就误认为是client再次发出的一个新连接请求，于是就向client发出确认报文段，同意建立连接。假设不采用“三次握手”，那么只要server发出确认，新的连接就建立了，由于client并没有发出建立连接的请求，因此不会理睬server的确认，也不会向server发送ack，但server却以为新的连接已经建立，并一直等待client发来数据。所以没有采用"三次握手"，这种情况下server的很多资源就白白浪费了。
+为什么需要四次挥手？TCP是全双工模式，当client发出FIN时，只是表示client已经没有数据要发送了，client告诉server，它的数据已经全部发送完毕；但是，此时client还是可以接收来自server的数据；当server返回ACK时，表示它已经确认client没有数据发送了，但是server还是可以发送数据；当server也发送了FIN报文时，表示server也没有数据要发送了，如果收到client的确认报文，之后就可以彼此关闭TCP连接了。
+
+为了解决HTTP/1.1版本利用率不高的问题，提出了HTTP/2.0版本。增加双工模式，即不仅客户端能够同时发送多个请求，服务端也能同时处理多个请求，解决了对头阻塞的问题(HTTP/2.0使用了多路复用的技术，做到同一个连接并发处理多个请求，并且并发请求的数量比HTTP/1.1大几个数量级). HTTP请求响应中，状态行和请求/响应头都是信息字段，并没有真正的数据，因此在HTTP/2.0中将所有的信息字段建立一张表，为表中的每个字段建立索引，客户端和服务端共同使用这个表，他们之间以索引号来表示信息字段，这样就避免了HTTP/1.0旧版本的重复繁琐的字段，并以压缩的方式传输，提高利用率。另外，HTTP2.0增加服务器推送的功能，即不经请求服务端主动向客户端发送数据。
+
+Netscape在1994年创建了SSL协议的原始规范，SSL协议和TLS协议历史上已经经历多次版本更新迭代，SSL2.0、SSL3.0等SSL协议以及TLS1.0等低版本TLS协议，已经被证实存在严重漏洞，比如POODLE和BEAST攻击就是利用低版本SSL/TLS协议漏洞实现的。
+PCI DSS建议支付卡行业组织机构尽快迁移到更安全的协议：
+	1）更新TLS协议：使用TLS v1.1或更高版本，强烈建议使用TLS v1.2；
+	2）修复TLS软件抵御漏洞攻击：实施漏洞攻击（如OpenSSL中的Heartbleed漏洞）可能带来严重风险。保持TLS软件保持最新更新状态，确保及时修复漏洞，防止漏洞攻击。
+	3）配置TLS安全：除了配置更高版本的TLS协议外，请确保TLS安全配置，确保支持安全的TLS密码套件和密钥大小，并禁用对其他不必要的密码套件的支持。
+
+协议       时间/年份
+SSL1.0     	未知
+SSL2.0		1995
+SSL3.0		1996
+TLS1.0		1999
+TLS1.1		2006
+TLS1.2		2008
+TLS1.3		2018
+
+ASM, CGlib, Java Proxy, Javassist;
+
+java.lang.instrument.Instrumentation类为直接操作Java字节码提供了另一个途径。有两种方法可以达到目的：
+	1. 当JVM以指示一个代理类的方式启动时，将传递给代理类的premain方法一个Instrumentation实例;
+	2. 当JVM提供某种机制在JVM启动之后某个时刻启动代理时，将传递给代理代码的agentmain方法一个Instrumentation实例；
+
+/* This class provides services needed to instrument Java programming language code.
+Instrumentation is the addition of  byte-codes to methods for the purpose of gathering data to be utilized by tools.
+Since the changes are purely additive, these tools do not modify application state or behavior.
+Examples of such benign tools include monitoring agents, profilers, coverage analyzers, and event loggers.
+There are two ways to obtain an instance of the Instrumentation interface:
+	1. When a JVM is launched in a way that indicates an agent class. In that case an Instrumentation instance is passed to the premain method of the agent class.
+	2. When a JVM provides a mechanism to start agents sometime after the JVM is launched. In that case an Instrumentation instance is passed to the agentmain method of the agent code.
+
+Once an agent acquires an Instrumentation instance, the agent may call methods on the instance at any time. 
+*/
+public interface Instrumentation { ... }
+
+利用 Java 代码，即 java.lang.instrument 做动态 Instrumentation 是 Java SE 5 的新特性，它把 Java 的 instrument 功能从本地代码中解放出来，使之可以用 Java 代码的方式解决问题。使用 Instrumentation，开发者可以构建一个独立于应用程序的代理程序（Agent），用来监测和协助运行在 JVM 上的程序，甚至能够替换和修改某些类的定义。有了这样的功能，开发者就可以实现更为灵活的运行时虚拟机监控和 Java 类操作了，这样的特性实际上提供了一种虚拟机级别支持的 AOP 实现方式，使得开发者无需对 JDK 做任何升级和改动，就可以实现某些 AOP 的功能了。
+
+　　在 Java SE 6 里面，instrumentation 包被赋予了更强大的功能：启动后的 instrument、本地代码（native code）instrument，以及动态改变 classpath 等等。这些改变，意味着 Java 具有了更强的动态控制、解释能力，它使得 Java 语言变得更加灵活多变。
+
+　　“java.lang.instrument”包的具体实现，依赖于 JVMTI。JVMTI（Java Virtual Machine Tool Interface）是一套由 Java 虚拟机提供的，为 JVM 相关的工具提供的本地编程接口集合。JVMTI 是从 Java SE 5 开始引入，整合和取代了以前使用的 Java Virtual Machine Profiler Interface (JVMPI) 和 the Java Virtual Machine Debug Interface (JVMDI)，而在 Java SE 6 中，JVMPI 和 JVMDI 已经消失了。JVMTI 提供了一套”代理”程序机制，可以支持第三方工具程序以代理的方式连接和访问 JVM，并利用 JVMTI 提供的丰富的编程接口，完成很多跟 JVM 相关的功能
+
+
+/*Used to wrap code that will execute potentially functionality(typically meaning a service call over the network) with fault and latency tolerance, statistics and performance metrics capture, circuit breaker and bulkhead functionality. This command is essentially a blocking command but provides an Observable facade if used with observe()
+*/
+public abstract class HystrixCommand<R> extends AbstractCommand<R> implements HystrixExecutable<R>, HystrixInvokableInfo<R>, HystrixObservable<R> {
+	protected HystrixCommand(HystrixCommandGroupKey group) {
+		super(group, null, null, null, null, null, null, null, null, null, null, null);
+	}
+	
+	protected HystrixCommand(HystrixCommandGroupKey group, HystrixThreadPoolKey threadPool) {
+		super(group, null, threadPool, null, null, null, null, null, null, null, null, null);
+	}
+	
+	protected HystrixCommand(HystrixCommandGroupKey group, int executionIsolationThreadTimeoutInMilliseconds) {
+		super(group, null, null, null, null, HystrixCommandProperties.Setter().withExecutionTimeoutInMilliseconds(executionIsolationThreadTimeoutInMilliseconds), null, null, null, null, null, null)
+	}
+	
+	...
+	
+	HystrixCommand(HystrixCommandGroupKey group, HystrixCommandKey key, HystrixThreadPoolKey threadPoolKey, 
+		HystrixCircuitBreaker circuitBreaker, HystrixThreadPool threadPool, HystrixCommandProperties.Setter commandPropertiesDefaults, HystrixThreadPoolProperties.Setter threadPoolPropertiesDefaults,
+		HystrixCommandMetrics metrics, TryableSemaphore fallbackSemaphore, TryableSemaphore executionSemaphore,
+		HystrixPropertiesStrategy propertiesStrategy, HystrixCommandExecutionHook executionHook) {
+			super(group, key, threadPoolKey, circuitBreaker, threadPool, commandPropertiesDefaults, threadPoolPropertiesDefaults, metrics, fallbackSemaphore, executionSemaphore, propertiesStrategy, executionHook);
+	}
+	
+	final public static class Setter {
+		...
+	}
+	
+	private final AtomicReference<Thread> executionThread = new AtomicReference<Thread>();
+	private final AtomicBoolean interruptOnFutureCancel = new AtomicBoolean(false);
+	protected abstract R run() throws Exception;
+	protected R getFallback() {
+		throw new UnsupportedOperationException("No fallback available.");
+	}
+	
+}
+
+数组在内存中如何分配: 数组必须先初始化，然后才能使用，就是数组中的数组元素分配到内存空间，并为每个数组元素赋值。
+数组的初始化分为两类：1):动态初始化：只能指定长度，由系统给出初始值；2):静态初始化: 给出初始化值，由系统决定长度。两种方式只能使用一种，不能进行结合。
+
+What's New in JDK8?
+	- Java Programming Language
+		- Lambda Expressions
+		- Method references(方法引用使用一对冒号::)
+		- Default methods enable new functionality to be added to the interfaces of libraries and ensure binary compatibility with code written for older versions of those interfaces.
+		- Repeating Annotations provide the ability to apply the same annotation type more than once to the same declaration or type use.
+		- Type Annotations provide the ability to apply an annotation anywhere a type is used, not just on a declaration. Used with a pluggable type system, this feature enables improved type checking of your code.
+		- Improved type inference.
+		- Method parameter reflection.
+	- Collections
+		- Classes in the new java.util.stream package provide a Stream API to support functional-style operations on streams of elements. The Stream API is integrated into the Collections API, which enables bulk operations on collections, such as sequential or parallel map-reduec transformations.
+		- Performance Improvement for HashMaps with Key Collisions.
+	- Compact Profiles contain predefined subsets of the Java SE platform and enable applications that do not require the entire Platform to be deployed and run on small devices.
+	- Security
+		- Client-side TLS 1.2 enabled by default
+		- New variant of AccessController.doPrivileged that enables code to assert a subset of its privileges, without preventing the full traversal of the stack to check for other permissions.
+		- Stronger algorithms for password-based encryption
+		- SSL/TLS Server Name Indication (SNI) Extension support in JSSE Server
+		-Support for AEAD algorithms: The SunJCE provider is enhanced to support AES/GCM/NoPadding cipher implementation as well as GCM algorithm parameters. And the SunJSSE provider is enhanced to support AEAD mode based cipher suites. See Oracle Providers Documentation, JEP 115.
+		-KeyStore enhancements, including the new Domain KeyStore type java.security.DomainLoadStoreParameter, and the new command option -importpassword for the keytool utility
+		-SHA-224 Message Digests
+		-Enhanced Support for NSA Suite B Cryptography
+		-Better Support for High Entropy Random Number Generation
+		-New java.security.cert.PKIXRevocationChecker class for configuring revocation checking of X.509 certificates
+		-64-bit PKCS11 for Windows
+		-New rcache Types in Kerberos 5 Replay Caching
+		-Support for Kerberos 5 Protocol Transition and Constrained Delegation
+		-Kerberos 5 weak encryption types disabled by default
+		-Unbound SASL for the GSS-API/Kerberos 5 mechanism
+		-SASL service for multiple host names
+		-JNI bridge to native JGSS on Mac OS X
+		-Support for stronger strength ephemeral DH keys in the SunJSSE provider
+		-Support for server-side cipher suites preference customization in JSSE
+	- JavaFX (略)
+	- Tools
+		- The jjs command is provided to invoke the Nashorn engine.
+		- The java command launches JavaFX applications.
+		- The java man page has been reworked.
+		- The jdeps command-line tool is provided for analyzing class files.
+		- Java Management Extensions(JMX) provide remote access to diagnostic commands.
+		- The jarsigner tool has an option for requesting a signed time stamp from a Time Stamping Authority(TSA).
+		- Javac tool
+			-The -parameters option of the javac command can be used to store formal parameter names and enable the Reflection API to retrieve formal parameter names.
+			-The type rules for equality operators in the Java Language Specification (JLS) Section 15.21 are now correctly enforced by the javac command.
+			-The javac tool now has support for checking the content of javadoc comments for issues that could lead to various problems, such as invalid HTML or accessibility issues, in the files that are generated when javadoc is run. The feature is enabled by the new -Xdoclint option. For more details, see the output from running "javac -X". This feature is also available in the javadoc tool, and is enabled there by default.
+			-The javac tool now provides the ability to generate native headers, as needed. This removes the need to run the javah tool as a separate step in the build pipeline. The feature is enabled in javac by using the new -h option, which is used to specify a directory in which the header files should be written. Header files will be generated for any class which has either native methods, or constant fields annotated with a new annotation of type java.lang.annotation.Native.
+		- Javadoc tool(略)
+	- Internationalization
+		- Unicode Enhancements, including support for Unicode 6.2.0
+		- Adoption of Unicode CLDR Data and the java.locale.providers System Property
+		- New Calendar and Locale APIs
+		- Ability to Install a Custom Resource Bundle as an Extension
+	- Deployment 
+		-For sandbox applets and Java Web Start applications, URLPermission is now used to allow connections back to the server from which they were started. SocketPermission is no longer granted.
+		-The Permissions attribute is required in the JAR file manifest of the main JAR file at all security levels.
+	- Date-Time Package - a new set of packages that provide a comprehensive date-time model.
+	- Scripting -The Rhino javascript engine has been replaced with the Nashorn Javascript Engine
+	- Pack200
+		- Pack200 Support for Constant Pool Entries and New Bytecodes Introduced by JSR 292
+		- JDK8 support for class files changes specified by JSR-292, JSR-308 and JSR-335
+	- IO and NIO
+		- New SelectorProvider implementation for Solaris based on the Solaris event port mechanism. To use, run with the system property java.nio.channels.spi.Selector set to the value sun.nio.ch.EventPortSelectorProvider.
+		- Decrease in the size of the <JDK_HOME>/jre/lib/charsets.jar file
+		- Performance improvement for the java.lang.String(byte[], *) constructor and the java.lang.String.getBytes() method.
+	- java.lang and java.util Packages
+		- Parallel Array Sorting
+		- Standard Encoding and Decoding Base64
+		- Unsigned Arithmetic Support
+	- JDBC
+		- The JDBC-ODBC Bridge has been removed.
+		- JDBC 4.2 introduces new features.
+	- Java DB - JDK 8 includes Java DB 10.10.
+	- Networking
+		- The class java.net.URLPermission has been added.
+		- In the class java.net.HttpURLConnection, if a security manager is installed, calls that request to open a connection require permission.
+	- Concurrency
+		- Classes and interfaces have been added to the java.util.concurrent package.
+		- Methods have been added to the java.util.concurrent.ConcurrentHashMap class to support aggregate operations based on the newly added streams facility and lambda expressions.
+		- Classes have been added to the java.util.concurrent.atomic package to support scalable updatable variables.
+		- Methods have been added to the java.util.concurrent.ForkJoinPool class to support a common pool.
+		- The java.util.concurrent.locks.StampedLock class has been added to provide a capability-based lock with three modes for controlling read/write access.
+	- Java XML - JAXP
+	- HotSpot
+		- Hardware intrinsics were added to use Advanced Encryption Standard(AES). The UseAES and UseAESIntrinsics flags are available to enable hardware-based AES intrinsics for Intel hardware. The hardware must be 2010 or newer Westmere hardware. Note: AES intrinsics are only supported by the Server VM. For example, to enable hardware AES, use the following flags: -XX:+UseAES -XX:+UseAESIntrinsics . To disable hardware AES use the following flags: -XX:-UseAES -XX:-UseAESIntrinsics
+		- Removla of PermGen.
+		- Default methods in the Java Programming Language are supported by the byte code instrunctions for method invocation.
+	- Java Mission Control 5.3 Release Notes - JDK8 includes Java Mission Control 5.3
+
+JVM为所有程序内部动作定义了一个偏序关系:happens-before，要想保证执行动作B的线程看到动作A的结果(无论A和B是否发生在同一个线程)，A和B之间就必须满足happens-before关系。
+happens-before规则：
+	1. 程序次序法则:线程中的每个动作A都happens-before于该线程中的每个动作B，其中，在程序中，所有的动作B都能出现在A之后。
+	2. 监视器锁法则:对一个监视器锁的解锁都happens-before于每一个后续对同一个监视器锁的加锁。
+	3. volatile变量法则:对volatile域的写入操作happens-before于每一个后续对同一个域的读写操作。
+	4. 线程启动法则:在一个线程里，对Thread.start的调用happens-before于每个启动线程的动作。
+	5. 线程终止法则:线程中的任何动作都happens-before于其他线程检测到这个线程已经终结，或者从Thread.join调用中成功返回，或者Thread.isAlive返回false.
+	6. 中断法则:一个线程调用另一个线程的interrupt happens-before于被中断线程发现中断
+	7. 终结法则:一个对象的构造函数的结束happens-before于这个对象finalizer的开始
+	8. 传递性:如果A happens-before B,且B happens-before C,则A happens-before于C.
+
+public class ConcurrentHashMap<K, V> extends AbstractMap<K, V> 
+				implements ConcurrentMap<K, V>, Serializable {
+	...
+	//Encoding for Node hash fields.
+	static final int MOVED     = -1;   //hash for forwarding nodes
+	static final int TREEBIN   = -2;   //hash for roots of trees
+	static final int RESERVED  = -3;   //hash for transient reservations
+	static final int HASH_BITS = 0x7fffffff;   //usable bits of normal node hash 
+	static final int spread(int h) {
+		return (h ^ (h >>> 16)) & HASH_BITS;
+	}
+	
+	public V get(Object key) {
+		Node<K, V>[] tab; 
+		Node<K, V> e, p; 
+		int n, eh;
+		K ek;
+		
+		if ((tab = table) != null && (n = tab.length) > 0 && 
+			(e = tabAt(tab, (n - 1) & h)) != null) {
+			if ((eh = e.hash) == h) {
+				if ((ek = e.key) == key || (ek != null && key.equals(ek))) 
+					return e.val;
+			} else if (eh < 0) {
+				return (p = e.find(h, key)) != null ? p.val : null;
+			}
+			while ((e = e.next) != null)
+				if (e.hash == h && ((ek = e.key) == key || (ek != null && key.equals(ek)))
+					retur e.val;
+		}
+		return null;
+	}
+	
+	/* Volatile access methods are used for table elements as well as elements of in-progress next table while resizing. All uses of the tab arguments must be null checked by callers. All callers also paranoically precheck that tab's length is not zero (or an equivalent check), thus ensuring that any index argument taking the form of a hash value anded with (length - 1) is a valid index. Note that, to be correct wrt arbitrary concurrency errors by users, these checks must operate on local variables, which accounts for some odd-looking inline assignments below. Note that calls to setTabAt always occur within locked regions, and so in principle require only release ordering, not full volatile semantics, but are currently coded as volatile writes to conservative. 
+	
+	*/
+	@SuppressWarnings("unchecked")
+	static final <K, V> Node<K, V> tabAt(Node<K, V>[] tab, int i) {
+		return (Node<K, V>) U.getOjbectVolatile(tab, ((long)i << ASHIFT) + ABASE);
+	}
+	
+	static final <K, V> boolean casTabAt(Node<K, V> tab, int i, Node<K, V> c, Node<K, V> v) {
+		return U.compareAndSwapObject(tab, ((long)i << ASHIFT) + ABASE, c, v);
+	}
+	
+	static final <K, V> void setTabAt(Node<K, V> tab, int i, Node<K, V> v) {
+		U.putObjectVolatile(tab, ((long)i << ASHITF) + ABASE, v);
+	}
+	
+	/* Key-value entry. This class is never exported out as a user-mutable Map.Entry (i.e., one supporting setValue; see MapEntry below), but can be used for read-only traversals used in bulk tasks. Subclass of Node with a negative hash field are special, and contain null keys and values (but are never exported). Otherwise, keys and vals are never null.
+	*/
+	static class Node<K, V> implements Map.Entry<K, V> {
+		final int hash;
+		final K key;
+		volatile V val;
+		volatile Node<K, V> next;
+		Node(int hash, K key, V val, Node<K,V> next) {
+            this.hash = hash;
+            this.key = key;
+            this.val = val;
+            this.next = next;
+        }
+
+        public final K getKey()       { return key; }
+        public final V getValue()     { return val; }
+        public final int hashCode()   { return key.hashCode() ^ val.hashCode(); }
+        public final String toString(){ return key + "=" + val; }
+        public final V setValue(V value) {
+            throw new UnsupportedOperationException();
+        }
+
+        public final boolean equals(Object o) {
+            Object k, v, u; Map.Entry<?,?> e;
+            return ((o instanceof Map.Entry) &&
+                    (k = (e = (Map.Entry<?,?>)o).getKey()) != null &&
+                    (v = e.getValue()) != null &&
+                    (k == key || k.equals(key)) &&
+                    (v == (u = val) || v.equals(u)));
+        }
+
+        /**
+         * Virtualized support for map.get(); overridden in subclasses.
+         */
+        Node<K,V> find(int h, Object k) {
+            Node<K,V> e = this;
+            if (k != null) {
+                do {
+                    K ek;
+                    if (e.hash == h &&
+                        ((ek = e.key) == k || (ek != null && k.equals(ek))))
+                        return e;
+                } while ((e = e.next) != null);
+            }
+            return null;
+        }
+	}
+	
+	//A node inserted at head of bins during transfer operations.
+	static final class ForwardingNode<K, V> extends Node<K, V> {
+		final Node<K, V>[] nextTable;
+		ForwardingNode(Node<K, V>[] tab) {
+			super(MOVED, null, null, null);
+			this.nextTable = tab;
+		}
+		
+		Node<K, V> find(int h, Object k) {
+			//loop to avoid arbitrarily deep recursion on forwarding nodes
+			outer: for (Node<K, V> tab = nextTable;;) {
+				Node<K, V> e; int n;
+				if (k == null || tab == null || (n = tab.length) == 0 || 
+						(e = tabAt(tab, (n - 1) & h)) == null)
+					return null;
+				for (;;) {
+					int eh; K ek;
+					if ((eh = e.hash) == h && ((ek = e.key) == k || (ek != null && k.equals(ek))))
+						return e;
+					if (eh < 0) {
+						if (e instanceof ForwardingNode) {
+							tab = ((ForwardingNode<K, V>)e).nextTable;
+							continue outer;
+						} else {
+							return e.find(h, k);
+						}
+					}
+					
+					if ((e = e.next) == null)
+						return null;
+				}
+			}
+		}
+	}
+	
+	//A place-holder node used in computeIfAbsent and compute
+	static final class ReservationNode<K, V> extends Node<K, V> {
+		ReservationNode() {
+			super(RESERVED, null, null, null);
+		}
+		Node<K, V> find(int h, Object k) {
+			return null;
+		}
+	}
+	
+	//Nodes for use in TreeBins
+	static final class TreeNode<K, V> extends Node<K, V> {
+		TreeNode<K, V> parent;   // red-black tree links
+		TreeNode<K, V> left;
+		TreeNode<K, V> right;
+		TreeNode<K, V> prev;   // needed to unlink next upon deletion 
+		boolean red;
+		
+		TreeNode(int hash, K key, V val, Node<K, V> next, TreeNode<K, V> parent) {
+			super(hash, key, val, next);
+			this.parent = parent;
+		}
+		
+		Node<K, V> find(int h, Object k) {
+			return findTreeNode(h, k, null);
+		}
+		
+		final TreeNode<K, V> findTreeNode(int h, Object k, Class<?> kc) {
+			if (k != null) {
+				TreeNode<K, V> p = this;
+				do {
+					int ph, dir; K pk; TreeNode<K, V> q;
+					TreeNode<K, V> pl = p.left, pr = p.right;
+					if ((ph = p.hash) > h) {
+						p = pl;
+					} else if (ph < h) {
+						p = pr;
+					} else if ((pk = p.key) == k || (pk != null && k.equals(pk))) {
+						return p;
+					} else if (pl == null) {
+						p = pr;
+					} else if (pr == null) {
+						p = pl;
+					} else if ((kc != null ||
+                              (kc = comparableClassFor(k)) != null) &&
+                             (dir = compareComparables(kc, k, pk)) != 0)
+                        p = (dir < 0) ? pl : pr;
+                    else if ((q = pr.findTreeNode(h, k, kc)) != null)
+                        return q;
+                    else
+                        p = pl;
+				} while (p != null);
+			}
+			return null;
+		}
+	}
+	
+	/*TreeNodes used at the heads of bins. TreeBins do not hold user keys or values, but instead point to list of TreeNodes and their root. They also maintain a parasitic read-write lock forcing writers (who hold bin lock) to wait for readers (who do not) to complete before tree restructuring operations.
+	*/
+	static final class TreeBin<K, V> extends Node<K, V> {
+		TreeNode<K, V> root;
+		volatile TreeNode<K, V> first;
+		volatile Thread waiter;
+		volatile int lockState;
+		// values for lockState
+		static final int WRITER = 1;  // set while holding write lock
+		static final int WAITER = 2;  // set when waiting for write lock
+		static final int READER = 4;  // increment value for setting read lock 
+		...
+	}
+	
+	// Unsafe mechanics
+    private static final sun.misc.Unsafe U;
+    private static final long SIZECTL;
+    private static final long TRANSFERINDEX;
+    private static final long BASECOUNT;
+    private static final long CELLSBUSY;
+    private static final long CELLVALUE;
+    private static final long ABASE;
+    private static final int ASHIFT;
+
+    static {
+        try {
+            U = sun.misc.Unsafe.getUnsafe();
+            Class<?> k = ConcurrentHashMap.class;
+            SIZECTL = U.objectFieldOffset
+                (k.getDeclaredField("sizeCtl"));
+            TRANSFERINDEX = U.objectFieldOffset
+                (k.getDeclaredField("transferIndex"));
+            BASECOUNT = U.objectFieldOffset
+                (k.getDeclaredField("baseCount"));
+            CELLSBUSY = U.objectFieldOffset
+                (k.getDeclaredField("cellsBusy"));
+            Class<?> ck = CounterCell.class;
+            CELLVALUE = U.objectFieldOffset
+                (ck.getDeclaredField("value"));
+            Class<?> ak = Node[].class;
+            ABASE = U.arrayBaseOffset(ak);
+            int scale = U.arrayIndexScale(ak);
+            if ((scale & (scale - 1)) != 0)
+                throw new Error("data type scale not a power of two");
+            ASHIFT = 31 - Integer.numberOfLeadingZeros(scale);
+        } catch (Exception e) {
+            throw new Error(e);
+        }
+    }
+	
+}
+
+synchronized同步代码块是使用moniterenter和moniterexit指令实现的，同步方法(需要查看JVM底层实现)依靠的是方法修饰符上的ACCSYNCHRONIZED实现。
+同步代码块：monitorenter指令插入到同步代码块的开始未知，monitorexit指令插入到同步代码块的结束未知，JVM需要保证每一个monitorenter都有一个monitorexit与之相对应。任何对象都有一个monitor与之相关联，当且一个monitor被持有之后，它将处于锁定状态。线程执行到monitorenter指令时，将会尝试获取对象所对应的monitor所有权，即尝试获取对象的锁。
+同步方法：synchronized方法则会被翻译成普通方法调用和返回指令如:invokevirtual, areturn指令，在VM字节码层面并没有任何特别的指令来实现被synchronized修饰的方法，而是在Class文件的方法表中将给方法的accessflags字段中的synchronized标志位置1，表示该方法是同步方法并使用调用该方法的对象或该方法所属的Class在JVM的内部对象标识Klass作为锁对象。
+Java对象头和monitor是实现synchronized的基础。synchronized用的锁是存在Java对象头里的。
+Hotspot虚拟机的对象头主要包括两部分数据：Mark Word(标记字段)、Klass Pointer(类型指针)。其中Klass Point是对象指向它的类元数据的指针，虚拟机通过这个指针来确定这个对象是哪个类的实例，Mark Word用于存储对象自身的运行时数据，它是实现轻量级锁和偏向锁的关键。Mark Word会随着程序的运行变化，变化状态有5种：无锁状态、轻量级锁、重量级锁、GC标记、偏向锁。
+什么是Moitor：与一切皆对象一样，所有的Java对象是天生的Monitor，每一个Java对象都有成为Monitor的潜质，因为在Java的设计中，每一个Java对象就自带了一把锁，它叫做内部锁或者Monitor锁。Monitor是线程私有的数据结构，每个线程都有一个可用monitor record列表，同时还有一个全局的可用列表。每一个被锁住的对象都会和一个monitor关联(对象头的MarkWord中的LockWord指向monitor的起始地址)，同时Monitor中有一个Owner字段存放拥有该锁的线程的唯一标识，表示该锁被这个线程占用。其结构包括Owner, EntryQ, RcThis, Nest, HashCode, Candidate;
+	- Owner:初始时为NULL表示当前没有任何线程拥有该monitor record,当线程成功拥有该锁后保存唯一标识，当锁被释放后置为NULL;
+	- EntryQ: 关联一个系统互斥锁(semaphore)，阻塞所有试图锁住monitor record失败的线程
+	- RcThis: 标识blocked或waiting在该monitor record上的所有线程的个数；
+	- Nest: 用来实现重入锁的计数。HashCode保存从对象头拷贝过来的HashCode值(可能还包括GC age)
+	- Candidate: 用来避免不必要的阻塞或者等待线程唤醒，因为每一次只有一个线程能够成功拥有锁，如果每次前一个释放锁的线程唤醒所有正在阻塞或等待的线程，会引起不必要的上下文切换(从阻塞到就绪然后因为竞争锁失败又被阻塞)，从而导致性能性能严重下降。Candidate只有两种可能的值0标识没有需要唤醒的线程1表示唤醒一个继任线程来竞争锁。
+
+自旋锁：线程的阻塞和唤醒需要CPU从用户态转为核心态，频繁的阻塞和唤醒对CPU来说是一件负担很重的工作，势必会给系统的并发性能带来很大的压力。同时我们发现在许多应用上面，对象锁的锁状态只会持续很短一段时间，为了这一段很短的时间频繁地阻塞和唤醒线程是非常不值得的。
+所以引入自旋锁。 
+何谓自旋锁？所谓自旋锁，就是让该线程等待一段时间，不会被立即挂起（就是不让前来获取该锁（已被占用）的线程立即阻塞），看持有锁的线程是否会很快释放锁。
+怎么等待呢？执行一段无意义的循环即可（自旋）。
+　　自旋等待不能替代阻塞，先不说对处理器数量的要求（多核，貌似现在没有单核的处理器了），虽然它可以避免线程切换带来的开销，但是它占用了处理器的时间。如果持有锁的线程很快就释放了锁，那么自旋的效率就非常好；反之，自旋的线程就会白白消耗掉处理的资源，它不会做任何有意义的工作，典型的占着茅坑不拉屎，这样反而会带来性能上的浪费。
+　　所以说，自旋等待的时间（自旋的次数）必须要有一个限度，如果自旋超过了定义的时间仍然没有获取到锁，则应该被挂起。自旋锁在JDK 1.4.2中引入，默认关闭，但是可以使用-XX:+UseSpinning开开启，在JDK1.6中默认开启。同时自旋的默认次数为10次，可以通过参数-XX:PreBlockSpin来调整。
+　　如果通过参数-XX:preBlockSpin来调整自旋锁的自旋次数，会带来诸多不便。假如我将参数调整为10，但是系统很多线程都是等你刚刚退出的时候就释放了锁（假如你多自旋一两次就可以获取锁），你是不是很尴尬？于是JDK1.6引入自适应的自旋锁，让虚拟机会变得越来越聪明。
+
+自适应自旋锁：JDK1.6引入了更加聪明的自适应自旋锁。所谓自适应意味着自旋的次数不再是固定的，它是由前一次在同一个锁的自旋时间及锁的拥有者的状态来决定。
+如何做到自适应自旋锁：线程如果自旋成功了，那么下次自旋的次数会更加多，因为虚拟机认为既然上次成功了，那么此次自旋也很有可能再次成功，那么它就会允许自旋等待持续的次数更多。反之，如果对于某个锁，很少有自旋能够成功的，那么在以后这个锁自旋的次数会减少甚至省略自旋过程，以免浪费处理器资源。有了自适应自旋锁，随着程序运行和性能监控信息的不断完善，虚拟机对程序锁的状况预测会越来越准确，虚拟机会变得越来越聪明。
+锁消除：为了保证数据的完整性，我们在进行操作时需要对这部分操作进行同步控制，但是在有些情况下，JVM检测到不可能存在共享数据竞争，这是JVM会对这些同步锁进行锁消除。锁消除的依据是逃逸分析的数据支持。 
+　　如果不存在竞争，为什么还需要加锁呢？
+　　所以锁消除可以节省毫无意义的请求锁的时间。变量是否逃逸，对于虚拟机来说需要使用数据流分析来确定，但是对于我们程序员来说这还不清楚么？我们会在明明知道不存在数据竞争的代码块前加上同步吗？但是有时候程序并不是我们所想的那样？
+　　我们虽然没有显示使用锁，但是我们在使用一些JDK的内置API时，如StringBuffer、Vector、HashTable等，这个时候会存在隐形的加锁操作。
+	比如StringBuffer的append()方法， Vector的add()方法：
+		public void vectorTest(){
+			Vector<String> vector = new Vector<String>();           
+			for(int i = 0 ; i < 10 ; i++){
+				vector.add(i + "");
+			} 
+			System.out.println(vector);
+		}
+	在运行这段代码时，JVM可以明显检测到变量vector没有逃逸出方法vectorTest()之外，所以JVM可以大胆地将vector内部的加锁操作消除。
+锁粗化：我们知道在使用同步锁的时候，需要让同步块的作用范围尽可能小，仅在共享数据的实际作用域中才进行同步。这样做的目的是为了使需要同步的操作数量尽可能缩小，如果存在锁竞争，那么等待锁的线程也能尽快拿到锁。 
+　　在大多数的情况下，上述观点是正确的。但是如果一系列的连续加锁解锁操作，可能会导致不必要的性能损耗，所以引入锁粗化的概念。 
+　　那什么是锁粗化？
+就是将多个连续的加锁、解锁操作连接在一起，扩展成一个范围更大的锁。
+　　如上面实例：vector每次add的时候都需要加锁操作，JVM检测到对同一个对象（vector）连续加锁、解锁操作，会合并一个更大范围的加锁、解锁操作，即加锁解锁操作会移到for循环之外。
+
+轻量级锁：引入轻量级锁的主要目的是在多没有多线程竞争的前提下，减少传统的重量级锁使用操作系统互斥量产生的性能消耗。
+当关闭偏向锁功能或者多个线程竞争偏向锁导致偏向锁升级为轻量级锁，则会尝试获取轻量级锁，其步骤如下：
+	1. 判断当前对象是否处于无锁状态（hashcode、0、01），若是，则JVM首先将在当前线程的栈帧中建立一个名为锁记录（Lock Record）的空间，用于存储锁对象目前的Mark Word的拷贝（官方把这份拷贝加了一个Displaced前缀，即Displaced Mark Word）；否则执行步骤（3）；
+	2. JVM利用CAS操作尝试将对象的Mark Word更新为指向Lock Record的指正，如果成功表示竞争到锁，则将锁标志位变成00（表示此对象处于轻量级锁状态），执行同步操作；如果失败则执行步骤（3）；
+	3. 判断当前对象的Mark Word是否指向当前线程的栈帧，如果是则表示当前线程已经持有当前对象的锁，则直接执行同步代码块；否则只能说明该锁对象已经被其他线程抢占了，这时轻量级锁需要膨胀为重量级锁，锁标志位变成10，后面等待的线程将会进入阻塞状态； 
+
+释放锁轻量级锁的释放也是通过CAS操作来进行的，主要步骤如下：
+	1. 取出在获取轻量级锁保存在Displaced Mark Word中的数据；
+	2. 用CAS操作将取出的数据替换当前对象的Mark Word中，如果成功，则说明释放锁成功，否则执行（3）；
+	3. 如果CAS操作替换失败，说明有其他线程尝试获取该锁，则需要在释放锁的同时需要唤醒被挂起的线程。
+　　轻量级锁能提升程序同步性能的依据是“对于绝大部分的锁，在整个同步周期内都是不存在竞争的”，这是一个经验数据。轻量级锁在当前线程的栈帧中建立一个名为锁记录的空间，用于存储锁对象目前的指向和状态。如果没有竞争，轻量级锁使用CAS操作避免了使用互斥量的开销，但如果存在锁竞争，除了互斥量的开销外，还额外发生了CAS操作，因此在有竞争的情况下，轻量级锁会比传统的重量级锁更慢。
+
+偏向锁：引入偏向锁主要目的是：为了在无多线程竞争的情况下尽量减少不必要的轻量级锁执行路径。上面提到了轻量级锁的加锁解锁操作是需要依赖多次CAS原子指令的。那么偏向锁是如何来减少不必要的CAS操作呢？我们可以查看Mark work的结构就明白了。
+只需要检查是否为偏向锁、锁标识为以及ThreadID即可，处理流程如下：
+	1. 检测Mark Word是否为可偏向状态，即是否为偏向锁1，锁标识位为01；
+	2. 若为可偏向状态，则测试线程ID是否为当前线程ID，如果是，则执行步骤（5），否则执行步骤（3）；
+	3. 如果线程ID不为当前线程ID，则通过CAS操作竞争锁，竞争成功，则将Mark Word的线程ID替换为当前线程ID，否则执行线程（4）；
+	4. 通过CAS竞争锁失败，证明当前存在多线程竞争情况，当到达全局安全点，获得偏向锁的线程被挂起，偏向锁升级为轻量级锁，然后被阻塞在安全点的线程继续往下执行同步代码块；
+	5. 执行同步代码块。 
+
+释放锁偏向锁的释放采用了一种只有竞争才会释放锁的机制，线程是不会主动去释放偏向锁，需要等待其他线程来竞争。偏向锁的撤销需要等待全局安全点（这个时间点是上没有正在执行的代码）。其步骤如下：
+	1. 暂停拥有偏向锁的线程，判断锁对象石是否还处于被锁定状态；
+	2. 撤销偏向苏，恢复到无锁状态（01）或者轻量级锁的状态。
+重量级锁：重量级锁通过对象内部的监视器(monitor)实现，其中monitor的本质是依赖于底层操作系统的Mutex Lock实现，操作系统实现线程之间的切换需要从用户态到内核态的切换，切换成本非常高。
+
+第二部分"Klass Pointer":对象指向它的类的元数据的指针，虚拟机通过这个指针来确定这个对象是哪个类的实例。(数组，对象头中还需有一块用于记录数组长度的数据，因为虚拟机可以通过普通Java对象的元数据信息确定Java对象的大小，但是从数组的元数据中无法确定数组的大小。)
+
+偏向锁在Java 6和Java 7里是默认启用的，但是它在应用程序启动几秒钟之后才激活，如有必要可以使用JVM参数来关闭延迟：XX:BiasedLockingStartupDelay=0。如果确定应用的锁通常情况下处于竞争状态，可以通过JVM参数关闭偏向锁：-XX:-UseBiasedLocking=false，那么程序默认会进入轻量级锁状态。
+锁消除：锁消除即删除不必要的加锁操作。根据代码逃逸技术，如果判断到一段代码中，堆上的数据不会逃逸出当前线程，那么可以认为这段代码是线程安全的，不必要加锁。逃逸分析和锁消除分别可以使用参数-XX:+DoEscapeAnalysis和-XX:+EliminateLocks(锁消除必须在-server模式下)开启
+

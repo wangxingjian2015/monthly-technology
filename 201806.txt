@@ -1,0 +1,619 @@
+Kafka: Log是对多个LogSegment对象的顺序组合，形成一个逻辑的日志。为了快速定位LogSegment, Log使用SkipList对LogSegment进行管理(跳表很常见，在Redis和LevelDB中都有使用，在JDK中也有)。跳表是一种比较随机化的数据结构，查找效率和红黑树差不多，但是插入和删除操作比红黑树简单很多。在Log中，将每个LogSegment的baseOffset作为key，LogSegment对象作为value，放入到segments这个跳表中管理。
+怎么样判定一个分区是否有副本是处于同步失效状态的呢？从Kafka 0.9.x版本开始通过唯一的一个参数replica.lag.time.max.ms（默认大小为10,000）来控制，当ISR中的一个follower副本滞后leader副本的时间超过参数replica.lag.time.max.ms指定的值时即判定为副本失效，需要将此follower副本剔出除ISR之外。具体实现原理很简单，当follower副本将leader副本的LEO（Log End Offset，每个分区最后一条消息的位置）之前的日志全部同步时，则认为该follower副本已经追赶上leader副本，此时更新该副本的lastCaughtUpTimeMs标识。Kafka的副本管理器（ReplicaManager）启动时会启动一个副本过期检测的定时任务，而这个定时任务会定时检查当前时间与副本的lastCaughtUpTimeMs差值是否大于参数replica.lag.time.max.ms指定的值。千万不要错误的认为follower副本只要拉取leader副本的数据就会更新lastCaughtUpTimeMs，试想当leader副本的消息流入速度大于follower副本的拉取速度时，follower副本一直不断的拉取leader副本的消息也不能与leader副本同步，如果还将此follower副本置于ISR中，那么当leader副本失效，而选取此follower副本为新的leader副本，那么就会有严重的消息丢失。
+Kafka源码注释中说明了一般有两种情况会导致副本失效：
+	1. follower副本进程卡住，在一段时间内根本没有向leader副本发起同步请求，比如频繁的Full GC。
+	2. follower副本进程同步过慢，在一段时间内都无法追赶上leader副本，比如IO开销过大。
+这里笔者补充一点，如果通过工具增加了副本因子，那么新增加的副本在赶上leader副本之前也都是处于失效状态的。如果一个follower副本由于某些原因（比如宕机）而下线，之后又上线，在追赶上leader副本之前也是出于失效状态。
+在Kafka 0.9.x版本之前还有另一个Broker级别的参数replica.lag.max.messages（默认大小为4000）也是用来判定失效副本的，当一个follower副本滞后leader副本的消息数超过replica.lag.max.messages的大小时则判定此follower副本为失效副本。它与replica.lag.time.max.ms参数判定出的失败副本去并集组成一个失效副本的集合，从而进一步剥离出ISR。
+不过这个replica.lag.max.messages参数很难给定一个合适的值，若设置的太大则这个参数本身就没有太多意义，若设置的太小则会让follower副本反复的处于同步、未同步、同步的死循环中，进而又会造成ISR的频繁变动。而且这个参数是Broker级别的，也就是说对Broker中的所有topic都生效，就以默认的值4000来说，对于消息流入速度很低的topic来说，比如TPS=10，这个参数并无用武之地；而对于消息流入速度很高的topic来说，比如TPS=20,000，这个参数的取值又会引入ISR的频繁变动，所以从0.9.x版本开始就彻底移除了这一参数，相关的资料还可以参考KIP16。
+
+在诊断失效副本之前，可以先尝试执行一次优先副本的选举操作来看看问题是否迎刃而解，反之也能够将排查的范围缩小。
+所谓的优先副本是指在Kafka的AR列表中的第一个副本。理想情况下，优先副本就是该分区的leader副本，所以也可以称之为preferred leader。Kafka要确保所有主题的优先副本在Kafka集群中均匀分布，这样就保证了所有分区的Leader均衡分布。保证Leader在集群中均衡分布很重要，因为所有的读写请求都由分区leader副本进行处理，如果leader分布过于集中，就会造成集群负载不均衡。试想一下，如果某分区的leader副本在某个很空闲的Broker上，而它的follower副本宿主于另一个很繁忙的Broker上，那么此follower副本很可能由于分配不到足够的系统资源而无法完成副本同步的任务，进而造成副本失效。
+所谓的优先副本的选举是指通过自动或者手动的方式促使优先副本选举为leader，也就是分区平衡，这样可以促进集群的均衡负载，也就进一步的降低失效副本生存的几率。需要注意的是分区平衡并不意味着Kafka集群的负载均衡，因为这还要考虑到集群中的分区分配是否均衡。更进一步每个分区的leader的负载也是各不相同，有些leader副本的负载很高，比如需要承受TPS为3W的负荷，而有些leader副本只需承载个位数的负荷，也就是说就算集群中的分区分配均衡，leader分配也均衡也并不能确保整个集群的负载就是均衡的，还需要其他一些硬性的指标来做进一步的衡量，这个会在下面的内容中涉及，本小节只探讨优先副本的选举。
+随着集群运行时间的推移，可能部分节点的变化导致leader进行了重新选举，若优先副本的宿主Broker在发生故障后由其他副本代替而担任了新的leader，就算优先副本的宿主Broker故障恢复而重新回到集群时若没有自动平衡的功能，该副本也不会成为分区的leader。Kafka具备分区自动平衡的功能，且默认情况下此功能是开启的，与此对应的参数是
+auto.leader.rebalance.enable=true。如果开启分区自动平衡，则Kafka的Controller会创建一个分区重分配检查及分区重分配操作（onPartitionReassignment）的定时任务，这个定时任务会轮询所有的Broker，计算每个Broker的分区不平衡率（Broker中的不平衡率=非优先副本的leader个数 / 分区总数）是否超过leader.imbalance.per.broker.percentage配置的比率，默认是10%，如果超过设定的比率则会自动执行优先副本的选举动作以求分区平衡。默认执行周期是leader.imbalance.check.interval.seconds=300，即5分钟。
+不过在生产环境中不建议将auto.leader.rebalance.enable设置为默认的true，因为这可能会引起负面的性能问题，也有可能会引起客户端一定时间的阻塞。因为执行的时间无法自主掌控，如果在关键时期（比如电商大促波峰期）执行关键任务的关卡摆上一道优先副本的自动选举操作，势必会有业务阻塞、频繁超时之类的风险。前面也分析过分区的均衡也不能确保集群的均衡，而集群一定程度上的不均衡也是可以忍受的，为防关键时期掉链子的行为，笔者建议还是把这类的掌控权把控在自己的手中，可以针对此类相关的埋点指标设置相应的告警，在合适的时机执行合适的操作。
+优先副本的选举是一个安全的（Kafka客户端可以自动感知分区leader的变更）并且也容易执行的一类操作。执行优先副本的选举是通过$KAFKA_HOME/bin/路径下的kafka-preferred-replica-election.sh脚本来实现的。
+不过上面的执行方法是针对Kafka集群中的所有topic都执行一次优先副本的选举，如果集群中存有大量的分区，这一操作有可能会失效，因为这个请求的内容会写入到Zookeeper的节点之中，如果这个请求的内容体过大而超过节点所能存储的数据（默认为1MB）时请求会失败。Kafka提供了更细粒度的优先副本的选举操作，它可以细化到某个topic的某个分区这个层级，这样在面对一次请求过大的问题时可以选择性的进行细粒度拆分，也可以在实现自定义的个性化优先副本的选举操作。
+在实现细粒度的优先副本的选举操作之前，首先要建立一个JSON文件，将所需要的topic以及对应的分区编号记录于其中
+
+net.ipv4.tcp_available_congestion_control=cubic reno 
+net.ipv4.tcp_congestion_control=cubic
+net.core.default_qdisc=pfifo_fast
+
+etcd: A distributed, reliable key-value store for the most critical data of a distributed system.
+Features:
+	- Simple interface: Read and write values using standard HTTP tools, such as curl;
+	- Key-value storage: Store data in hierarchically organized directories, as in a standard filesystem.
+	- Watch for changes: Watch specific keys or directories for changes and react to changes in values.
+	- Optional SSL client certificate authentication
+	- Benchmarked at 1000s of writes/s per instance;
+	- Optional TTLs for keys expiration;
+	- Properly distributed via Raft protocol;
+
+etcd is a strongly consistent, distributed key-value store that provides a reliable way to store data that needs to be accessed by a distributed system or cluster of machines. It gracefully handles leader elections during network partitions and can tolerate machine failure, even in the leader node.
+Applications of any complexity, form a simple web app to Kubernetes, can read data from and write into etcd.
+Your applications can read from and write data into etcd. A simple use case is storing database connection details or feature flags in etcd as key-value pairs. These values can be watched, allowing your app to reconfigure itself when they change. Advanced uses take advantage of etcd’s consistency guarantees to implement database leader elections or perform distributed locking across a cluster of workers.
+etcd is written in Go, which has excellent cross-platform support, small binaries and a great community behind it. Communication between etcd machines is handled via the Raft consensus algorithm.
+Latency from the etcd leader is the most important metric to track and the built-in dashboard has a view dedicated to this. In our testing, severe latency will introduce instability within the cluster because Raft is only as fast as the slowest machine in the majority. You can mitigate this issue by properly tuning the cluster. etcd has been pre-tuned on cloud providers with highly variable networks.
+
+Kubernetes: etcd is the backend for service discovery and stores cluster state and configuration.
+
+etcd和Zookeeper对比：
+	1. 一致性协议：etcd使用Raft协议，Zookeeper使用ZAB(类似于Paxos协议)，前者容易理解，方便工程实现；
+	2. 运维：etcd方便运维，Zookeeper难以运维；
+	3. 项目活跃度：etcd社区活跃，Zookeeper几乎不活跃；
+	4. API: etcd提供http+json, Google gRPC接口，跨平台语言，Zookeeper需使用其客户端；
+	5. 访问安全：etcd支持https访问，Zookeeper这方面缺失。
+
+Kafka中怎么做消息审计：
+Kafka端到端审计是指生产者生产的消息存入至broker,以及消费者从broker中消费消息这个过程之间消息个数及延迟的审计，以此可以检测是否有数据丢失，是否有数据重复以及端到端的延迟等。目前有3个产品：
+	1. Chaperone(Uber)
+	2. Confluent Control Center(非开源，收费)
+	3. Kafka Monitor(LinkedIn)
+
+Kafka客户端抽象出来的"组管理协议"充分运用在消费者、连接器、流处理三个使用场景中。客户端中的消费者、连接器中的工作者、流处理中的流进程都可以看做"组"的一个成员。当增加或者减少组成员时，在这个协议的约束下，每个组成员都可以获取到最新的任务，从而做到无缝的任务迁移。一旦理解了"组管理协议"，对于理解Kafka的架构设计是很有帮助的。
+
+org.apache.kafka.clients.producer.KafkaProducer是一个用于向Kafka集群发送数据的Java客户端，是线程安全的，多个线程可以共享一个Producer实例，而且这比在多个线程中每个线程创建一个实例速度要快些。
+batch.size:当多条消息发送到同一个partition时，该值控制生产者批量发送消息的大小，批量发送可以减少生产者到服务端的请求数，有助于提高客户端和服务端的性能。
+linger.ms:默认情况下缓冲区的消息会被立即发送到服务端，即使缓冲区的空间并没有被用完。可以将该值设置为大于0的值，这样发送者将等待一段时间后，再向服务端发送请求，以实现每次请求可以尽可能多的发送批量消息。
+batch.size和linger.ms是两种实现让客户端每次请求尽可能多的发送消息的机制，它们可以并存使用，并不冲突。
+buffer.memory：生产者用来缓存等待发送到服务器的消息的内存总字节数。如果消息发送比可传递到服务器的快，生产者将阻塞max.block.ms之后，抛出异常。
+此设置应该大致的对应生产者将要使用的总内存，但不是硬约束，因为生产者所使用的所有内存都用于缓冲。一些额外的内存将用于压缩（如果启动压缩），以及用于保持发送中的请求。
+首先要明确一点，那就是在内存缓冲里大量的消息会缓冲在里面，形成一个一个的Batch，每个Batch里包含多条消息。然后KafkaProducer有一个Sender线程会把多个Batch打包成一个Request发送到Kafka服务器上去。 那么如果要是内存设置的太小，可能导致一个问题：消息快速的写入内存缓冲里面，但是Sender线程来不及把Request发送到Kafka服务器。这样是不是会造成内存缓冲很快就被写满？一旦被写满，就会阻塞用户线程，不让继续往Kafka写消息了。
+所以对于“buffer.memory”这个参数应该结合自己的实际情况来进行压测，你需要测算一下在生产环境，你的用户线程会以每秒多少消息的频率来写入内存缓冲。比如说每秒300条消息，那么你就需要压测一下，假设内存缓冲就32MB，每秒写300条消息到内存缓冲，是否会经常把内存缓冲写满？经过这样的压测，你可以调试出来一个合理的内存大小。
+
+
+public interface BeanPostProcessor {
+	@Nullable
+	default Object postProcessBeforeInitialization(Object bean, String beanName) throws BeansException {
+		return bean;
+	}
+	@Nullable
+	default Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+		return bean;
+	}
+}
+
+public interface InstantiationAwareBeanPostProcessor extends BeanPostProcessor {
+	@Nullable
+	default Object postProcessBeforeInstantiation(Class<?> beanClass, String beanName) throws BeansException {
+		return null;
+	}
+	default boolean postProcessAfterInstantiation(Object bean, String beanName) throws BeansException {
+		return true;
+	}
+	@Nullable
+	default PropertyValues postProcessProperties(PropertyValues pvs, Object bean, String beanName) throws BeansException {
+		return null;
+	}
+	@Deprecated
+	@Nullable
+	default PropertyValues postProcessPropertyValues(PropertyValues pvs, PropertyDescriptor[] pds, Object bean, String beanName) throws BeansException {
+		return pvs;
+	}
+}
+/* Extension of the InstantiationAwareBeanPostProcessor interface, adding a callback for predicting the eventaul type of a processed bean.
+*/
+public interface SmartInstantiationAwareBeanPostProcessor extends InstantiationAwareBeanPostProcessor {
+	@Nullable
+	default Class<?> predictBeanType(Class<?> beanClass, String beanName) throws BeansException {
+		return null;
+	}
+	
+	@Nullable
+	default Constructor<?>[] determineCandidateConstructors(Class<?> beanClass, String beanName) throws BeansException {
+		return null;
+	}
+	
+	default Object getEarlyBeanReference(Object bean, String beanName) throws BeansException {
+		return bean;
+	}
+}
+
+public class LockSupport {
+    // Hotspot implementation via intrinsics API
+    private static final sun.misc.Unsafe UNSAFE;
+    private static final long parkBlockerOffset;
+    private static final long SEED;
+    private static final long PROBE;
+    private static final long SECONDARY;
+    static {
+        try {
+            UNSAFE = sun.misc.Unsafe.getUnsafe();
+            Class<?> tk = Thread.class;
+            parkBlockerOffset = UNSAFE.objectFieldOffset
+                (tk.getDeclaredField("parkBlocker"));
+            SEED = UNSAFE.objectFieldOffset
+                (tk.getDeclaredField("threadLocalRandomSeed"));
+            PROBE = UNSAFE.objectFieldOffset
+                (tk.getDeclaredField("threadLocalRandomProbe"));
+            SECONDARY = UNSAFE.objectFieldOffset
+                (tk.getDeclaredField("threadLocalRandomSecondarySeed"));
+        } catch (Exception ex) { throw new Error(ex); }
+    }
+	
+	private LockSupport() {} ///Cannot be instantiated.
+	private static void setBlocker(Thread t, Object arg) {
+		// Even though volatile, hotspot doesn't need a write barrier here.
+		UNSAFE.putObject(t, parkBlockerOffset, arg);
+	}
+	/* Makes availabel the permit for the given thread, if it was not already availabel. If the thread was blocked on park() then it will unblock. Otherwise its next call to park() is guaranteed not to block. This operation is not guaranteed to have any effect at all if the given thread has not been started.
+	*/
+	public static void unpack(Thread thread) {
+		if (thread != null)
+			UNSAFE.unpack(thread);
+	}
+	/* Disables the current thread for thread scheduling purpose unless the permit is available.
+	If the permit is available then it is consumed and the call returns immediately; otherwise the current thread becomes disabled for thread scheduling purpose and lie dormant until one of three things happens:
+		- Some other thread invokes unpark() with the current thread as the target; or 
+		- Some other thread Thread.interrupt() interrupts the current thread; or
+		- The call spuriously (that is, for no reason) returns.
+	This method does not report which of these caused the method to return. Callers should re-check the conditions which caused the thread to park in the first place. Callers may also determine, for example, the interrupt status of the thread upon return.
+	*/
+	public static void park(Object blocker) {
+		Thread t = Thread.currentThread();
+		setBlocker(t, blocker);
+		UNSAFE.park(false, 0L);
+		setBlocker(t, null);
+	}
+	
+	public static void parkNanos(Object blocker, long nanos) {
+		if (nanos > 0) {
+			Thread t = Thread.currentThread();
+			setBlocker(t, blocker);
+			UNSAFE.park(false, nanos);
+			setBlocker(t, null);
+		}
+	}
+	
+	public static void parkUntil(Object blocker, long deadline) {
+		Thread t = Thread.currentThread();
+		setBlocker(t, blocker);
+		UNSAFE.park(true, deadline);
+		setBlocker(t, null);
+	}
+	
+	public static Object getBlocker(Thread t) {
+		if (t == null)
+			throw new NullPointerException();
+		return UNSAFE.getObjectVolatile(t, parkBlockerOffset);
+	}
+	
+	public static void parkNanos(long nanos) {
+		if (nanos > 0)
+			UNSAFE.park(false, nanos);
+	}
+	public static void parkUntil(long deadline) {
+		UNSAFE.park(true, deadline);
+	}
+	
+	static final int nextSecondarySeed() {
+		int r;
+		Thread t = Thread.currentThread();
+		if ((r = UNSAFE.getInt(t, SECONDARY) != 0) {
+			r ^= r << 13;   //xorshift
+			r ^= r >>> 17;
+			r ^= r << 5;
+		} else if ((r = java.util.concurrent.ThreadLocalRandom.current().nextInt) == 0)
+			r = 1; //avoid zero
+		UNSAFE.putInt(t, SECONDARY, r);
+		return r;
+	}
+}
+
+线程堆栈也称为调用堆栈，是虚拟机中线程(包括锁)状态的一个瞬间状态的快照，即系统在某一个时刻所有线程的运行状态，包括每一个线程的调用堆栈，锁的持有情况。虽然不同虚拟机打印的格式不同，但是线程堆栈的信息基本包括如下：
+	1. 线程名字，ID，线程的数量等；
+	2. 线程的运行状态，锁的状态(锁被哪个线程持有，哪个线程在等待锁等)
+	3. 调用堆栈(即函数的调用层次关系),调用堆栈包含完整的类名，所执行的方法，源代码的行数。
+线程的作用：因为线程栈是瞬时快照包含线程状态以及调用关系，所以借助堆栈信息可以帮助分析很多问题，比如线程死锁，锁争用，死循环，识别耗时操作等等。线程栈是瞬时记录，所以没有历史消息的回溯，一般我们都需要结合程序的日志进行跟踪，一般线程栈能分析如下性能问题:
+	1、系统无缘无故的cpu过高
+	2、系统挂起，无响应
+	3、系统运行越来越慢
+	4、性能瓶颈（如无法充分利用cpu等）
+	5、线程死锁，死循环等
+	6、由于线程数量太多导致的内存溢出（如无法创建线程等）
+线程的状态：NEW, RUNNABLE, WAITING, BLOCKED, TIMED_WAITING, TERMINATED;
+
+NEW:线程刚刚被创建，也就是已经new过了，但是还没有调用start()方法，这个状态我们使用jstack进行线程栈dump的时候基本看不到，因为是线程刚创建时候的状态。
+RUNNABLE:从虚拟机的角度看，线程正在运行状态，状态是线程正在正常运行中, 当然可能会有某种耗时计算/IO等待的操作/CPU时间片切换等, 这个状态下发生的等待一般是其他系统资源, 而不是锁, Sleep等。
+处于RUNNABLE状态的线程是不是一定会消耗cpu呢，不一定，像socket IO操作，线程正在从网络上读取数据，尽管线程状态RUNNABLE，但实际上网络io，线程绝大多数时间是被挂起的，只有当数据到达后，线程才会被唤起，挂起发生在本地代码（native）中，虚拟机根本不一致，不像显式的调用sleep和wait方法，虚拟机才能知道线程的真正状态，但在本地代码中的挂起，虚拟机无法知道真正的线程状态，因此一概显示为RUNNABLE。
+BLOCKED：线程处于阻塞状态，正在等待一个monitor lock。通常情况下，是因为本线程与其他线程共用了一个锁。其他在线程正在使用这个锁进入某个synchronized同步方法块或者方法，而本线程进入这个同步代码块也需要这个锁，最终导致本线程处于阻塞状态。
+WAITING:这个状态下是指拥有了某个锁后，调用了锁的wait方法，等待其他线程/锁拥有者调用notify/notifyAll以便该线程可以继续下一步操作。这里要区分BLOCKED和WAITING的区别，一个是在临界点外面等待进入，一个是在临界点里面wait等待别人notify。线程调用了join方法join了其他线程的时候，也会进入WAITING状态，等待被他join的线程结束，处于waiting状态的线程基本不消耗CPU。
+Note:当线程调用以下方法时会进入WAITING状态:
+	1. Object.wait()而且不加超时参数;
+	2. Thread.join()而且不加超时参数；
+	3. LockSupport.park()
+TIMED_WAITING:该线程正在等待，通过使用了sleep, wait, join或者park方法(和WAITING不同的是通过方法参数指定了最大等待时间，WAITING可以通过时间或者外部变化解除)，线程等待指定的时间。
+Note: 当线程调用以下方法时会进入TIMED_WAITING:
+	1. Object.wait()并加了超时参数
+	2. Thread.sleep()
+	3. Thread.join()并加了超时参数
+	4. LockSupport.parkNanos
+	5. LockSupport.parkUntil 
+TERMINATED:线程终止，同样在使用jstack进行线程dump的时候，也很少看到该状态的线程栈。
+
+关于CPU的消耗情况，如下：
+	- 处于timed_waiting/waiting状态的线程一定不消耗CPU，处于runnable状态的线程不一定会消耗CPU，要结合当前线程代码的性质判断，是否消耗CPU
+		- 如果是纯java运算代码，则消耗CPU
+		- 如果线程处于网络IO，很少消耗CPU
+		- 如果是本地代码，通过查看代码，可以通过pstact获取本地的线程堆栈，如果是存运算代码，则消耗CPU；如果被挂起，则不消耗；如果是IO，则不怎么消耗CPU。
+
+其中"线程对应的本地线程Id号"所指的本地线程是指该java虚拟机所对应的虚拟机中的本地线程，我们知道java是解析型语言，执行的实体是java虚拟机，因此java代码是依附于java虚拟机的本地线程执行的，当启动一个线程时，是创建一个native本地线程，本地线程才是真实的线程实体，为了更加深入理解本地线程和java线程的关系，我们可以通过以下方式将java虚拟机的本地线程打印出来：
+1、试用ps -ef|grep java 获得java进行id
+2、试用pstack<java pid> 获得java虚拟机本地线程的堆栈
+从操作系统打印出来的虚拟机的本地线程看，本地线程数量和java线程数量是相同的，说明二者是一一对应的关系。
+那么本地线程号如何与java线程堆栈文件对应起来呢，每一个线程都有tid,nid的属性，通过这些属性可以对应相应的本地线程，我们先看java线程第一行，里面有一个属性是nid，
+main" prio=1 tid=0x0805c988 nid=0xd28 runnable [0xfff65000..0xfff659c8]
+其中nid是native thread id，也就是本地线程中的LWPID,二者是相同的，只不过java线程中的nid用16进制表示，本地线程的id（top -H里取到的java线程id）用十进制表示。3368的十六进制表示0xd28，在java线程堆栈中查找nid为0xd28就是本地线程对应的java线程。
+
+线程栈中包含直接信息为：线程个数，每个线程调用的方法堆栈，当前锁的状态。从线程个数可以直接数出来，线程调用的方法堆栈，从下向上看，表示了当前线程调用哪个类哪个方法，锁的状态看起来需要一些技巧，与锁相关的重要信息如下：
+当一个线程占有一个锁的时候，线程堆栈会打印一个－locked<0x22bffb60>
+当一个线程正在等在其他线程释放该锁，线程堆栈会打印一个－waiting to lock<0x22bffb60>
+当一个线程占有一个锁，但又执行在该锁的wait上，线程堆栈中首先打印locked,然后打印－waiting on <0x22c03c60>
+在线程堆栈中与锁相关的三个最重要的特征字：locked,waiting to lock,waiting on 了解这三个特征字，就可以对锁进行分析了。
+一般情况下，当一个或一些线程正在等待一个锁的时候，应该有一个线程占用了这个锁，即如果有一个线程正在等待一个锁，该锁必然被另一个线程占用，从线程堆栈中看，如果看到waiting to lock<0x22bffb60>,应该也应该有locked<0x22bffb60>,大多数情况下确实如此，但是有些情况下，会发现线程堆栈中可能根本没有locked<0x22bffb60>,而只有waiting to ，这是什么原因呢，实际上，在一个线程释放锁和另一个线程被唤醒之间有一个时间窗，如果这个期间，恰好打印堆栈信息，那么只会找到waiting to ，但是找不到locked 该锁的线程，当然不同的JAVA虚拟机有不同的实现策略，不一定会立刻响应请求，也许会等待正在执行的线程执行完成。
+
+Monitor是 Java中用以实现线程之间的互斥与协作的主要手段，它可以看成是对象或者 Class的锁。每一个对象都有，也仅有一个 monitor。每个 Monitor在某个时刻，只能被一个线程拥有，该线程就是 “Active Thread”，而其它线程都是 “Waiting Thread”，分别在两个队列 “ Entry Set”和 “Wait Set”里面等候。在 “Entry Set”中等待的线程状态是 “Waiting for monitor entry”，而在 “Wait Set”中等待的线程状态是 “in Object.wait()”。目前线程状态为：waiting for monitor entry，说明它是“Entry Set”里面的线程。我们称被 synchronized保护起来的代码段为临界区。当一个线程申请进入临界区时，它就进入了 “Entry Set”队列。
+这时有两种可能性：
+1、该 monitor不被其它线程拥有， Entry Set里面也没有其它等待线程。本线程即成为相应类或者对象的 Monitor的 Owner，执行临界区的代码
+2、该 monitor被其它线程拥有，本线程在 Entry Set队列中等待。 
+在第一种情况下，线程将处于 “Runnable”的状态
+而第二种情况下，线程 DUMP会显示处于 “waiting for monitor entry”
+
+漏桶算法(Leaky Bucket)是网络世界中流量整形(Traffic Shaping)或速率限制(Rate Limiting)时经常使用的一种算法，它的主要目的是控制数据注入到网络的速率，平滑网络上的突发流量。漏桶算法提供了一种机制，通过它，突发流量可以被整形以便为网络提供一个稳定的流量。漏桶可以看作是一个带有常量服务时间的单服务器时间队列，如果漏桶(包缓存)溢出，那么数据包会被丢弃。
+
+Leaky Bucket/Token Bucket
+Google Guava RateLimiter类，是一个基于令牌桶的限流算法:平滑突发限流(SmoothBursty)和平滑预热限流(SmoothWarmingUp)实现。
+
+分布式限流的场景: UP中所有注册用户的营销推送。Push服务商最多100TPS,还有可能失败。需要限流。
+分布式限流的一种方案：使用Redis限流，采用滑动窗口的思想(当然滑动窗口越小越精确，并且越平滑)，使用两个key,一个用于计数，一个用于计时。
+public class RedisRateLimit {
+	private static final String TIME_KEY = "time_key";
+	private static final String COUNTER_KEY = "counter_key";
+	private static final int MAX_SECOND = 500;
+	private final static Jedis jedis = new Jedis("localhost", 6379, 60000);
+	
+	//问题：几个Redis的操作不是原子性的，会导致多线程不安全
+	public static boolean tryAcquire() {
+		if (!jedis.exists(TIME_KEY)) {
+			jedis.setnx(TIME_KEY, "");
+			jedis.expire(TIME_KEY, 1);
+			jedis.setnx(COUNTER_KEY, "0");
+		}
+		
+		if (jedis.incr(COUNTER_KEY) > MAX_SECOND) {
+			return false;
+		}
+		return true;
+	}
+}
+上面这个方案有个缺点：不是原子性的。可以使用Lua脚本调用。
+分布式限流最关键的是要将限流服务做成原子化，而解决方案可以使用Redis+lua或者Nginx+lua技术进行实现，通过这两种技术可以实现高并发和高性能。
+Redis+Lua+Java的参考代码如下：
+public static boolean acquire() throw Exception {
+	String luaScript = Files.toString(new File("limit.lua"), Charset.defaultCharset());
+	Jedis jedis = new Jedis("localhost", 6379);
+	String key = "ip:" + System.currentTimeMills() / 1000;
+	String limit = 3;   //限流大小
+	return (Long) jedis.eval(luaScript, Lists.newArrayList(key), Lists.newArrayList(limit)) == 1;
+}
+//limit.lua 
+local key = KEYS[1]   -- 限流key
+local limit = tonumber(ARGV[1]) -- 限流大小
+local current = tonumber(redis.call('get', key) or "0")
+if current + 1 > limit then 
+	return 0
+else
+	redis.call("incrby", key, "1")
+	redis.call("expire", key, "2")
+	return 1
+end
+
+shardbatis的应用场景: 之前的用户信息表，其他表虽然很多，但通过冷热分离后，相对较少，用户信息表无法做冷热分离，考虑到单库已经足够支撑，通过分表的方式来实现，使用shardbatis。
+Note: shardbatis2.0使用插件方式对Mybatis功能进行增强，代码无侵入，因此使用配置了shardbatis2.0的Mybatis3和使用原生的Mybatis3没有区别。shardbatis2.0中insert、update、delete语句中的子查询语句中的表不支持sharding；select语句中如果进行多表关联，请务必为每个表名加上别名。shardbatis对sql的解析基于jsqlparser，目前已经支持大部分sql语句的解析。
+
+public class HashMap<K, V> extends AbstractMap<K, V> 
+		implements Map<K, V>, Cloneable, Serializable {
+	...
+	//The bin count threshold for untreeifying a (split) bin during a resize operation. Should be less than TREEIFY_THRESHOLD, and at most 6 to mesh with shrinkage detection under removal.
+	static final int UNTREEIFT_THRESHOLD = 6;
+	/* The maximum capacity, used if a higher value is implicitly specified by either of the constructors with arguments. MUST be a power of two <= 1 << 30;
+	*/
+	static final int MAXIMUM_CAPACITY = 1 << 30;
+	
+	/* Computes key.hashCode() and spreads (XORs) higher bits of hash to lower. Because the table uses power-of-two masking, sets of hashes that vary only in bits abvoe the current mask will always collide. (Among known examples are sets of Float keys holding consecutive whole numbers in small tables.) So we apply a transform that spreads the impact of higher bits downward. There is a tradeoff between speed, utility, and quality of bit-spreading. Because many common sets of hashes are already reasonably distributed (so don't benefit from spreading), and because we use trees to handle large sets of collisions in bins, we just XOR some shifted bits in the cheapest possible way to reduce systematic lossage, as well as to incorporate impact of the highest bits that would otherwise never be used in index calculations because of table bounds.
+	*/
+	static final int hash(Object key) {
+		int h;
+		return (key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);
+	}
+	
+	/* Entry for Tree bins. Extends LinkedHashMap.Entry (which in turn extends Node) so can be used as extension of either regular or linked node.
+	*/
+	static final class TreeNode<K, V> extends LinkedHashMap.Entry<K, V> {
+		TreeNode<K, V> parent;   //red-black tree links
+		TreeNode<K, V> left;
+		TreeNode<K, V> right;
+		TreeNode<K, V> prev;   //needed to unlink next upon deletion
+		boolean red;
+		TreeNode(int hash, K key, V val, Node<K, V> next) {
+			super(hash, key, val, next);
+		}
+		
+		/* Splits nodes in a tree bin into lower and upper tree bins, or untreeifies if now too small. Called only from resize;
+		*/
+		final void split(HashMap<K, V> map, Node<K, V>[] tab, int index, int bit) {
+			TreeNode<K, V> b = this;
+			// Relink into lo and hi list, preserving order 
+			TreeNode<K, V> loHead = null, loTail = null;
+			TreeNode<K, V> hiHead = null, hiTail = null;
+			int lc = 0, hc = 0;
+			for (TreeNode<K, V> e = b, next; e != null; e = next) {
+				next = (TreeNode<K, V>)e.next;
+				e.next = null;
+				if ((e.hash & bit) == 0) {
+					if ((e.prev = loTail) == null)
+						loHead = e;
+					else
+						loTail.next = e;
+					loTail = e;
+					++ lc;
+				} else {
+					if ((e.prev = hiTail) == null)
+						hiHead = e;
+					else 
+						hiTail.next = e;
+					hiTail = e;
+					++ hc;
+				}
+			}
+			
+			if (loHead != null) {
+				if (lc <= UNTREEIFT_THRESHOLD)
+					tab[index] = loHead.untreeify(map);
+				else {
+					tab[index] = loHead;
+					if (hiHead != null)   // (else if already treeified)
+						loHead.treeify(tab);
+				}
+			}
+			
+			if (hiHead != null) {
+                if (hc <= UNTREEIFY_THRESHOLD)
+                    tab[index + bit] = hiHead.untreeify(map);
+                else {
+                    tab[index + bit] = hiHead;
+                    if (loHead != null)
+                        hiHead.treeify(tab);
+                }
+            }
+		}
+	}
+	/* Initializes or doubles table size. If null, allocates in accord with initial capacity target held in field threshold. Otherwise, because we are using power-of-two expansion, the elements from each bin must either stay at same index, or move with a power of two offset in the new table;
+	*/
+	final Node<K, V>[] resize() {
+		Node<K, V>[] oldTab = table;
+		int oldCap = (oldTab == null) ? 0 : oldTab.length;
+		int oldThr = threshold;
+		int newCap, newThr = 0;
+		if (oldCap > 0) {
+			if (oldCap >= MAXIMUM_CAPACITY) {
+				threshold = Integer.MAX_VALUE;
+				return oldTab;
+			} else if ((newCap = oldCap << 1) < MAXIMUM_CAPACITY) && 
+					oldCap >= DEFAULT_INITIAL_CAPACITY)
+				newThr = oldThr << 1;   //doble threshold
+		} else if (oldThr > 0){   //initial capacity was placed in threshold 
+			newCap = oldThr;
+		} else {   // zero initial threshold signifies using defaults
+			newCap = DEFAULT_INITIAL_CAPACITY;
+			newThr = (int) (DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
+		}
+		
+		if (newThr == 0) {
+			float ft = (float) newCap * loadFactor;
+			newThr = (newCap < MAXIMUM_CAPACITY && ft < (float) MAXIMUM_CAPACITY ? 
+						(int)ft : Integer.MAX_VALUE);
+		} 
+		threshold = newThr;
+		
+		@SuppressWarnings({"rawtypes", "unchecked"})
+		Node<K, V>[] newTab = (Node<K, V>[]) new Node[newCap];
+		table = newTab;
+		
+		if (oldTab != null) {
+			for (int j = 0;j < oldCap; ++ j) {
+				Node<K, V> e;
+				if ((e = oldTab[j]) != null) {
+					oldTab[j] = null;
+					if (w.next == null) {
+						newTab[w.hash & (newCap - 1)] = e;
+					} else if (e instanceof TreeNode) {
+						((TreeNode<K, V>)e).split(this, newTab, j, oldCap);
+					} else {   // perserve order
+						Node<K, V> loHead = null, loTail = null;
+						Node<K, V> hiHead = null, hiTail = null;
+						Node<K, V> next;
+						do {
+							next = e.next;
+							if ((e.hash & oldCap) == 0) {
+								if (loTail == null)
+									loHead = e;
+								else 
+									loTai.next = e;
+								loTail = e;
+							} else {
+								if (hiTail == null)
+									hiHead = e;
+								else 
+									hiTail.next = e;
+								hiTail = e;
+							}
+						} while((e = e.next) != null);
+						if (loTail != null) {
+							loTail.next = null;
+							newTab[j] = loHead;
+						} 
+						if (hiTail != null) {
+							hiTail.next = null;
+							newTab[j + oldCap] = hiHead;
+						}
+					}
+				}
+			}
+		}
+		return newTab;
+	}
+	
+	// Callbacks to allow LinkedHashMap post-actions
+	void afterNodeAccess(Node<K, V> p) { }
+	void afterNodeInsertion(boolean evict) { }
+	void afterNodeRemoval(Node<K, V> p) { }
+	
+	public V put(K key, V value) {
+		return putVal(hash(key), key, value, false, true);
+	}
+	
+	// Create a regular (non-tree) node
+    Node<K,V> newNode(int hash, K key, V value, Node<K,V> next) {
+        return new Node<>(hash, key, value, next);
+    }
+	
+	final V putVal(int hash, K key, V value, boolean onlyAbsent, boolean evict) {
+		Node<K, V> tab; Node<K, V> p; int n, i;
+		if ((tab = table) == null || (n = tab.length) == 0) {
+			n = (tab = resize()).length;
+		}
+		
+		if ((p = tab[i = (n - 1) & hash]) == null) {
+			tab[i] = newNode(hash, key, value, null);
+		} else {
+			Node<K, V> e; K k;
+			if (p.hash == hash && 
+				((k = p.key) == key || (key != null && key.equals(k)))
+				e = p;
+			else if (p instanceof TreeNode)
+				e = ((TreeNode<K, V>)p).putTreeVal(this, tab, hash, key, value);
+			else {
+				for (int binCount = 0;; ++ binCount) {
+					if ((e = p.next) == null) {
+						p.next = newNode(hash, key, value, null);
+						if (binCount >= TREEIFY_THRESHOLD)
+							treeifyBin(tab, hash);   // -1 for 1st
+						break;
+					}
+					if (e.hash = hash &&
+						((k = e.key) == key || (key != null && key.equals(k)))
+						break;
+					p = e;
+				}
+			}
+			
+			if (e != null) {   // existing mapping for key
+				V oldValue = e.value;
+				if (!onlyIfAbsent || oldVale == null)
+					e.value = value;
+				afterNodeAccess(e);
+				return oldValue;
+			}
+		}
+		++ modCount;
+		if (++ size > threshold)
+			resize();
+		afterNodeInsertion(evict);
+		return null;
+	}
+}
+
+HashMap7和8的区别:
+	1. JDK7使用头插入法，而JDK8使用尾插入法；因为JDK7是单链表进行的纵向延伸，当采用头插入法时容易出现逆序且环形链表死循环问题。JDK8加入了红黑树使用尾插入法，能够避免出现逆序且链表不会出现死循环；
+	2. 扩容时数据存储位置的计算方式不一样：
+		- JDK7使用hash值和需要扩容的数组长度进行&，即hash & (length - 1)
+		- JDK8巧妙的使用了扩容前的值加上新的计算方式，即只需要判断hash值的新增参与运算的位是0还是1。情况1：扩容后，若hash值新增参与运算的位=0，那么元素扩容后的位置=原始位置。情况2：扩容后，若hash值的新增参与运算的位=1，那么元素在扩容后的位置=原始位置+扩容前的旧容量。
+	3. 计算hash值的方式不同：JDK7用了9次扰动处理=4次位运算+5次异或，JDK8只用了2次扰动运算=1次位运算+1次异或；
+	4. 扩容时间不同：JDK7是先判断是否扩容然后进行插入；JDK8是先插入然后判断是否扩容(当然第一次要先扩容)；
+	5. 数据结构不同：JDK7是数组+单链表；JDK8是数组+链表+红黑树(当链表长度达到8后，自动将链表转成红黑树，查询时间复杂度从O(n)到O(logN)，提高了效率);
+
+HashMap的JDK7为什么先扩容再插入，而JDK8是先插入再扩容？ (思考：主要是数据结构的不同)
+为什么JDK8将链表转化为红黑树的阈值是8，而不是7或者20？
+	1. 如果选择6和8，节点数<=6还原为链表，节点数>=8转为红黑树，中间有个7可以有效防止链表和红黑树频繁转换。假设，如果设计为>8就将链表转换成红黑树，<=8就将树转换成链表，如果HashMap不停的插入、删除元素，链表的个数在8左右徘徊，就会频繁的发生树转链表、链表转树，效率会很低。
+	2. 还有一点，由于TeeeNode的大小约是常规节点的两倍，因为需要仅在容器包含足够的节点才使用红黑树，当它们变得太小(由于移除或调整)时，它们会被转换为普通Node，容器中节点分布在hash桶中的频率遵循泊松分布，桶的长度超过8的概率非常小，因此选择了8。
+在JavaDoc中：
+* Because TreeNodes are about twice the size of regular nodes, we use them only when bins contain enough nodes to warrant use (see TREEIFY_THRESHOLD). And when they become too small (due to removal or resizing) they are converted back to plain bins.  In usages with well-distributed user hashCodes, tree bins are rarely used.  Ideally, under random hashCodes, the frequency of nodes in bins follows a Poisson distribution (http://en.wikipedia.org/wiki/Poisson_distribution) with a parameter of about 0.5 on average for the default resizing threshold of 0.75, although with a large variance because of resizing granularity. Ignoring variance, the expected occurrences of list size k are (exp(-0.5) * pow(0.5, k) / factorial(k)). The first values are:
+     * 0:    0.60653066
+     * 1:    0.30326533
+     * 2:    0.07581633
+     * 3:    0.01263606
+     * 4:    0.00157952
+     * 5:    0.00015795
+     * 6:    0.00001316
+     * 7:    0.00000094
+     * 8:    0.00000006
+     * more: less than 1 in ten million
+
+Dubbo支持的远程通信协议：
+	- Netty
+	- Mina
+	- Grizzly
+Grizzly: NIO Event Development Simplified
+Writing scalable server applications in the java programming language has always been difficult. Before the advent of the Java New I/O API(NIO), thread management issues made it impossible for a server to scale to thousands of users. The Grizzly NIO framework has been designed to help developers to take advantage of the java NIO API. Grizzly's goal is to help developers to buid scalable and robust servers using NIO as well as offering extended framework components: Web Framework(HTTP/S), WebSocket, Comet, and more!
+
+最近在服务框架中尝试增加了Grizzly传输集成，简单测试后发现，TPS(每秒处理请求数)略低于Netty，略高于Mina，相差并不是很大，但TPS比Netty稳定很多(每秒方差小)，不会出现大幅波动，可以考虑备选。
+Mina为ApacheDirectory服务器的底层NIO框架：http://mina.apache.org
+Netty为JBoss的NIO框架：http://www.jboss.org/netty
+Grizzly是Sun的GlassFish服务器的底层NIO框架：http://grizzly.java.net
+
+Kryo: Kryo is a fast and efficient binary object graph serialization framework for Java. The goals of the project are high speed, low size, and an easy to use API. The project is useful any time objects need to be persisted, whether to a file, database, or over the network.
+Kryo can also perform automic deep and shallow copying/cloning. This is direct copying from object to object, not object to bytes to object. 
+
+gpreftools:是Google开源的一款非常实用的性能分析工具集，主要由四个组件组成：
+	1. Tcmalloc内存分析器: Tcmalloc是Thread Cache malloc缩写，号称比ptmalloc2更快的内存管理库。Tcmalloc是为每个线程分配一个线程本地的Cache，少量的地址分配就直接从Cache中分配，并且定期做垃圾回收，将线程本地Cache中的空闲内存返回给全局控制堆；Tcmalloc认为<=32K的对象是小对象，大对象直接从全局控制堆以页为单位进行分配，所以大对象总是页对齐的；Tcmalloc中一个可以存入一些相同大小的小对象，小对象从本地内存链表中分配，大对象从中心内存堆分配。优势：
+		1): 快速：相比ptmalloc2，Tcmalloc的性能成倍提升。尤其是Tcmalloc可以减少多线程之间锁的竞争问题，在小对象(32K)上能达到零竞争；
+		2):占用空间小：相比ptmalloc2，Tcmalloc堆小对象占用空间进行了优化。例如：分配N个8字节对象只需要占用8N*1.01字节的空间。即，只需要多使用1%的空间。而ptmalloc2中每个对象都需要使用一个4字节的头信息，最后占用的字节可能达到8N*8。
+		3): 不易出现内存暴涨(ptmalloc2使用内存池，长时间没有将内存还给系统就会出现内存暴涨，tcmalloc可以通过MallocExtension::instance()->ReleaseFreeMemory()类设置内存还给系统的速度).
+	2. Heap-profile: 是内存监控器，可以随时查看内存的使用情况；
+	3. Heap-checker: 专门检测内存泄漏的工具；
+	4. Cpu-profile: 通过采样的方式，给出一段时间内程序实际占用CPU时间片进行统计和分析。
+
+注意：如果线程执行的是个java方法，那么程序计数器记录虚拟机字节码指令的地址。如果为native【底层方法】，那么计数器为空。这块内存区域是虚拟机规范中唯一没有OutOfMemoryError的区域。
+栈帧大小确定时间: 编译期确定，不受运行期数据影响。
+
+平时说的栈一般指局部变量表部分。
+局部变量表:一片连续的内存空间，用来存放方法参数，以及方法内定义的局部变量，存放着编译期间已知的数据类型(八大基本类型和对象引用(reference类型),returnAddress类型。它的最小的局部变量表空间单位为Slot，虚拟机没有指明Slot的大小，但在jvm中，long和double类型数据明确规定为64位，这两个类型占2个Slot，其它基本类型固定占用1个Slot。
+reference类型:与基本类型不同的是它不等同本身，即使是String，内部也是char数组组成，它可能是指向一个对象起始位置指针，也可能指向一个代表对象的句柄或其他与该对象有关的位置。
+returnAddress类型:指向一条字节码指令的地址。
+需要注意的是，局部变量表所需要的内存空间在编译期完成分配，当进入一个方法时，这个方法在栈中需要分配多大的局部变量空间是完全确定的，在方法运行期间不会改变局部变量表大小。
+Java虚拟机栈可能出现两种类型的异常：
+	1. 线程请求的栈深度大于虚拟机允许的栈深度，将抛出StackOverflowError。
+	2. 虚拟机栈空间可以动态扩展，当动态扩展是无法申请到足够的空间时，抛出OutOfMemory异常。
+
+java虚拟机规范对堆的描述是:所有对象实例及数组都要在堆上分配内存，但随着JIT编译器的发展和逃逸分析技术的成熟，这个说法也不是那么绝对，但是大多数情况都是这样的。
+即时编译器:可以把把Java的字节码，包括需要被解释的指令的程序）转换成可以直接发送给处理器的指令的程序)
+逃逸分析:通过逃逸分析来决定某些实例或者变量是否要在堆中进行分配，如果开启了逃逸分析，即可将这些变量直接在栈上进行分配，而非堆上进行分配。这些变量的指针可以被全局所引用，或者其其它线程所引用。
+方法区：同堆一样，是所有线程共享的内存区域。用于存储已被虚拟机加载的类信息、常量、静态变量，如static修饰的变量加载类的时候就被加载到方法区中。
+运行时常量池：是方法区的一部分，class文件除了有类的字段、接口、方法等描述信息之外，还有常量池用于存放编译期间生成的各种字面量和符号引用。
+在老版jdk，方法区也被称为永久代【因为没有强制要求方法区必须实现垃圾回收，HotSpot虚拟机以永久代来实现方法区，从而JVM的垃圾收集器可以像管理堆区一样管理这部分区域，从而不需要专门为这部分设计垃圾回收机制。不过自从JDK7之后，Hotspot虚拟机便将运行时常量池从永久代移除了。】
+
+-XX:-UseGCOverheadLimit
+这边如果不设置UseGCOverheadLimit将报java.lang.OutOfMemoryError: GC overhead limit exceeded，
+这个错是因为GC占用了多余98%（默认值）的CPU时间却只回收了少于2%（默认值）的堆空间。目的是为了让应用终止，给开发者机会去诊断问题。一般是应用程序在有限的内存上创建了大量的临时对象或者弱引用对象，从而导致该异常。虽然加大内存可以暂时解决这个问题，但是还是强烈建议去优化代码，后者更加有效，也可通过UseGCOverheadLimit避免[不推荐，这里是因为测试用，并不能解决根本问题]
+java虚拟机对方法区比较宽松，除了跟堆一样可以不存在连续的内存空间，定义空间和可扩展空间，还可以选择不实现垃圾收集。
+
+java -verbose:class -version 可以查看程序启动加载的类，可以发现这OutOfMemoryError和StackOverflowError两个类并不是异常出现的时候才去加载，而是jvm启动的时候就已经加载。这么做的原因是在vm启动过程中我们把类加载起来，并创建几个没有堆栈的对象缓存起来，只需要设置下不同的提示信息即可，当需要抛出特定类型的OutOfMemoryError异常的时候，就直接拿出缓存里的这几个对象就可以了。
+
+比如说OutOfMemoryError对象，jvm预留出4个对象【固定常量】，这就为什么最多出现4次有堆栈的OutOfMemoryError异常及大部分情况下都将看到没有堆栈的OutOfMemoryError对象的原因。
+
+public interface ScheduledExecutorService extends ExecutorService {
+	public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit);
+	public <V> ScheduledFuture<V> schedule(Callable<V> callable, long delay, TimeUnit unit);
+	public ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelay, long period, TimeUnit unit);
+	public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay, long delay, TimeUnti unit);
+}
+
+
+public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor 
+							implements ScheduledExecutorService {
+	...
+}
+

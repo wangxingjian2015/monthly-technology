@@ -1,0 +1,458 @@
+任意一个Java对象，都有一组监视器方法(定义在Object上)，主要包括wait(), wait(long timeout), notify(), notifyAll()方法，这些方法与synchronized同步关键字配合，可以实现等待/通知模式。Condition接口也提供了类似Object的监视器方法，与Lock配合可以实现等待/通知模式。 
+两者的对比如下:
+1. 前置条件: Object监视器方法需要获取对象的锁; Condition调用Lock.lock()获取锁，调用Lock.newCondition()获取Condition对象；
+2. 调用方式: 都是直接调用object.wait()或condition.await();
+3. 等待队列个数:Object监视器是一个;Condition可以是多个；
+4. 当前线程释放锁并进入等待状态:都支持；
+5. 当前线程释放锁并进入等待状态，在等待状态中不响应终端：Object监视器方法不支持；Condition支持；
+6. 当前线程释放锁并进入超时等待状态：都支持；
+7. 当前线程释放锁并进入等待状态到将来的某个时间：Object监视器方法不支持；Condition支持；
+8. 唤醒等待队列中的一个线程：都支持；
+9. 唤醒等待队列中的全部线程：都支持。
+
+IllegalMonitorStateException: if the current thread is not the owner of the object's monitor;
+
+ConditionObject是同步器AQS的内部类，因为Condition的操作需要获取相关联的锁，所以作为同步器的内部类也较为合理。每个Condition对象都包含着一个队列，该队列是Condition对象实现等待/通知功能的关键。
+
+Condition拥有首尾节点的引用，而新增节点只需要将原有的尾节点nextWaiter指向它，并且更新尾节点即可。上述节点更新的过程没有使用CAS保证，原因在于调用await()方法的线程必定是获取了锁的线程，也就是说该过程是由锁来保证线程安全的。
+在Object的监视器模型中，一个对象拥有一个同步队列和等待队列，而在JUC中的Lock拥有一个同步队列和多个等待队列。
+
+wait和sleep的区别: 
+1. wait是当前类的实例方法;sleep是Thread的静态方法(或者TimeUnit enum的publi方法);
+2. 唤醒条件: wait是其他线程调用notify()/notifyAll(); sleep是超时或者调用interrupte()方法;
+3. 释放锁的资源: wait释放所持有的锁;sleep不释放;
+4. 作用对象: wait定义在Object类中，作用于对象本身;sleep定义在Thread中，作用于当前线程；
+5. 同步: 只能在同步上下文synchronized中调用wait，否认IllegalMonitorStateException; sleep没有任何限制。
+
+如果Java进程僵死，没有任何日志/输出，也不能kill -3/jstack/jmap打印堆栈，原因有可能是在执行耗时的操作(比如BigInteger.pow())，此时JVM底层没有safe-point，不响应任何操作。
+
+关于CMS触发条件:
+	- Old或者Perm已经达到使用的阈值(-XX:CMSInitiatingOccupancyFraction=75, -XX:CMSInitiatingPermOccupancyFraction=75)
+	- JVM自动触发(JVM的动态策略，也就是悲观策略)(基于之前GC的频率以及Old的增长趋势来评估什么时候开始执行)，如果不希望JVM自行决定，可以通过-XX:UseCMSInitiatingOccupancyOnly=true来设置
+	- 设置-XX:CMSClassUnloadingEnabled时，表示对永久代也启动CMS垃圾收集，默认这个参数不开启
+同时CMS出现失败情况下，将会触发Full GC:
+1. Promotion failed:指堆碎片导致大对象没有足够的连续空间存放而提升至老年代，导致老年代空间不足。
+2. Concurrent mode failed: 如果获取对象实例的频率高于收集器清除堆里不可达对象的频率，并发算法将再次失败。这种情况被称为"并发模式失败"。产生原因是由于CMS回收老年代的速度太慢，导致老年代在CMS完成前就被占满，引起Full GC。避免这种现象的可以调小:-XX:CMSInitiatingOccupanyFraction，让CMS尽早触发，降低老年代被占满的可能。
+
+GMS参数控制：
+1. 启用CMS：-XX:+UseConcMarkSweepGC
+2. 年轻代的并行收集线程数默认是(cpu <= 8) ? cpu : 3 + ((cpu * 5) / 8)，如果希望降低线程数，可通过-XX:ParallelGCThreads= N来调整
+3. CMS默认启动的回收线程数目是(ParallelGCThreads + 3)/4) ，如果需要明确设定，可以通过-XX:ParallelCMSThreads=20来设定,其中ParallelGCThreads是年轻代的并行收集线程数
+4. CMS是不会整理堆碎片，为了防止堆碎片引起full gc，通常会开启CMS阶段进行合并碎片选项：-XX:+UseCMSCompactAtFullCollection，开启这个选项一定程度上会影响性能，阿宝的blog里说也许可以通过配置适当的CMSFullGCsBeforeCompaction来调整性能，未实践。
+5. 为了减少第二次暂停的时间，开启并行remark: -XX:+CMSParallelRemarkEnabled。如果remark还是过长的话，可以开启-XX:+CMSScavengeBeforeRemark选项，强制remark之前开始一次minor gc，减少remark的暂停时间，但是在remark之后也将立即开始又一次minor gc。
+6. 为了避免Perm区满引起的full gc，建议开启CMS回收Perm区选项：-XX:+CMSPermGenSweepingEnabled -XX:+CMSClassUnloadingEnabled  关于XX:+CMSPermGenSweepingEnabled值得注意的是，即使没有设置这个标志，一旦永久代耗尽空间也会尝试进行垃圾回收，但是收集不会是并行的，而再一次进行Full GC。所以一般-XX:+CMSPermGenSweepingEnabled -XX:+CMSClassUnloadingEnabled同时设置。
+7. 默认CMS是在tenured generation占满68%的时候开始进行CMS收集，如果年老代增长不是很快，并且希望降低CMS次数的话，可以适当调高此值： -XX:CMSInitiatingOccupancyFraction=80,修改成80%的时候才开始CMS回收
+8. 如果想在CMS过程的两次的Full GC(Initial Marking和Final Marking)之后进行内存碎片整理，-XX:+ UseCMSCompactAtFullCollection，整理过程是独占的，会引起停顿时间变长；
+9. 如果想让CMS几次Full GC后进行碎片整理，可用-XX:+CMSFullGCsBeforeCompaction=4,表示进行2次CMS(4次Full GC)之后进行碎片整理
+
+
+GChisto:可以用于分析GC日志，直接用一个jar包启动，可以分析Minor GC, Full GC的时间，频率等，GC的最大时间，最小GC时间，以及GC停顿时间等。是一个比较老的工具。
+GCeasy: https://gceasy.io 在线GC日志分析，具有下面Features:
+Industry's first machine learning guided Garbage collection log analysis tool. GCeasy has in-built intelligence to auto-detect problems in the JVM & Android GC logs and recommend solutions to it.
+	1. Solve Memory & GC problems in seconds;
+	2. Get JVM Heap settings recommendations;
+	3. Machine Learning Algorithms;
+	4. Trusted by 4000+ enterprised
+	5. free
+
+AOP concepts:
+1. Aspect
+2. JoinPoint
+3. Advice: Before advice, After returning advice, After throwing advice, After advice, Around advice  
+4. Pointcut: Spring uses the AspectJ pointcut expression language by default.
+5. Introduction
+6. Target Object 
+7. AOP proxy 
+8. Weaving 
+
+@Configuration
+@EnableAspectJAutoProxy
+<aop:aspectj-autoproxy/>
+Aspects(classes annotated with @Aspect) may have methods and fields just like any other class. They may also contain pointcut, advice, and introduction(inter-type) declarations. 
+Spring AOP only supports method execution join points for Spring beans, so you can think of a pointcut as matching the execution of methods on Spring beans. 
+A pointcut declaration has two parts: a signature comprising a name and any parameters, and a pointcut expression that determines exactly which method executions we are interested in. In the @AspectJ annotation-style of AOP, a pointcut signature is provided by a regular method definition, and the pointcut expression is indicated using the @Pointcut annotation(the method serving as the pointcut signature must have a void return type).
+
+Due to the proxy-based nature of Spring's AOP framwork, calls within the target object are by definition not intercepted. For JDK proxies, only public interface method calls on the proxy can be intercepted. With CGLIB, public and protected method calls on the proxy will be intercepted, and even package-visible methods if necessary. 
+
+When referring to pointcuts by name, normal Java visibility rules apply(you can see private pointcuts in the same type, protected pointcuts int the hierarchy, public pointcuts anywhere and so on). Visibility does not affect pointcut matching.
+
+args(java.io.Serializable) is different to execution(* *(java.io.Serializable)): the args version matches if the argument passed at runtime is Serializable, the execution version matches if the method signature declares a single parameter of type Serializable.
+
+@Aspect 
+@Component
+public class AfterReturningExample {
+	@AfterReturning(
+		pointcut = "execution(* com.xyz.myapp.dao.*.*(..))",
+		returning = "retval"
+	)
+	public void doAccessCheck(Object retval) {...}
+}
+
+Around advice is declared using the @Around annotation. The first parameter of the advice method must be of type ProceedingJoinPoint. Within the body of the advice, calling proceed() on the ProceedingJoinPoint causes the underlying method to execute. The proceed method may also called passing in an Object[] - the values in the array will be as the arguments to the method execution when it proceeds.
+
+
+@Before("com.xyz.myapp.SystemArchitecture.dataAccessOperation() && args(account,..)")
+public void validateAccount(Account account) {
+	...
+}
+
+An introduction is made using the @DeclareParents annotation. This annotation is used to declare that matching types have a new parent(hence the name).
+
+Spring AOP支持的9种Pointcut: execution, within, this, target, args, @target, @args, @within, @annotation;
+
+within: 用来限制某个确定类型的类。(只要满足确定的类型，而不管访问修饰符，返回类型，方法名，参数)
+this用来匹配的连接点所属的对象引用是某个特定类型的实例，target用来匹配的连接点所属的目标对象必须是指定类型的实例。两者有什么区别? AspectJ在实现代理时有两种方式:
+1. 如果当前对象引用的类型没有实现接口时，Spring AOP使用CGLIB的代理类实现切面编程;
+2. 如果当前对象引用实现了某个接口时，Spring AOP使用JDK动态代理实现切面编程;
+this指示符就是用来匹配基于CGLIB的代理类，如果当前要代理的类对象没有实现某个接口的话，则使用this;
+target指示符用于基于JDK动态代理的代理类，如果当前要代理的目标对象有实现某个接口的话，则使用target;
+
+为什么Spring4.0之前CGLIB的构造函数会被调用两次: The constructor of your proxied object will be called twice. This is a natural consuquence of the CGLIB proxy model whereby a subclass is generated for each proxied object. For each proxied instance, two objects are created: the actual proxied object and an instance of the subclass that implements the advice. This behavior is not exhibited when using JDK proxies. Usually, calling the constructor of the proxied type twice, is not an issue, as there are usually only assignments taking place and no real logic is implements in the constructor. 
+
+As of Spring 4.0, the constructor of your proxied object will NOT be called twice anymore since the CGLIB proxy instance will be created via Objenesis. Only if your JVM does not allow for constructor bypassing, you might see double invocation and corresponding debug log entries from Spring AOP support.
+
+proxy-target-class=true 
+
+To be clear: using proxy-target-class="true" on <tx:annotation-driven/>, <aop:aspectj-autoproxy/> or <aop:config/> elements will force the use of CGLIB proxies for all three of them. 
+
+Finally, it must be noted that AspectJ does not have this self-invocation issue because it is not a proxy-based AOP framework. 
+
+//Create a factory that can generate a proxy for the given target object 
+AspectJProxyFactory factory = new AspectJProxyFactory(targetObject);
+
+Do not activate @Configurable processing through the bean configurer aspect unless you really mean to rely on its semantics at runtime. In particular, make sure that you do not use @Configurable on bean classes which are registered as regular Spring beans with the container: You would get double initialization otherwise, once through the container and once through the aspect. 
+
+Load-time weaving(LTW) refers to the process of weaving AspectJ aspects into an application's class files as they are being loaded into the JVM. 
+
+Specifically the @EnableLoadTimeWeaving annotation can be used as an alternative to <context:load-time-weaver/>.
+
+The key component in Spring's LTW support is the LoadTimeWeaver interface(in the org.springframework.instrument.classloading package), and the numerous implementations of it that ship with the Spring distribution. A LoadTimeWeaver is responsible for adding one or more java.lang.instrument.ClassFileTransformers to a ClassLoader at runtime, which opens the door to all manner of interesting applications, one of which happens to be the LTW of aspects. 
+
+public interface BeanFactoryPostProcessor {
+	void postProcesssBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException;
+}
+
+Most MethodsMatchers are static, meaning that their isRuntime() method returns false. In this case, the 3-argument matches method will never be invoked.
+
+Introduction advice cannot be used with any pointcut, as it applies only at class, rather than method, level. 
+
+The basic way to create an AOP proxy in Spring is to use the org.springframework.aop.framework.ProxyFactoryBean. This gives complete control over the pointcuts and advice that will apply, and their ordering. 
+
+You might be wondering why the list doesn't hold bean reference. The reason for this is that if the ProxyFactroyBean's singleton property is set to false, it must be able to return independent proxy instances. If any of the advisors is itself a prototype, an independent instance would need to be returned, so it's necessary to be able to obtain an instance of the prototype from the factory;holding a reference isn't sufficient. 
+
+There's little performance difference between CGLIB proxying and dynamic proxies. As of Spring1.0, dynamic proxies are slightly faster. However, this may change in the future. Performance should not be a decisive consideration in this case.
+
+Creating AOP proxies programmatically with the ProxyFactory:
+ProxyFactory factory = new ProxyFactory(myBussinessInterfaceImpl);
+factory.addAdvice(myMethodInterceptor);
+factory.addAdvisor(myAdvisor);
+MyBusinessInterface tb = (MyBusinessInterface) factory.getProxy();
+
+The BeanNameAutoProxyCreator class is a BeanPostProcessor that automatically creates AOP proxies for beans with names matching literal values or wildcards. 
+A more general and extremely powerful auto proxy creator is DefaultAdvisorAutoProxyCreator. 
+
+The Spring Framework provides a consistent abstraction for transaction management that delivers the following benefits:
+1. Consistent programming model across different transaction APIs such as Java Transaction API(JTA), JDBC, Hibernate, Java Persistence API(JPA), and Java Data Object(JDO).
+2. Support for declarative transaction management. 
+3. Simpler API for programmatic transaction management than complex transaction APIs such as JTA.
+4. Excellent integration with Spring's data access abstractions.
+
+In its default configuration, the Spring Framework's transaction infrastructure code only marks a transaction for rollback in the case of runtime, unchecked exception; that is, when the thrown exception is an instance or subclass of RuntimeException. (Error will also - by default result in a rollback). Checked exceptions that are thrown from a transactional method do not result in rollback in the default configuration. 
+You do this by defining distinct <aop:advisor/> elements with differing pointcut and advice-ref attribute values. 
+
+PROPAGATION_NESTED uses a single physical transaction with multiple savepoints that it can roll back to. Such partial rollbacks allow an inner transaction scope to trigger a rollback for its scope, with the outer transaction being able to continue the physical transaction despite some operations having been rolled back. This setting is typically mapped onto JDBC savepoints, so will only work with JDBC resource transactions.
+
+Registering a regular event listener is done via the @EventListener annotation. If you need to bind it to the transaction use @TransactionalEventListener. When you do so, the listener will be bound to the commit phase of the transaction by default. 
+The TransactionalEventLIstener annotation exposes a phase attribute that allows to customize to which phase of the transaction the listener should be bound to. The valid phases are BEFORE_COMMIT, AFTER_COMMIT(default), AFTER_ROLLBACK and AFTER_COMPLETION that aggregates the transaction completion. 
+
+分布式集群下如何做到唯一序列号: 
+1. UUID; 
+2. 之前C实现的基于文件+机器编码; 
+3. 数据库自增长序列或字段(可以使用分库分表提升性能)
+3. Redis(优化: 进行分片)
+4. 雪花算法: 符号位(1位) + 时间戳(41位) + 数据中心标识(5) + ID生成器实例标识(5) + 序列号(12)。单机最大支持2^12=4096并发
+5. ZK(通过其znode数据版本来生成序列号，可以生成32位和64位的数据版本号，客户端可以使用这个版本号作为唯一的序列号，但很少使用ZK，在性能高并发下，性能很差)
+6. MongoDB的ObjectId
+MongoDB的ObjectId和snowflake算法类似。它设计成轻量型的，不同的机器都能用全局唯一的同种方法方便地生成它。MongoDB 从一开始就设计用来作为分布式数据库，处理多个节点是一个核心要求。使其在分片环境中要容易生成得多。生成策略类似雪花算法。时间戳+机器ID+进程ID+序列号=>ObjectId对象 优点：本地生成，有序，成本低 缺点：使用机器ID和进程ID，64位Long无法存储，只能生成特殊ObjectId对象。
+针对上述6个都有一个可优化的点，一次性批量获取多个序列号，尽量减少网络开销。但在服务停机时，会造成部分序列号浪费的情况。
+
+Hystrix <-> Sentinel 
+
+Sentinel是面向分布式服务架构的轻量级流量控制组件，主要以流量位切入点，从限流，流量整形，熔断降级，系统负载保护等多个维度来保障微服务的稳定性。
+只要通过Sentinel API定义的代码，就是资源，能够被Sentinel保护起来。大部分情况下，可以使用方法签名，URL，甚至服务名称作为资源名来标示资源。
+
+Sentinel 和 Hystrix 的原则是一致的: 当检测到调用链路中某个资源出现不稳定的表现，例如请求响应时间长或异常比例升高的时候，则对这个资源的调用进行限制，让请求快速失败，避免影响到其它的资源而导致级联故障。
+
+Sentinel的使用可以分为两个部分: 
+1. 核心库(Java客户端): 不依赖任何框架/库，支持java7及以上版本的运行时环境，同时对Dubbo/Spring Cloud等框架有较好的支持;
+2. 控制台(Dashboard): Dashboard主要负责管理推送规则;监控;管理机器信息等。
+
+Hystrix的资源模型设计上采用了命令模式，将对外部资源的调用和fallback逻辑封装成一个命令对象(HystrixCommand/HystrixObservableCommand)，其底层的执行是基于RxJava实现的。每个Command创建时都要指定commandKey和groupKey(用于区分资源)以及对应的隔离策略(线程池或信号隔离)。线程池隔离模式下需要配置线程池对应的参数(线程池名称，容量，排队超时等)，然后Command就会在指定的线程池按照指定的容错策略执行; 信号量隔离模式下需要配置最大并发数，执行Command时Hytrix就会限制其并发调用。
+
+Sentinel和Hystrix的熔断降级功能本质上都是基于熔断器模式(Circuit Breaker Pattern);
+
+两者的实时指标统计实现对比：
+	1. Hystrix 和 Sentinel 的实时指标数据统计实现都是基于滑动窗口的。Hystrix 1.5 之前的版本是通过环形数组实现的滑动窗口，通过锁配合 CAS 的操作对每个桶的统计信息进行更新。Hystrix 1.5 开始对实时指标统计的实现进行了重构，将指标统计数据结构抽象成了响应式流（reactive stream）的形式，方便消费者去利用指标信息。同时底层改造成了基于 RxJava 的事件驱动模式，在服务调用成功/失败/超时的时候发布相应的事件，通过一系列的变换和聚合最终得到实时的指标统计数据流，可以被熔断器或 Dashboard 消费。
+	2. Sentinel 目前抽象出了 Metric 指标统计接口，底层可以有不同的实现，目前默认的实现是基于 LeapArray 的高性能滑动窗口，后续根据需要可能会引入 reactive stream 等实现。
+
+Sentinel支持多样化的流量整形策略，在QPS过高的时候可以自动将流量调整成合适的形状；常用的如下:
+1. 直接拒绝模式:即超出的请求直接拒绝。
+2. 慢启动预热模式：当流量激增的时候，控制流量通过的速率，让通过的流程缓慢增加，在一定时间内逐渐增加到阈值上限，给冷系统一个预热的时间，避免冷系统被压垮。
+3. 均速器模式：利用Leaky Bucket算法实现的均速模式，严格控制请求通过的时间间隔，同时堆积的请求将会排队，超过超时的请求直接被拒绝。
+
+Sentinel对系统的维度提供保护，负载保护算法借鉴了TCP BBR的思想。
+
+线程池隔离的好处是隔离度比较高，可以针对某个资源的线程池去进行处理而不影响其他资源，但是代价就是线程数目比较多，线程上下文切换的overhead比较大，特别是对低延时的调用有比较大的影响。另外，托管的线程切换可能会导致基于ThreadLocal的上下文传递丢失的问题(如Spring事务管理)。Sentinel没有提供线程池隔离这样比较重的隔离方式，而是提供了信号量隔离这种比较轻量级的隔离方式。
+
+若在异步回调中需要嵌套其他的资源调用(无论是entry还是asyncEntry)，只需要借助Sentinel提供的上下文切换功能，在对应的地方通过ContextUtil.runOnContext(context, f)进行Context变换，将对应资源调用处的Context切换为生成的异步Context,即可维持正确的调用链路关系。
+
+Sentinel支持以下几种规则: 流量控制规则，熔断降级规则，系统保护规则，来源控制规则和热点参数规则。。
+
+ZK的用途:
+	1. 选举
+	2. 分布式协调/集群管理: 集群退出/集群加入/选举master
+	3. 分布式锁
+	4. 分布式配置 
+	5. 服务注册中心
+	6. 命名服务
+	7. 分布式队列
+	8. 全局计数器: Shared Counter, Distributed Atomic Long 
+Zookeeper设计目的:
+	1.最终一致性：client不论连接到哪个Server，展示给它都是同一个视图，这是zookeeper最重要的性能。
+	2.可靠性：具有简单、健壮、良好的性能，如果消息被到一台服务器接受，那么它将被所有的服务器接受。
+	3.实时性：Zookeeper保证客户端将在一个时间间隔范围内获得服务器的更新信息，或者服务器失效的信息。但由于网络延时等原因，Zookeeper不能保证两个客户端能同时得到刚更新的数据，如果需要最新数据，应该在读数据之前调用sync()接口。
+	4.等待无关（wait-free）：慢的或者失效的client不得干预快速的client的请求，使得每个client都能有效的等待。
+	5.原子性：更新只能成功或者失败，没有中间状态。 
+	6.顺序性：包括全局有序和偏序两种：全局有序是指如果在一台服务器上消息a在消息b前发布，则在所有Server上消息a都将在消息b前被发布；偏序是指如果一个消息b在消息a后被同一个发送者发布，a必将排在b前面。
+
+ZK的核心是原子广播，这个机制保证了各个Server之间的同步。实现这个机制的协议叫做ZAB协议。Zab协议有两种模式：恢复模式(选主)和广播模式(同步)。当服务启动或者Leader崩溃后，Zab就进入了恢复模式，当领导者被选举处理，且大多数Server完成了和Leader的状态同步以后，恢复模式就结束了。状态同步保证了Leader和Server具有相同的系统状态。
+为了保证事务的顺序一致性，ZK采用递增的事务ID号-zxid来标识事务。所有的提议proposal都在被提交的时候加上了zxid。实现中zxid是一个64位的数字，它高32位是epoch用来标识leader关系是否改变，每次一个leader被选出来，它都会有一个新的epoch，标识当前属于哪个Leader的统治时期。低32位用于递增计数。
+
+ZK的服务器的三种状态: LOOKING, LEADING, FOLLOWING;
+
+
+public interface ApplicationContext extends EnvironmentCapable, ListableBeanFactory,
+	HierarchicalBeanFactory, MessageSource, ApplicationEventPublisher, ResourcePatternResolver {
+	String getId();
+	String getApplicationName();
+	String getDisplayName();
+	long getStartupDate();
+	ApplicationContext getParent();
+	AutowireCapableBeanFactory getAutowireCapableBeanFactory() throws IllegalStateException;
+}
+
+An ApplicationContext provides:
+1. Bean factory methods for accessing application components. Inherited from ListableBeanFactory.
+2. The ability to load file resource in a generic fashion. Inherited from the ResourceLoader interface.
+3. The ability to publish events to registered listener. Inherited from ApplicationEventPublisher interface.
+4. The ability to resolve messages, supporting internationalization. Inherited from the MessageSource interface.
+5. Inheritance from a parent context. Definitions in a descendant context will always take priority. This means, for example, that a single parent context can be used by an entire web application, while each servlet has its own child context that is independent of that of any other servlet. 
+6. In addition to standard BeanFactory lifecycle capabilities, ApplicationContext implementations detect and invoke ApplicationContextAware beans as well as ResourceLoaderAware, ApplicationEventPublisherAware and MessageSourceAware beans. 
+
+解决主存和CPU高速缓存一致性方案有两种:
+	1. 通过在总线加Lock#锁的方式
+	2. 通过缓存一致性协议(MESI协议: Modified Exclusive Shared Or Invalid)
+
+Java只保证基本数据类型的变量和赋值操作才是原子性的(在32位的JDK环境下，对64位数据的读取不是原子性操作：如long, double)
+
+volatile可以保证线程可见性且提供一定的有序性，但是无法保证原子性。在JVM底层volatile是采用内存屏障来实现的。
+
+在执行程序时为了提高性能，编译器和处理器通常会对指令做重排序:
+	1. 编译器重排序: 编译器在不改变单线程程序语义的前提下，可以重新安排语句的执行顺序。
+	2. 处理器重排序：如果不存在数据依赖性，处理器可以改变语句对应机器指令的执行顺序。
+	
+在JDK8里TransferQueue唯一的实现是: LinkedTransferQueue. 
+
+public interface TransferQueue<E> extends BlockingQueue<E> {
+	boolean tryTransfer(E e);
+	void transfer(E e) throws InterruptedException;
+	boolean tryTransfer(E e, long timeout, TimeUnit unit) throws InterruptedException;
+	boolean hasWaitingConsumer();
+	int getWaitingConsumerCount();
+}
+
+public class LinkedTransferQueue<E> extends AbstractQueue<E> 
+	implements TransferQueue<E>, java.io.Serializable {
+	...
+}
+
+内存屏障：Memory Barriers, 是一组处理器指令，用于实现对内存操作的顺序限制。
+缓存行: Cache line, 缓存中可以分配的最小存储单位，处理器填写缓存行时会加载整个缓存行，需要使用多个主内存读周期。
+缓存行填充：cache line fill, 当处理器识别从内存中读取操作数是可缓存的，处理器读取整个缓存行到适当的缓存(L1, L2, L3或所有)
+缓存命中：cache hit, 如果进行高速缓存行填充操作的内存位置仍然是下次处理器访问的地址时，处理器从缓存中读取操作数，而不是从内存。
+写命中: write hit, 当处理器将操作数写回到一个内存缓存的区域时，首先检查这个缓存的内存地址是否在缓存行中，如果存在一个有效的缓存行，则处理器将这个操作数写回到缓存，而不是写回内存，这个操作被称为写命中
+写缺失：write miss the cache, 一个有效的缓存行被写入到不存在的内存区域。
+
+查看代码的汇编代码:
+java -XX:+UnlockDiagnosticVMOptions -XX:+PrintAssembly -Xcomp -XX:CompileCommand=dontline,*someClass.someMethod -XX:CompileCommand=compileonly,*someClass.someMethod someClass
+
+a = new A(); //其实发生了三件事:
+memory = allocate(); //1. 为对象分配内存空间
+ctorInstance(memory); //2. 初始化对象
+instance = memory; //3. 设置instance指向刚分配的内存地址
+指令重排序有可能导致2和3顺序相反。
+
+写操作有两种基本的模式:
+1. 直写(write-through)
+	直写是透过本级缓存，直接把数据写到下一级缓存(或直接内存)中，如果对应的段被缓存了，同时更新缓存中的内容(甚至直接丢弃)。所以，直写时缓存行永远和它对应的内存内容匹配。
+2. 回写(write-back)
+	缓存不会立即把写操作传递到下一级，而是仅修改本级缓存中的数据，并且把对应的缓存段标记为脏段。脏段会触发回写，也就是把里面的内容写到对应的内存或者下一级缓存中。回写后，脏段又变干净了。当一个脏段被丢弃的时候，总是先进行一次回写。也就是说，回写模式中要么缓存段的内容和内存一致(如果缓存段是干净的)；要么缓存段中的内容最终要回写到内存中(对应脏缓存段来说);
+	
+【窥探技术+MESI协议】的出现，是为了解决多核处理器时代，缓存不一致问题的。
+
+窥探技术的思想是，缓存不仅仅在做内存传输的时候才和总线打交道，而是不停地在窥探总线上发生的数据交换，跟踪其他缓存在做什么。所以当一个缓存代表它所属的处理器去读写内存时，其他处理器都会得到通知，它们以此来使自己的缓存保持同步。只要某个处理器一写内存，其他处理器马上就知道这块内存在它们自己的缓存中对应的缓存行已经失效。
+
+MESI协议:
+缓存系统操作的最小单位就是缓存行，而MESI是缓存行四种状态的首字母缩写，任何多核系统中的缓存行都处于这四种状态之一。
+1. 失效（Invalid）缓存行：该处理器缓存中无该缓存行，或缓存中的缓存行已经失效了。
+2.  共享（Shared）缓存行：缓存行的内容是同主内存内容保持一致的一份拷贝，在这种状态下的缓存行只能被读取，不能被写入。多组缓存可以同时拥有针对同一内存地址的共享缓存行。
+3. 独占（Exclusive）缓存行：和S状态一样，也是和主内存内容保持一致的一份拷贝。区别在于，如果一个处理器持有了某个E状态的缓存行，那其他处理器就不能同时持该内容的缓存行，所以叫“独占”。这意味着，如果其他处理器原本也持有同一缓存行，那么它会马上变成“失效”状态（I状态）。
+4. 已修改（Modified）缓存行：属于脏段，该缓存行已经被所属的处理器修改了。如果一个缓存行处于已修改状态，那么它在其他处理器缓存中的拷贝马上会变成失效状态，这个规律和E状态一样。此外，已修改缓存行如果被丢弃或标记为失效（即，从M状态 ——> I状态），那么先要把它的内容回写到内存中 ———— 这和回写模式下常规的脏段处理方式一样。
+只有当缓存行处于E或M状态时，处理器才能去写它，也就是说只有这两种状态下，处理器是独占这个缓存行的。当处理器想写某个缓存段时，如果它没有独占权，它必须先发送一条“我要独占权”的请求给总线，这会通知其他处理器，把它们拥有的同一缓存行的拷贝失效（I状态），如果它们有的话。只有在获得独占权后，处理器才能开始修改数据。并且此时，这个处理器知道，这个缓存行只有一份拷贝，在我自己的缓存里，所以不会有任何冲突。反之，如果有其他处理器想读取这个缓存行（我们马上能知道，因为我们一直在窥探总线），独占或已修改的缓存行必须先回到“共享”状态。如果是已修改的缓存段，那么还要先把内容回写到内存中。
+
+为了实现volatile 的内存语义，编译器在生成字节码时，会在指令序列中插入内存屏障来禁止特定类型的处理器重排序。因为内存屏障是一组处理器指令，它并不由JVM直接暴露，因此JVM会根据不同的操作系统插入不同的指令以达成我们所要内存屏障效果。
+
+基于保守策略的JMM内存屏障插入策略：
+在每个volatile写操作的前面插入StoreStore屏障;
+在每个volatile写操作的后面插入StoreLoad屏障;
+在每个volatile读操作的后面插入LoadStore屏障;
+在每个volatile读操作的后面插入LoadLoad屏障;
+
+在X86中，JMM仅需在volatile写后面插入一个StoreLoad屏障即可正确实现volatile写-读的内存语义。这是因为X86不会对读-读，读-写和写-写操作做重排序，因此在X86处理器中会省略掉这三种操作类型对应的内存屏障。
+这里需要再次强调说明的是，内存屏障是一组处理器指令，而上面的四种内存屏障（StoreStore、StoreLoad、LoadLoad、LoadStore）这是JMM内存屏障的一种分类，在不同的处理器中，会转换成相应处理器对应的该内存屏障类型的指令。比如，同样是StoreLoad屏障，在SPARC中的指令是membar、在Xeon中的指令是mfence、在Itanium中的指令是mf。
+在X86处理器上执行volatile写操作时会插入一个带有lock前缀（汇编指令）来实现volatile的内存语义的。如，『0x01a3de24: lock addl $0x0,(%esp);』
+
+什么情况下Kafka写入数据会丢失：
+写入数据是往某个Partition的Leader写入的，然后Partition的Follower会从Leader同步数据。如果一条数据刚写入Leader Partition,还没来得及同步给Follower，此时Leader Partition所在的机器宕机。此时就会选举之前的一个Partition Follower作为Leader对外提供服务，此时由于没有同步之前Leader写入的数据，导致数据丢失。
+
+Kafka的数据如何保证不丢失:
+1. 从Kafka Broker角度: Topic的多个Partition需要有多个副本replica，这样可以保证在Leader Partition宕机/不可用时，由另外一个Follower Partition选举为Leader Partition继续对外提供服务；每个Partition至少要有1个Follower在ISR列表中，跟上Leader的数据同步，可以设置最小同步副本数来在在高可用和高效率之间保持取舍。在设置了最小同步副本数后，Broker会保证至少有”最小副本数“的副本收到消息后，才给生产者消息确认。
+2. 从生产者Producer角度: 生产者向Broker发送消息，需要等待Kafka集群的确认，涉及一个参数acks，有三个值：0, 1, all。0:发送过去不等Kafak消息确认，认为成功。这种情况会造成消息丢失。如果是1，代表发送过去，等待Leader确认消息，认为成功，写入了分区文件，但不一定落盘。如果是all，代表发送过去后，消息写入所以最小同步副本数后，才消息确认。需要配置成all。当发送异常时，设置重试次数/重试等待时间，来避免网络异常或正在选举中的问题。多个消息发送给同一个分区时，生产者会把消息打成一个批次，batch.size过大会占用内存，过小会发送频率太高，并且生产者不是满批立即发送，而是有个等待时间linger.ms。
+3. 从消费者Consumer角度: 消费者向Kafka提交已经消费的offset来确认消费到的位置。auto.offset.reset没有偏移量可以提交的时候，系统从哪里开始消费。有两种:earliest和latest。enable.auto.commit，开启自动提交，可能会引起并未消费完毕，就提交了offset，引起数据丢失。与自动提交相关的是自动提交间隔时间,auto.commit.interval.ms默认是5秒钟提交一次。自动提交还有可能引起消息的充分消费，特别是出现rebalance时。
+
+When an ApplicationContext is loaded, it automatically searches for a MessageSource bean defined in the context. The bean must have the name messageSource. If such a bean is found, all calls to the preceding methods are delegated to the message source. If no message source is found, the ApplicationContext attempts to find a parent containing a bean with the same name. If it does, it uses that bean as the MessageSource. If the ApplicationContext cannot find any source for messages, an empty DelegatingMessageSource is instantiated in order to be able to accept calls to the methods defined above.
+
+You can also use the MessageSourceAware interface to acquire a reference to any MessageSource that has been defined. Any bean that is defined in an ApplicationContext that implements the MessageSourceAware interface is injected with the application context’s MessageSource when the bean is created and configured.
+As an alternative to ResourceBundleMessageSource , Spring provides a ReloadableResourceBundleMessageSource class.
+This variant supports the same bundle file format but is more flexible than the standard JDK based ResourceBundleMessageSource implementation. In particular, it allows for reading files from any Spring resource location (not just from the classpath) and supports hot reloading of bundle property files (while efficiently caching them in between).
+
+Spring provides the following standard events:
+1. ContextRefreshedEvent
+2. ContextStartedEvent
+3. ContextStoppedEvent
+4. RequestHandledEvent
+
+ApplicationEventPublisherAware
+ApplicationEventPublisher
+
+You may register as many event listeners as you wish, but note that by default event listeners receive events synchronously. This means the publishEvent() method blocks until all listeners have finished processing the event. One advantage of this synchronous and single-threaded approach is that when a listener receives an event, it operates inside the transaction context of the publisher if a transaction context is available. If another strategy for event publication becomes necessary, refer to the javadoc for Spring's ApplicationEventMulticaster interface. 
+
+ResourceLoaderAware
+
+Spring Cloud Config的缺点:
+1. 配置存储介质的权限管理
+2. 刷新机制, 对于git/svn需要配置webhook
+3. 只支持被动拉的模式，不支持主动拉的模式(即定时拉取)
+4. 没有统一的配置界面
+5. 不支持灰度发布
+6. 不支持告警通知
+ 
+Selector的实现根据操作系统的不同而不同，目前多路复用IO主要包括四种:select, poll, epoll, kqueue.
+Selector有2种创建方式：
+1. Selector.open()会调用操作系统底层的Selector实现来创建Selector;
+2. SelectorProvider.openSelector(): 直接调用SelectorProvider类来获取操作系统底层的Selector来创建Selector;
+
+poll的机制与select类似，与select在本质上没有多大差别，管理多个描述符也是进行轮询，根据描述符的状态进行处理，但是poll没有最大文件描述符数量的限制。poll和select同样存在一个缺点就是，包含大量文件描述符的数组被整体复制于用户态和内核的地址空间之间，而不论这些文件描述符是否就绪，它的开销随着文件描述符数量的增加而线性增大。
+
+epoll是在2.6内核中提出的，是之前的select和poll的增强版本。相对于select和poll来说，epoll更加灵活，没有描述符限制。epoll使用一个文件描述符管理多个描述符，将用户关系的文件描述符的事件存放到内核的一个事件表中，这样在用户空间和内核空间的copy只需一次。
+
+-XX:NativeMemoryTracking=detail, 使用命令jcmd <pid> VM.native_memory detail查看内存分布，这个显示的内存包括堆内内存，Code区域，通过unsafe.allocateMemory和DirectByteBuffer申请的内存，但是不包括Native Code(C代码)申请的堆外内存。
+
+iostat -x 
+
+Kafka从0.8.x版本开始引入副本，这样可以极大的提高集群的可靠性和稳定性。
+每个分区的多个副本称为AR(assigned replicas),包含至多一个Leader副本和多个Follower副本。与AR对应的重要概念是ISR(in-sync replicas), ISR是指与Leader副本保持同步状态的副本集合，当然Leader副本本身也是ISR的一员。而ISR之外，也就是处于同步失败或者失效状态的副本，副本对应的分区称之为同步失效分区，即under-replicated分区。
+怎么样判定一个分区是否有副本是处于同步失效状态的呢？从Kafka 0.9.x版本开始通过唯一的一个参数replica.lag.time.max.ms（默认大小为10,000）来控制，当ISR中的一个follower副本滞后leader副本的时间超过参数replica.lag.time.max.ms指定的值时即判定为副本失效，需要将此follower副本剔出除ISR之外。
+在Kafka 0.9.x版本之前还有另一个Broker级别的参数replica.lag.max.messages（默认大小为4000）也是用来判定失效副本的，当一个follower副本滞后leader副本的消息数超过replica.lag.max.messages的大小时则判定此follower副本为失效副本。它与replica.lag.time.max.ms参数判定出的失败副本去并集组成一个失效副本的集合，从而进一步剥离出ISR。
+。不过这个replica.lag.max.messages参数很难给定一个合适的值，若设置的太大则这个参数本身就没有太多意义，若设置的太小则会让follower副本反复的处于同步、未同步、同步的死循环中，进而又会造成ISR的频繁变动。而且这个参数是Broker级别的，也就是说对Broker中的所有topic都生效，就以默认的值4000来说，对于消息流入速度很低的topic来说，比如TPS=10，这个参数并无用武之地；而对于消息流入速度很高的topic来说，比如TPS=20,000，这个参数的取值又会引入ISR的频繁变动，所以从0.9.x版本开始就彻底移除了这一参数
+
+哪种情况下会导致Kafka副本失效:
+1. Follower副本进程卡住，在一段时间内没有向Leader副本发起同步请求，比如频繁Full GC
+2. Follower副本进程同步太慢，在一段时间内无法追赶Leader副本，比如IO开销过大。
+3. 如果增加了副本因子，新增加的副本在赶上Leader副本之前也是处于失效状态的
+4. 一个Follower副本因为某些原因(宕机)而下线，之后又上线，在追赶Leader副本之前也是处于失效状态的。
+
+Zookeeper中每个节点默认的数据量上限是1M，如果需要存入大于1M的数据量，则要修改jute.maxbuffer参数
+jute.maxbuffer： 默认值1048575，单位字节，用于配置单个数据节点（ZNode）上可以存储的最大数据大小。需要注意的是，在修改该参数的时候，需要在zookeeper集群的所有服务端以及客户端上设置才能生效。
+
+Kafka通过Zookeeper管理集群配置，选举Leader，以及在Consumer Group发生变化时进行Rebalance。Producer使用Push(推)模式将消息发布到Broker, Consumer使用Pull(拉)模式从Broker订阅并消费消息。
+在发送一条消息时，可以指定这个消息的key,producer根据这个key和partition机制来判断这个消息发送到哪个partition。partition机制可以通过指定producer的partition.class这个参数来指定，该class必须实现kafka.producer.Partitioner接口。
+
+topic在物理层面以partition为分组，一个topic可以分为若干个partition, partition还可以细分为segment, 一个partition物理上由多个segment组成。
+Kafka消息的物理结构：消息都具有固定的物理结构，包括：offset(8 Bytes), 消息体的大小(4 Bytes), crc32(4 Bytes), magic(1 Byte), attributes(1 Byte), key length(4 Bytes), key(K Bytes), payload(N Bytes)等字段，可以确定一条消息的大小，即读取到哪里截至。
+
+LEO：LogEndOffset,表示partition的log最后一条Message的位置。
+HW: HighWatermark的缩写，指consumer能够看到的此partition的位置。
+AR: 所有的副本replicas统称为Assigned Replicas, 即AR。
+ISR是AR中的一个子集，由leader维护ISR列表，follower从leader同步数据有一些延迟（包括延迟时间replica.lag.time.max.ms和延迟条数replica.lag.max.messages两个维度, 当前最新的版本0.10.x中只支持replica.lag.time.max.ms这个维度），任意一个超过阈值都会把follower剔除出ISR, 存入OSR（Outof-Sync Replicas）列表，新加入的follower也会先存放在OSR中。AR=ISR+OSR。
+
+HW俗称高水位，HighWatermark，取一个partition对应的ISR中最小的LEO作为HW, Consumer最多只能消费到HW所在的位置。每个replica都有HW，leader和follower各自负责更新自己的HW的状态。对于leader写入的消息，consumer不能立即消费，leader会等待该消息被所有ISR中的replicas同步后更新HW，此时消息才被consumer消费。这样就保证了如果leader所在的broker失效，该消息仍然可以从新选举的leader中获取。对于来自内部broker的读取请求，没有HW的限制。
+Kafka的复制机制既不是完全的同步复制，也不是单纯的异步复制。事实上，同步复制要求所有能工作的follower都复制完，这条消息才会被commit，这种复制方式极大的影响了吞吐率。而异步复制方式下，follower异步的从leader复制数据，数据只要被leader写入log就被认为已经commit，这种情况下如果follower都还没有复制完，落后于leader时，突然leader宕机，则会丢失数据。而Kafka的这种使用ISR的方式则很好的均衡了确保数据不丢失以及吞吐率。
+
+leader选举的算法非常多，比如Zookeeper的Zab、Raft以及Viewstamped Replication。而Kafka所使用的leader选举算法更像是微软的PacificA算法。
+
+KafkaProducer在调用send方法发送消息至broker的过程中，首先是经过拦截器Inteceptors处理，然后是经过序列化Serializer处理，之后就到了Partitions阶段，即分区分配计算阶段。在某些应用场景下，业务逻辑需要控制每条消息落到合适的分区中，有些场景只需要默认的分配规则即可。在KafkaProducer计算分配时，首先根据的是ProducerRecord中的partition字段指定的序号计算分区。
+
+yield()方法和sleep方法一样，线程并不会让出锁，和wait不同。
+
+public static void setDefaultUncaughtExceptionHandler(UncaughtExceptionHandler eh);
+public void setUncaughtExceptiongHandler(UncaughtExceptionHandler eh);
+
+选择消息中间件的考虑维度：
+1. 功能维度
+	1.1 优先级队列
+	1.2 延迟队列
+	1.3 死信队列
+	1.4 重试队列
+	1.5 消费模式
+	1.6 广播消费
+	1.7 消息回溯
+	1.8 消息堆积+持久化 
+	1.9 消息追踪
+	1.10 消息过滤
+	1.11 多租户
+	1.12 多协议支持
+	1.13 跨语言支持
+	1.14 流量控制 
+	1.15 消息顺序性 
+	1.16 安全机制
+	1.17 消息幂等性
+	1.18 事务性消息 
+2. 性能维度
+3. 可靠性+可用性
+4. 运维管理
+5. 社区力度及生态发展
+
+在Kafka集群中会有一个或者多个broker，其中有一个broker会被选举为控制器（Kafka Controller），它负责管理整个集群中所有分区和副本的状态。当某个分区的leader副本出现故障时，由控制器负责为该分区选举新的leader副本。当检测到某个分区的ISR集合发生变化时，由控制器负责通知所有broker更新其元数据信息。当使用kafka-topics.sh脚本为某个topic增加分区数量时，同样还是由控制器负责分区的重新分配。
+在Kafka的早期版本中，并没有采用Kafka Controller这样一个概念来对分区和副本的状态进行管理，而是依赖Zookeeper，每个broker都会在Zookeeper上为分区和副本注册大量的监听器(Watcher)。当分区或者副本状态变化时，会唤醒很多不必要的监听器，这种严重依赖Zookeeper的设计会有脑裂，羊群效应以及造成Zookeeper过载的隐患。在目前的新版本的设计中，只要Kafka Controller上注册相应的监听器，其他broker极少需要再监听Zookeeper中的数据变化，这样省去了很多不必要的麻烦。不过每个broker还是会对/controller节点添加监听，以此来监听此节点的数据变化(参考ZkClient中的ZkDataListener)。
+
+如何使用Redis来实现分布式锁:
+1. 使用setnx，但当线程在释放锁之前因某种原因异常退出，比如宕机，那么这个锁将永远不能释放。
+2. 正确的姿势是使用 set key value [EX seconds] [PX milliseconds] [NX|XX]
+3. 有一个问题，如果某线程获取后，在过期时间后执行完毕，又删除了别人锁定的锁。解决方法：将设定的value为唯一标识自己，如果一样才进行del key。不一样表示是别人持有的锁。
+4. 3中的问题：get key 和del key是两个操作，不是原子性的。解决方法：使用Lua脚本
+5. 4中的问题：从master获取锁后，master宕机，锁信息还没有同步到slave，slave成为master，其他又可以获取锁。解决方法：使用RedLock
+
+在Kafka中除了硬件资源的影响，消息写入的吞吐量还会受到消息大小，消息压缩方式，消息发送方式(同步/异步)，消息确认类型(acks)，副本因子等参数的影响。
+为了让kafka发挥性能的机制，可以有下面几种措施：
+	1. 批量处理
+	2. 客户端优化：新版生产者客户端摈弃了以往的单线程，采用双线程：主线程和Sender线程；
+	3. 日志格式
+	4. 日志编码
+	5. 消息压缩：gzip,snappy,lz4 
+	6. 建立索引，方便快速定位查询
+	7. 分区
+	8. 一致性:Kafka采用类似于PacificA的算法，采用这种模型会提升整理的效率
+	9. 顺序写盘
+	10. 页缓存
+	11. 零拷贝 

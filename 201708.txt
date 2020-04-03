@@ -1,0 +1,443 @@
+public class CyclicBarrier {
+	private static class Generation {
+		boolean broken = false;
+	}
+	private final ReentrantLock lock = new ReentrantLock();
+	private final Condition trip = lock.newCondition();
+	private final int parties;
+	private final Runnable barrierCommand;
+	private Generation generation = new Generation();
+	private int count;
+	
+	private void nextGeneration() {
+		trip.signalAll();
+		count = parties;
+		generation = new Generation();
+	}
+	
+	private void breakBarrier() {
+		generation.broken = true;
+		count = parties;
+		trip.signalAll();
+	}
+	
+	private int dowait(boolean timed, long nanos) throws 
+		InterruptedException, BrokenBarrierException, TimeoutException {
+		final ReentrantLock lock = this.lock;
+		lock.lock();
+		try {
+			final Generation g = generation;
+			if (g.broken)
+				throw new BrokenBarrierException();
+			if (Thread.interrupted()) {
+				breakBarrier();
+				throw new InterruptedException();
+			}
+			
+			int index = --count;
+			if (index == 0) {   //tripped
+				boolean ranAction = false;
+				try {
+					final Runnable command = barrierCommand;
+					if (command != null) {
+						command.run();
+					}
+					ranAction = true;
+					nextGeneration();
+					return 0;
+				} finally {
+					if (!runAction) {
+						breakBarrier();
+					}
+				}
+			}
+			//loop until tripped, broken, interrupted, or timed out 
+			for (;;) {
+				try {
+					if (!timed)
+						trip.await();
+					else if (nanos > 0L)
+						trip.awaitNanos(nanos);
+				} catch (InterruptedException ie) {
+					if (g == generation && !g.broken) {
+						breakBarrier();
+						throw ie;
+					} else {
+						Thread.currentThread().interrupt();
+					}
+				}
+				
+				if (g.broken)
+					throw new BrokenBarrierException();
+				if (g != generation)
+					return index;
+				if (timed && nanos <= 0L) {
+					breakBarrier();
+					throw new TimeoutException();
+				}
+			}
+		} finally {
+			lock.unlock();
+		}
+	}
+	
+	public CyclicBarrier(int parties, Runnable barrierAction) {
+		if (parties <= 0) throw new IllegalArgumentException();
+		this.parties = parties;
+		this.count = parties;
+		this.barrierCommand = barrierAction;
+	}
+	public CyclicBarrier(int parties) {
+		this(parties, null);
+	}
+	public int await() throws InterruptedException, BrokenBarrierException {
+		try {
+			return dowait(false, 0L);
+		} catch (TimeoutException toe) {
+			throw new Error(toe);
+		}
+	}
+	
+	public int await(long timeout, TimeUnit unit)
+        throws InterruptedException,
+               BrokenBarrierException,
+               TimeoutException {
+        return dowait(true, unit.toNanos(timeout));
+    }
+
+    public boolean isBroken() {
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return generation.broken;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void reset() {
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            breakBarrier();   // break the current generation
+            nextGeneration(); // start a new generation
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int getNumberWaiting() {
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            return parties - count;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+
+Spring允许使用AspectJAnnotation用于定义Aspect, Pointcut, Advice, Introduction, Joinpoint，Spring框架可识别并根据这些Annotation来生成AOP代理。Spring只是使用了和AspectJ5一样的注解，但没有使用AspectJ的编译器或者织入器(Weaver)，底层依然使用的是Spring AOP，依然是在运行时动态生成AOP代理，并不依赖于AspectJ的编译器或者织入器。
+Spring依然采用运行时生成动态代理的方式来增强目标对象，所以它需要增加额外的编译，也不需要Aspect的织入器支持；而Aspect采用编译时增强，所以AspectJ需要自己的编译器来编译Java文件，还需要织入器。
+AnnotationAwareAspectJAutoProxyCreator是一个Bean 后处理器（BeanPostProcessor），该Bean后处理器将会为容器中Bean生成AOP代理。
+1. 失败重试伴随着异常的处理，Ribbon对Socket相关异常做相应的断路处理，连续3次失败会禁闭对应Server一段时间，尽量下次重试时不选择到此Server，以保证服务的高可用性
+2. 失败重试包含对单个Server的多次重试以及可重试多个Server
+
+HystrixThreadPool used to executed HystrixCommand.run() on separate threads when configured to do with HystrixCommandProperties.executionIsolationStrategy().
+Ribbon负载策略类：AbstractLoadBalancerRule
+HystrixPlugins类
+HystrixPlugins.getInstance().registerConcurrencyStrategy(new ThreadLocalHystrixConcurrencyStrategy());
+
+在Sprig Cloud中用Hystrix来实现断路器，Zuul默认是用信号量(Hystrix默认是线程)来进行隔离的。可以通过配置使用线程方式隔离。
+
+public class InheritableThreadLocal<T> extends ThreadLocal<T> {
+	protected T childValue(T parentValue) {
+		return parentValue;
+	}
+	ThreadLocalMap getMap(Thread t) {
+		return t.inheritableThreadLocals;
+	}
+	void createMap(Thread t, T firstValue) {
+		t.inheritableThreadLocals = new ThreadLocalMap(this, firstValue);
+	}
+}
+
+TransmittableThreadLocal
+G1: 这种将O区划分成多块的理念源于：当并发后台线程寻找可回收的对象时，有些区块包含可回收的对象要比其他区块多很多。虽然在清理这些区块时G1仍然需要暂停应用线程，但可以用相对较少的时间优先回收包含垃圾最多区块。这也是为什么G1命名为Garbage First的原因：第一时间处理垃圾最多的区块。
+G1和CMS的区别：
+1. G1在压缩空间方面有优势;
+2. G1通过将内存空间分成区域(Region)的方式避免内存碎片问题
+3. Eden, Survivor, Old区不再固定，在内存使用效率上来说更灵活
+4. G1可以通过设置预期停顿时间(PauseTime)来控制垃圾收集时间避免应用卡顿现象
+5. G1在回收内存后马上同时做合并空闲内存的工作，而CMS默认是在STW的时候做
+6. G1会在Young GC中使用，而CMS只能在O区使用
+
+在以下场景下G1更适合：
+1. 服务端多CPU，JVM内存占用较大的应用(至少大于4G)
+2. 应用在运行过程中会产生大量内存碎片，需要经常压缩空间
+3. 相应更可控，可预期的GC停顿周期；防止高并发应用雪崩现象
+G1在运行过程中主要包括如下4种操作方式：
+1. YGC
+2. 并发阶段
+3. 混合模式
+4. full GC(一般是G1出现问题时发生)
+public interface LoadBalancerClient {
+	ServiceInstance choose(String serviceId);
+	<T> T execute(String serviceId, LoadBalancerRequest<T> request) throws IOException;
+	URI reconstructURI(ServiceInstance instance, URI original);
+}
+
+LoadBalancerAutoConfiguration
+LoadBalancerInterceptor
+ClientHttpRequestInterceptor
+RibbonLoadBalancerClient
+LoadBalancerRequest 
+
+ILoadBalancer
+AbstractLoadBalancer 
+NoOpLoadBalancer
+BaseLoadBalancer
+DynamicServerListLoadBalancer
+ZoneAwareLoadBalancer
+整合Ribbon的时候Spring Cloud，通过RibbonClientConfiguration配置类，可以知道整合时默认采用了ZoneAwareLoadBalancer来实现负载均衡。
+RibbonLoadBalancerContext 
+Spring Cloud使用Ribbon实现客户端负载均衡的基本脉络：了解了它是如何通过LoadBalancerInterceptor拦截对RestTemplate的请求进行拦截，并利用Spring Cloud的负载均衡器LoadBalancerClient将以逻辑服务名为host的URI转换成具体的实例的过程。同时通过分析LoadBalancerClient的Ribbon实现RibbonLoadBalancerClient，可以知道使用Ribbon实现负载均衡器的时候，实际上使用的还是Ribbo中定义的ILoadBalancer接口实现，自动化配置会采用ZoneAwareLoadBalancer的实例进行客户端负载均衡实现。
+
+DynamicServerListLoadBalancer 
+ServerListFilter, AbstractServerListFilter,ZoneAffinityServerListFilter
+ZonePreferenceServerListFilter, DefaultNIWSServerListFilter, ServerListSubsetFilter
+ZoneAwareLoadBalancer 
+RoundRobinRule
+AvailabilityFilteringRule
+ZoneAvoidanceRule 
+WeightedResponseTimeRule
+ClientConfigEnabledRoundRobinRule 
+
+ThreadLocalMap是ThreadLocal的内部类，没有实现Map接口，用独立的方式实现了Map功能，其内部的Entry也独立实现。
+和HashMap的最大的不同在于，ThreadLocalMap结构非常简单，没有next引用，也就是说ThreadLocalMap中解决Hash冲突的方式并非链表的方式，而是采用线性探测的方式，所谓线性探测，就是根据初始key的hashcode值确定元素在table数组中的位置，如果发现这个位置上已经有其他key值的元素被占用，则利用固定的算法寻找一定步长的下个位置，依次判断，直至找到能够存放的位置。
+ThreadLocalMap解决Hash冲突的方式就是简单的步长加1或减1，寻找下一个相邻的位置。
+
+Apache Kafka在Exactly-Once Semantics(EOS)上三种粒度的保证如下(来自Exactly-once Semantics in Apache Kafka)：
+1. Idempotent Producer: Exactly-once, in-order, delivery per partition;
+2. Transactions: Atomic writes across partitions;
+3. Exactly-once stream processing across read-process-write tasks;
+
+Examples of DiscoveryClient implementations include Spring Cloud Netflix Eureka, Spring Cloud Consul Discovery, and Spring Cloud Zookeeper Discovery.
+
+There are two events that will be fired when a service auto-registers. The first event, called InstancePreRegisteredEvent, is fired before the service is registered. The second event, called InstanceRegisteredEvent, is fired after the service is registered. You can register an ApplicationLister to listen to and react to these events.
+
+WebClient是从Spring WebFlux5.0版本开始提供的一个非阻塞的基于响应式编程的进行Http请求的客户端工具，基于Reactor。WebClient中提供了标准Http请求方式对应的get,post,put,delete等。
+
+在AQS中的:
+线程获取同步状态失败的线程，会构造节点并加入到同步队列的尾部，然后通过自旋的方式不断的获取同步状态，但是在自旋过程中需要判断线程是否需要阻塞。
+//Acquires in exclusive uninterrruptible mode for thread already in 
+//queue. Used by condition wait methods as well as acquire.
+final boolean acquireQueued(final Node, int arg) {
+	boolean failed = true;
+	try {
+		boolean interrupted = false;
+		for (;;) {
+			final Node p = node.predecessor();
+			if (p == head && tryAcquire(arg)) {
+				setHead(node);
+				p.next = null; //help GC 
+				failed = false;
+				return interrupted;
+			}
+			//在这里需要判断线程是否需要阻塞
+			if (shouldParkAfterFailedAcquire(p, node) && 
+				parkAndCheckInterrupt())
+				interrupted = true;
+		}
+	} finally {
+		if (failed) 
+			cancelAcquire(node);
+	}
+}
+
+private static boolean shouldParkAfterFailedAcquire(Node pred, Node node) {
+	//前驱节点的等待状态
+	int ws = pred.waitStatus;
+	//当前线程处于等待状态，返回true
+	if (ws == Node.SIGNAL)
+		return true;
+	//说明前驱节点线程等待超时或者被中断，需要将前驱节点从同步队列中移除
+	if (ws > 0) {
+		do {
+			//从同步队列中移除前驱节点
+			node.prev = pred = pred.prev;
+		} while (pred.waitStatus > 0);
+		pred.next = node;
+	//状态为Condition或者propageate
+	} else {
+		compareAndSetWaitStatus(pred, ws, Node.SIGNAL);
+	}
+	return false;
+}
+
+private final boolean parkAndCheckInterrupt() {
+	//阻塞当前线程
+	LockSupport.park(this);
+	return Thread.interrupted();
+}
+在AQS中判断当前线程是否需要阻塞：
+1. 如果当前线程节点的前驱节点为SIGNAL状态，则表明当前线程处于等待状态，返回true，当前线程阻塞
+2. 如果当前线程节点的前驱节点状态为CANCELLED(值为1)，则表明前驱节点线程已经等待超时或者被中断，此时需要将该节点从同步队列中移除，最后返回false
+3. 如果当前节点前驱节点非SIGNAL，CANCELLED状态，则通过CAS将前驱节点的等待状态设置为SIGNAL，返回false;
+
+MyCat坑很多，经常丢失数据，曾经有公司丢失600W数据，负责人被开除。
+MySQL的不同存储引擎支持不同的锁机制：
+	MyISM和MEMORY存储引擎采用的是表级锁(table-level locking)
+	BDB存储引擎采用的是页面锁(page-level locking)，但也支持表级锁
+	InnoDB存储引擎既支持行级锁(roww-level locking)，也支持表级锁，默认采用行级锁
+表级锁：开销小，加锁快；不会出现死锁；锁粒度大。发生冲突几率最大，并发度最低。
+行级锁：开销大，加锁慢；会出现死锁，发生锁冲突几率最低，并发度最高。
+页面锁：介于表级锁和行级锁之间。
+但是INNODB的行级锁是有条件的。在where条件没有使用主键时，照样会锁住全表。比如delete from mytable。
+查询表级锁的争用情况：
+show status like 'table%';可以查询系统内部锁资源争用情况
+可以利用MyISAM存储引擎的并发插入特性，来解决应用中对同一表的插入和查询操作。可以将concurrent_insert设置为2，总是允许并发插入；同时通过定期在系统空闲时段执行optimizer ['ɑ:ptɪmaɪzər] table语句来整理空间碎片。
+InnoDB的行级锁分为两种类型：共享锁和排他锁。而在锁定机制的实现过程中，为了让行级锁和表级锁共存，InnoDB也同样使用了意向锁（表级锁定）的概念，于是也就有了意向共享锁和意向排他锁两种。
+对于update、delete和insert语句，Innodb会自动给涉及数据集加排他锁(X)；对于普通的select语句，Innodb不会加任何锁！！！事务可以通过以下语句显式的给记录集加锁：
+select * from table_name where  ... lock in share mode;
+select * from table_name where ... for update;
+InnoDB行锁是通过给索引项加锁来实现的，只有通过索引条件检索数据，InnoDB才使用行级锁，否则，InnoDB将使用表锁。
+InnoDB使用索引的条件：
+
+1. 在不通过索引条件查询的时候，InnoDB确实使用的是表锁，而不是行锁。
+2. mysql的行锁是针对索引加的锁。不是针对记录加的锁，虽然是访问不同的行，但是若是相同的索引，会出现锁锁冲突的。
+3. 当表中含有多个索引的时候，不同的事务可以使用不同的索引锁定不同的行。
+4. 即使在条件中使用了索引，但是是否使用索引来检索数据是由MySQL通过判断不同执行计划的代价决定的，如果MySQL认为全表扫描效率更高，比如很小的表，他也不会使用索引，此时InnoDB将使用表锁，而不是行锁。因此，在分析锁冲突的时候，不要忘记检查SQL的执行计划，以确定是否真正使用了索引。
+MyISAM表锁总是一次性获得所需的全部锁，要么全部满足，要不等待，因此不会出现死锁。
+
+InnoDB中，处理单个sql组成的事务外，锁是逐步获得的，当两个事务都需要获得对方持有的排他锁才能完成事务时，这种循环等待就是典型的死锁。
+try injecting RestOperations or setting spring.aop.proxyTargetClass=true 
+Spring WebFlux WebClient as a Load Balancer Client
+WebClient can be configured to use the LoadBalancerClient. LoadBalancerExchangeFilterFunction is auto-configured if spring-webflux is on the classpath.
+Spring Cloud Commons provides beans for creating both Apache HTTP clients(ApacheHttpClientFactory) and OK HTTP clients(OkHttpClientFactory).
+Spring Cloud Config concepts identically to the Spring Environment and PropertySource abstractions, so they fit very well with Spring applications.
+The strategy that governs this behaviour is the EnvironmentRepository, serving Environment objects. This Environment is a shallow copy of the domin from Spring Environment(including propertySources as the main feature);
+
+Spring Cloud Vault Config provides client-side support for externalized configuration in a distributed system. With HashiCorp's Vault you have a central place to manage external secret properties for applications across all environments. Vault can manage static and dynamic secrets such as username/password for remote applications/resources and provide credentials for external services such as MySQL, PostgreSQL, Apache Cassandra, MongoDB, Consul, AWS and more.
+
+CyclicBarrier(int parties, Runnable barrierAction), 用于线程到达屏障时，优先执行barrierAction, 方便处理更复杂的业务场景。
+CyclicBarrier和CountDownLatch的区别：
+1. CountDownLatch的计数器只能使用一次，而CyclicBarrier的计数器可以使用reset()重置，可以使用多次，所以CyclicBarrier能够处理更为复杂的场景
+2. CyclicBarrier还提供了一些其他有用的方法，比如getNumberWaiting()获取CyclicBarrier阻塞的线程数量，isBroken()方法用来了解阻塞的线程是否被中断；构造函数中提供barrierAction，用于到达屏障后，优先执行;
+3. CountDownLatch运行一个或者多个线程等待一组事件的产生，而CyclicBarrier用于等待其他线程运行到栅栏位置。
+
+The RefreshRemoteApplicationEvent is transmitted only if the spring-cloud-bus is activated in both Config Server and in the client application.
+
+eureka.instance.metadataMap
+eureka.instance.leaseRenewalIntervalSeconds
+
+@EnableZuulProxy VS @EnableZuulServer:
+Spring Cloud Netflix installs a number of filters, depending on which annotation was used to enable Zuul. @EnableZuulProxy is a superset of @EnableZuulServer. In other words, @EnableZuulProxy contains alll the filters by @EnableZuulServer. The additional filters in the "proxy" enable routing functionality. If you want a "blank" Zuul, you should use @EnableZuulServer.
+
+When Spring Retry is present, load-balanced RestTemplate, Feign and Zuul automatically retry any failed requests(assuming your configuration allows doing so);
+FeignClientsConfiguration
+Feign.builder().client(xx)
+.encoder(xx)
+.decoder(yy)
+.contract(zz)
+.requestInterceptor(new BasicAuthRequestInterceptor("user", "user"))
+.target(FooClient.class, "http://PROD-SVC");
+
+Spring Cloud Stream provides the Source, Sink and Processor interfaces.
+ 
+@Target({ElementType.TYPE, ElementType.ANNOTATION_TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Inherited
+@Configuration
+@Import({BindgingServiceConfiguration.class, BindingBeansRegistrar.class,
+	BinderFactoryConfiguration.class, SpelExpressionConverterConfiguration.class})
+@EnableIntegration
+public @interface EnableBinding {
+	Class<?>[] value() default {};
+}
+
+Pollable Destination Binding 
+@StreamListener从2.0开始支持condition的路由
+When using polled consumers, you poll the PollableMessageSource on demand.
+
+Netty是一个异步事件驱动的网络应用程序框架，用于快速开发可维护的高性能协议服务器和客户端。
+Netty对JDK自带的NIO的API进行封装，主要特点有：
+	- 设计优雅，适用于各种传输类型的统一API阻塞和非阻塞Socket;基于灵活且可扩展的事件模型，可以清晰地分离关注点；高度可定制的线程模型-单线程，一个或者多个线程池；真正的无连接数据报套接字支持
+	- 使用方便，详细记录的JavaDoc，用户指南和示例；没有其他依赖项JDK5(Netty 3.x)或JDK6(Netty 4.x)
+	- 高性能，吞吐量更高，延迟更低；减少资源消耗；最小化不必要的内存复制
+	- 安全，完整的SSL/TLS和StartTLS支持
+	- 社区活跃
+
+spring.cloud.stream.bindings.input.producer.partitionKeyExpression=payload.id 
+
+AbstractQueuedSynchronizer是一个抽象类，所以在使用这个同步器的时候，需要通过自己实现预期的逻辑，Sync,FairSync和NonfairSync都是ReentrantLock为了实现自己的需求而实现的内部类。
+
+Spring Cloud Sleuth borrows Dapper's terminology.
+-Instruments common ingress and egress points from Spring applications(servlet filter, async endpoints, rest template, scheduled actions, message channels, Zuul filters, and Feign client).
+Spring Cloud Sleuth is OpenTracing compatible.
+If your controller returns a Callable or a WebAsyncTask, Spring Cloud Sleuth continues the existing span instead of creating a new one.
+To block the AsyncRestTemplate features, set spring.sleuth.web.async.client.enabled to false.
+Netty中的Reactor模型主要由多路复用器(Acceptor),事件分发器(Dispater),事件处理器(Handler)组成，可以分为三种：
+1. 单线程模型: 所有IO操作都由一个线程完成，即多路复用，事件分发和处理都是在一个Reactor线程上完成的。
+2. 多线程模型:为了解决单线程模型存在的问题，演化而来的Reactor线程模型。
+	多线程模型的特点：
+	- 有专门一个Acceptor线程用于监听服务端，接收客户端的TCP连接请求
+	- 网络IO的读写操作由一个NIO线程池负责，线程池可以采用标准JDK线程池实现，包含一个任务队列和N个可用的线程，由这些NIO线程负责消息的读取，解码，编码和发送;
+	- 一个NIO线程可以同时处理多条链路，但是一个链路只能对应一个NIO线程，防止发生并发操作问题。
+3. 主从多线程模型：采用多个reactor，每个reactor都在自己单独的线程里执行。如果是多核，则可以同时响应多个客户端的请求，一旦链路建立成功就将链路注册到负责IO读写的SubReactor线程池上。
+Netty的线程模型并非固定不变，在启动辅助类中创建不同的EventLoopGroup实例并通过适当的参数配置，就可以支持上述三种Reactor线程模型。正是因为Netty对Reactor线程模型的支持提供了灵活的定制能力，所以可以满足不同业务场景的性能需求。
+
+class DirectByteBuffer extends MappedByteBuffer 
+	implements DirectBuffer {	
+}
+
+DirectByteBuffer作用: 堆外内存优势在于IO操作，能够节省堆内存到堆外内存的拷贝，性能更高，比如Netty源码。另外磁盘IO时，可以使用内存映射，提升性能。而且没有类似堆内存的GC。
+首先向Bits类申请额度，Bits类内部维护着当前已经使用的堆外内存值，会check是当前申请的大小与已经使用的内存大小是否超过总的堆外内存大小(默认大小与堆内存一样)，可以使用-XX:MaxDirectMemorySize重新设置。
+如果check不通过，会主动执行System.gc()，然后sleep 100ms，再进行check，如果内存还是不足，就抛出OOM Error。
+如果check通过，就会调用unsafe.allocateMemory真正分配内存，返回内存地址，然后再将内存清0。
+由于申请内存前可能会调用System.gc(),所以谨慎设置-XX:DisableExplicitGC选项，禁止代码中显示调用GC。
+public class Cleaner extends PhantomReference {
+}
+虚引用PhantomReference不会影响JVM是否要GC这个对象的判断，当GC某个对象时，如果此对象上还有虚引用，会将PhantomReference对象插入ReferenceQueue队列。
+看PhantomReference类代码，其继承自Reference，Reference对象有一个ReferenceQueue成员，这个也就是PhantomReference对象插入的ReferenceQueue队列，此成员如果不由外部传入就是ReferenceQueue.NULL。如果需要通过queue拿到PhantomReference对象，这个ReferenceQueue对象还是必须由外部传入。
+
+Reference类内部static静态块会启动ReferenceHandler(线程名为Reference Handler)线程，线程优先级很高，这个线程是用来处理JVM在GC过程中交接过来的reference，并做一些处理。如果用jstack命令，看线程堆栈可以看到这个线程。
+
+ServerBootstrap实例中需要两个NioEventLoopGroup实例，按照职责划分成boss和work，有着不同的分工:
+1. boss负责请求的accept
+2. work负责请求的read,write 
+MultithreadEventLoopGroup是NioEventLoopGroup的父类，其中DEFAULT_EVENT_LOOP_THREADS为处理器数量的两倍。
+判断一个数是否是2的幂次方:
+private static boolean isPowerOfTwo(int val) {
+	return (val & - val) == val;
+}
+
+ServerBootStrap 
+Consul provides Service Discover services via an HTTP API and DNS. Spring Cloud Consul leverages the HTTP API for service registration and discovery. This does not prevent non-Spring Cloud applications from leveraging the DNS interface. Consul Agents are run in a cluster that communicates via a gossip protocol and uses the Raft consensus protocol. 
+
+To take full control of the retry add a @Bean of type RetryOperationsInterceptor with id "consulRetryInterceptor". Spring Retry has a RetryInterceporBuilder that makes it easy to create one. 
+
+Consul:1. Service Registry;2. Config;3. Spring Cloud Bus 
+Spring Cloud Zeekeeper uses Apache Curator behind the scenes.
+Ribbon with Zookeeper:
+Spring Cloud Zookeeper provides an implementation of Ribbon's ServerList. When you use the spring-cloud-starter-zookeeper-discorvery, Ribbon is autoconfigured to use the ZookeeperServerList by default.
+The spring-cloud-cloudfoundry-discover project provides an implementation of Spring Cloud Commons DiscoveryClient so you can @EnableDiscoveryClient and provide your credentials as spring.cloud.cloudfoundry.discovery.[username,password] and then you can use the DiscoveryClient directly or via a LoadBalancerClient.
+
+Spring Cloud Gateway requirs the Netty runtime provided by Spring Boot and Spring Webflux. It does not work in a traditional Servlet Container or built as a WAR.
+
+Spring Cloud Gateway matches routes as part of the Spring WebFlux HandlerMapping infrastructure. Spring Cloud Gateway includes many build-in Route Predicate Factories. All of these predicates match on different attributes of the HTTP request. Multiple Route Predicate Factories can be combined and are combined via logical and.
+Route filters allow the modification of the incoming HTTP request or outgoing HTTP response in some manner. Route filters are scoped to a particular route. Spring Cloud Gateway includes many built-in GatewayFilter Factories. 
+
+To enable this, set spring.cloud.gateway.discovery.locator.enabled=true, and make sure a DiscoveryClient implementation is on the classpath and enabled(such as Netflix Eureka, Consul or Zookeeper).
+
+String baseUrl = "http://localhost:8081";
+WebClient webClient = WebClient.builder().baseUrl(baseUrl).filter((request, next) -> {
+	ClientRequest newRequest = ClientRequest.from(request).header("header1", "value1").build();
+	Mono<ClientResponse> responseMono = next.exchange(newRequest);
+	return Mono.fromCallable((0 -> {
+		ClientResponse response = responseMono.block();
+		ClientResponse newResponse = ClientResponse.from(response).header("responseHeader1", "Value1").build();
+		return newResponse;
+	});
+}).build();

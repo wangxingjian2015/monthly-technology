@@ -1,0 +1,495 @@
+Spring Cloud Contract可以为我们生成一个可被验证的Stub Runner, 这样我们就可以在不启动services的同时及时的获取反馈信息，因为在双方都遵守契约的情况下这个Stub Runner就相当于启动了对应的Service。
+Spring Cloud Contract采用Groovy DSL来定义契约，也可以采用yml来编写。
+arthas-boot.jar大小仅为97K
+watch: 方法执行数据观测 ： 可以方便的观察到指定方法的调用情况。能观察到的范围为：返回值，抛出异常，入参，通过编写OGNL表达式进行对应变量的查看。
+watch命令定义了4个观察事件点，即-b方法调用前，-e方法异常后,-s方法返回后，-f方法结束后
+4个观察事件点-b, -e,-s默认关闭,-f默认打开，当指定观察点被打开后，在相应事件点会对观察表达式进行求值并输出
+这里要注意方法入参和方法出参的区别，有可能在中间被修改导致前后不一致，除了-b事件点params代表方法入参外，其余事件都代表方法出参 
+当使用-b时，由于观察事件点是在方法调用前，此时返回值或异常均不存在
+stack输出当前方法被调用的调用路径
+根据条件表达式来过滤： stack demo.MathGame prmeFactors 'params[0]<0' -n 2
+根据执行时间来过滤: stack demo.MathGame primeFactors '#cost>5' 
+过滤后统计：
+watch com.taobao.container.Test test "params[0].{? #this.name != null}.size()" -x 2
+访问静态变量: 使用新版getstatic命令，通过-c指定classloader，可以查看任意static变量，同时支持ognl表达式处理.
+getstatic com.alibaba.arthas.Test m 'entrySet().iterator.{? #this.key="abc"}'
+
+匹配线程&正则多个类多个方法:
+trace -E 'io.netty.channel.nio.NioEventLoop|io.netty.util.concurrent.SingleThreadEventExecutor' 'select|processSelectedKeys|runAllTasks' '@Thread@currentThread().getName().contains("IO-HTTP-WORKER-IOPool")&&#cost>500'
+
+trace:方法内部调用路径，并输出方法路径上的每个节点上耗时, trace命令能主动搜索class-pattern/method-pattern对应的方法调用路径，渲染和统计整个调用链上的所有性能开销和追踪调用链路。
+watch/stack/trace这三个命令都支持#cost 
+trace能方便的帮助定位和发现因RT高而导致的性能问题缺陷，但每次只能跟踪一级方法的调用链路。
+sc : 
+sc -d org.springframework.core.annotation.AnnotationAwareOrderComparator 
+可以查出这个类的：来自哪个jar包, isInterface,isAnnotation,isAnonymousClass,isArray,isLocalClass,isMemberClass,isPrimitive,isSynthetic,simple-name,modifier, annotation, interface, super-class, class-loader, classLoaderHash
+使用jad查看反编译的源代码:
+jad org.springframework.core.annotation.AnnotationAwareOrderComparator 
+
+jad:反编译指定已经加载类的源码，将JVM中实际运行的class的byte code反编译成java代码，便于理解业务逻辑。可以只反编译指定的函数；当有多个classLoader加载了此类时，可以使用-c指定ClassLoader。
+sc(Search-Class的简写),查看JVM已加载的类信息。
+sm(Search-Method的简写):查看已加载类的方法信息，sm命令只能查看由当前类所声明(declaring)的方法，父类则无法查看。
+系统级别的类默认不能进行增强，需要增加需要打开unsafe开发，增强系统类请谨慎操作。
+getstatic:通过getstatic命令可以方便的查看类的静态属性，使用方法为getstatic class_name field_name 
+redefine:加载外部的.class文件，redefine jvm已加载的类。注意：redefine后的原来的类不能恢复，redefine有可能失败(比如增加了新的field)，参考JDK本身的文档。
+redefine的限制：
+1. 不允许新增加field/method 
+2. 正在跑的函数，没有退出不能生效。
+tt(TimeTunnel:时空隧道)：方法执行数据的时空隧道，记录下指定方法每次调用的入参和返回信息，并能对这些不同的时间下调用进行观测。
+
+
+
+
+
+Maven插件: Maven Enforcer Plugin(强制执行某些规则)
+mvn validate
+mvn enforcer:enforce 
+比如jar包冲突规则:
+<rules>
+	<dependencyConvergence>
+		<uniqueVersion>false</uniqueVersion>
+	</denpendencyConvergence>
+</rules>
+JDK版本:
+<rules>
+	<requireJavaVersion>
+		<version>1.8.0</version>
+	</requireJavaVersion>
+</rules>
+requireMavenVersion, requireOS 
+<bannedDependencies>
+	<!-- 是否检查传递性依赖(间接依赖) -->
+	<searchTransitive>true</searchTransitive>
+	<excludes>
+		<exclude>log4j:log4j</exclude>
+		<exclude>org.slf4j:slf4j-log4j12</exclude>
+        <exclude>org.slf4j:slf4j-log4j13</exclude>
+	</excludes>
+	<includes>
+		<include>org.apache.logging.log4j:log4j-core:2.5</include>
+		<include>org.apache.logging.log4j:log4j-slf4j-impl:2.5</include>
+	</includes>
+</bannedDependencies>
+
+类冲突检测：已有第三方的extra-enforcer-rules:
+mvn -U clean -Dmaven.test.skip=true enforcer:enforce -DcheckDeployRelease_skip=true 
+如果使用idea，推荐使用maven helper插件排查冲突，一目了然，很好用。
+可以使用Arthas Web Console功能，使用网页版，在权限控制的前提下，远程Arthas。
+
+Apache Kafka在Exactly-Once Semantics(EOS)上三种粒度的保证如下:
+1. Idempotent Producer: Exactly-once, in-order, delivery per partition;
+2. Transactions: Atomic writes across partitions;
+3. Exactly-once stream processing across read-process-write tasks;
+Kafka的事务处理，主要是允许应用可以把消费和生产的batch处理(涉及多个partition)在一个原子单元内完成，操作要么全部完成，要么全部失败。
+
+RestTemplate simplifies communication with HTTP servers, and enforces RESTful principles.
+Note: by default the RestTemplate relies on standard JDK facilities to establish HTTP connections. You can switch to use a different HTTP library such as Apache HttpComponents, Netty, and OkHttp through the {setRequestFactory} property. 
+This template uses a {org.springframework.http.client.SimpleClientHttpRequestFactory} and a {DefaultResponseErrorHandler} as default strategies for creating HTTP connections or handling HTTP errors, respectively. These defaults can be overridden through {setRequestFactory} and {setErrorHandler} respectively. 
+
+public class RestTemplate extends InterceptingHttpAccessor implements RestOperations {
+	private static boolean romePresent =
+			ClassUtils.isPresent("com.rometools.rome.feed.WireFeed",
+					RestTemplate.class.getClassLoader());
+	private static final boolean jaxb2Present =
+			ClassUtils.isPresent("javax.xml.bind.Binder",
+					RestTemplate.class.getClassLoader());
+	private static final boolean jackson2Present =
+			ClassUtils.isPresent("com.fasterxml.jackson.databind.ObjectMapper",
+					RestTemplate.class.getClassLoader()) &&
+			ClassUtils.isPresent("com.fasterxml.jackson.core.JsonGenerator",
+					RestTemplate.class.getClassLoader());
+	private static final boolean jackson2XmlPresent = 
+			ClassUtils.isPresent("com.fasterxml.jackson.dataformat.xml.XmlMapper",
+					RestTemplate.class.getClassLoader());
+	private static final boolean gsonPresent = 
+			ClassUtils.isPresent("com.google.gson.Gson",
+				RestTemplate.class.getClassLoader());
+	
+	private final List<HttpMessageConverter<?>> messageConverters = new ArrayList<HttpMessageConverter<?>>();
+	private ResponseErrorHandler errorHandler = new DefaultResponseErrorHandler();
+	private UriTemplateHandler uriTemplateHandler = new DefaultUriTemplateHandler();
+	private final ResponseExtractor<HttpHeaders> headersExtractor = new HeadersExtractor();
+	...
+}
+
+基于RestTemplate形式的RPC，要实现重试需要增加spring-retry组件。
+当引入spring-retry组件后，主要是引入org.springframework.retry.support.RetryTemplate类，这样SpringCloud整合Ribbon的配置上就能注入Bean.
+LoadBalancedRetryPolicyFactory
+SpringCloud的负载均衡组件会对RestTemplate做相应的处理，生成一个ClientHttpRequestInterceptor实现，注入所有需要负载均衡的RestTemplate的Bean中。
+@Bean
+public SmartInitializingSingleton loadBalancedRestTemplateInitializer(final List<RestTemplateCustomizer> customizers) {
+	return new SmartInitializingSingleton() {
+		@Override
+		public void afterSingletonsInstantiated() {
+			for (RestTemplate restTemplate : LoadBalancerAutoConfiguration.this.restTemplates) {
+				for (RestTemplateCustomizer customizer : customizers) {
+					customizer.customize(restTemplate);
+				}
+			}
+		}
+	};
+}
+
+@Bean 
+@ConditionalOnMissingBean
+public RestTemplateCustomizer restTemplateCustomizer (
+					final RetryLoadBalancerInterceptor loadBalancerInterceptor) {
+	return new RestTemplateCustomizer() {
+		@Override 
+		public void customize(RestTemplate restTemplate) {
+			List<ClientHttpRequestInterceptor> list = new ArrayList<>(
+					restTemplate.getInterceptors());
+			list.add(ladBalancerInterceptor);
+			restTemplate.setInterceptors(list);
+		}
+	}
+}
+
+public class RetryLoadBalancerInterceptor implements ClientHttpRequestInterceptor {
+...
+}
+怎么优化代码中大量的嵌套if/else:
+1. 提前return(短路写法)
+2. 策略模式 
+	2.1 多态
+	2.2 枚举
+3. 使用Optional
+4. 数组小技巧(表驱动法)
+kill命令可以将指定的信号发送给相应的进程，Linux常见的信号如下：
+1:sighup挂起进程
+2:sigint终止进程
+3:sigquit停止进程
+9:sigkill无条件终止进程
+15:sigterm尽可能终止进程
+17:sigstop无条件停止进程，但不是终止
+18:sigtstp:停止或者暂停进程，但不终止进程
+19:sigcont:继续运行停止的进程
+kill命令默认情况使用15
+kill -3 <java_pid> : 打印当前java进程的线程信息(和jstack差不多，包括所有线程，线程的运行状态，JNI global reference，以及当前堆栈的占用情况)
+kill -9 <java_pid> : 暴力杀死进程
+kill <java_pid>或者kill -15 <java_pid> : 调用钩子函数ShutdownHook,在里面执行某些资源的回收操作，然后关闭。
+kafka如何做到消息不丢失：
+1. ACK机制：通过ack机制保证消息发送，kafka采用的是at least once,消息不会丢失，但可能会重复发送。
+2. 发送消息：kafka支持在生产者本地buffer，也就是累积到一定数量才发送。生产者可以设置producer.type=async,sync。当设置为async会大幅提升性能，如果对可靠性要求高，可以设置为sync。
+3. 消费消息时，通过offset机制，保证每次消费成功后才提交offset，有可能重复消费，需要提供幂等性。
+Kafka为什么不支持读写分离?
+从代码层面，完全可以支持读写分离，但会大大增加代码的复杂度。
+1. 数据一致性问题。
+2. 延时问题。(在Kafka中，主从同步会比Redis更加耗时，需要经历网络->主节点内存->主节点磁盘->网络->从节点内存->从节点磁盘几个阶段。对延时敏感的应用而言，主写从读的功能并不太适用)
+
+MAT和VisualVM两者计算出来的对象大小不一致!!!
+JVM中一个对象包含3个部分：对象头，实例数据，对齐填充。
+对象头：对象头的大小一般和系统的位数有关，也和启动参数UseCompressedOops有关。
+	32位系统：占用8子节 
+	64位系统：开启UseCompressedOops时，占用12子节，否则16子节 
+实例数据：引用类型的内存占用和系统位数以及启动参数UseCompressedOops有关
+	32位系统占用4子节
+	64位系统开启UseCompressedOops时，占用4个子节，否则是8个子节 
+对其填充：在Hotspot中，为了更加容易的管理内存，一般会使用8子节进行对齐。意思是每次分配的内存大小一定是8的倍数，如果对象头+实例数据的值不是8的倍数，那么会重新计算一个较大值，进行分配。
+因此VisualVM的显示有问题，MAT显示是正确的。建议使用MAT对dump文件进行分析。
+VisualVM显示有问题的原因：
+1. 首先没有考虑是否开启UseCompressedOops。
+2. 其次没有考虑对齐填充的情况。
+
+Object的wait方法如果不在同步代码块中调用，会抛出java.lang.IllegalMonitorStateException
+lost wake up问题
+Java中的所有wait/notify/notifyAll/await/signal必须要在同步块中，防止出现lost wake up问题。
+
+GC日志：
+Java HotSpot(TM) 64-Bit Server VM warning: CodeCache is full. Compiler has been disabled.
+Java HotSpot(TM) 64-Bit Server VM warning: Try increasing the code cache size using -XX:ReservedCodeCacheSize=.
+...
+"CompilerThread0" java.lang.OutOfMemoryError: requested 2854248 bytes for Chunk::new. Out of swap space?
+其中CodeCache is full, 说明Code Cache已经满了，导致Compiler失效。
+
+jinfo -flag ReservedCodeCacheSize: 可以查看CodeCache的默认大小，在64位JDK8上，是240M。
+一旦CodeCache被填满，就会出现下面情况:
+	- JVM的JIT功能会被停止，将不会编译任何额外的代码
+	- 被编译过的代码仍然以编译方式执行，但是尚未被编译的代码只能以解释方式执行。
+
+对于只有32M/48M的就可能存在CodeCache不足的隐患，增加ReservedCodeCacheSize是一个解决方案，但这只是临时解决方案。
+JVM提供了一种比较激进的CodeCache回收方式：Speculative flushing。
+在JDK1.7.0_4之后这种回收方式默认开启，而之前的版本需要通过一个参数开启: -XX:+UseCodeCacheFlushing
+在Speculative flushing开启的情况下，当CodeCache不足时：
+	- 最早被编译的一半方法将会被放到一个old列表中等待回收
+	- 在一定时间间隔内，如果old列表中方法没有被调用，这个方法将会被从code cache清除
+很不幸的是，在JDK1.7中，Speculative flushing释放了一部分空间，但是从编译日志来看，JIT并没有恢复正常，并且系统整体性能下降很多，出现大量超时。
+在Oracle官网上有一个Code Cache的一个BUG：bug_id=8006952, 由于算法问题，当CodeCache不足之后会导致编译线程无法继续，并且消耗大量CPU，导致系统运行变慢。
+
+Atomic*在并发量不大时，问题不大，但并发量很大的时候，会导致大量自旋，浪费CPU，可以考虑使用LongAdder替换。
+LongAdder内部的实现类似ConcurrentHashMap的分段锁，最好的情况下，每个线程都有独立的计数器，这样可以大量减少并发操作。
+LongAdder和AtomicLong的压测结果：
+1. 单线程情况下：AtomicLong的吞吐量和平均耗时都占优势；
+2. 并发线程为10个/30个时，LongAdder的吞吐量很大，是AtomicLong的10倍多；LongAdder的平均耗时也是AtomicLong的十分之一。
+一些高并发的场景，比如限流计数器，建议使用LongAdder替换AtomicLong,性能可以提升很多。
+
+package java.util.concurrent.atomic;
+import java.util.function.LongBinaryOperator;
+import java.util.function.DoubleBinaryOperator;
+import java.util.concurrent.ThreadLocalRandom;
+// A package-local class holding common representation and mechanics
+// for classed supporting dynamic striping on 64bit values. The class
+// extends Number so that concrete subclasses must publicly do so. 
+@SuppressWarnings("Serial")
+abstract class Striped64 extends Number {
+	...
+}
+Java进程启动的时候，虽然可以指定JVM合适的内存大小，但这些内存操作系统并没有真正的分配给JVM，而是等JVM访问这些内存的时候，才真正分配，这样会造成以下问题：
+1. 第一次YGC之前Eden区分配对象的速度较慢
+2. YGC的时候，Young区的对象要晋升到Old区的时候，这个时候需要操作系统真正分配内存，这样会加大YGC的停顿时间。
+配置-XX:+AlwaysPreTouch参数可以优化这个问题，不过会影响启动时间。
+配置这个参数耗时的一个原因是，JDK8版本以前都不是并行处理，到JDK9才是并行。
+在G1的前提下，即使配置了-XX:+AlwaysPreTouch参数，JVM也会忽略这个参数，即和没有配置一样，直到8U60才修复了这个问题。
+没有分代应该是ZGC唯一的弱点。分代原本是因为most object die young的假设，而让新生代和老生代使用不同的GC算法。
+
+Z Garbage Collector, ZGC，是一个可伸缩的，低延迟的垃圾收集器，主要为了满足下面目标进行设计：
+	- 停顿时间不会超过10ms
+	- 停顿时间不会随着堆的增大而增大(不管多大的堆都能保持10ms)
+	- 可支持几百M，甚至几T的堆大小(最大支持4T)
+停顿时间在10ms以下，其实是一个保守的数据，在SPECjbb 2015基准测试，128G的大堆下最大停顿时间才1.68ms，远低于10ms，和G1算法相比，完虐G1。
+ZGC为什么可以这么这么优秀，主要因为以下几个特性：
+1. Concurrent
+2. Region-based 
+3. Compacting
+4. NUMA-aware 
+5. Using colored pointers 
+6. Using load barriers 
+
+jmap -histo:live <pid>
+-XX:+HeapDumpOnOutOfMemoryError
+jmap -dump:format=b,file=dumpfile.hprof <pid>
+
+MAT的内存快照对比：为了更有效率的找出内存泄露的对象，一般会获取两个堆转储文件(先dump一个，隔段时间再dump一个)，通过对比后的结果可以很方便定位。
+当通过attach方式动态加载一个Java Agent时，Agent中的类会被加载到JVM中。
+
+public class AgentClassLoader extends URLClassLoader {
+	public AgentClassLoader(URL[] urls) {
+		super(urls, ClassLoader.getSystemClassLoader().getParent());
+	}
+	
+	@Override
+	protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFountException {
+		final Class<?> loadedClass = findLoadedClass(name);
+		if (loadedClass != null) {
+			if (resolve) {
+				resolveClass(loadedClass);
+			}
+			return loadedClass;
+		}
+		
+		//优先从parent(SystemClassLoader)里加载系统类，避免出现ClassNotFOuntException
+		if (name != null && (name.startsWith("sun.") || name.startsWith("java."))) {
+			return super.loadClass(name, resolve);
+		}
+		
+		//先从agent中加载
+		try {
+			Class<?> aClass = findClass(name);
+			if (resolve) {
+				resolveClass(aClass);
+			}
+			return aClass;
+		} catch (Exception e) {
+			//ignore
+		}
+		return super.loadClass(name, resolve);
+	}
+}
+
+如何确认某个类是否存在？
+1. Arthas
+2. jmap -histo:live <pid> |grep <类名>
+
+Jackson在序列化的时候，需要开辟一块内存空间，为了能够重复利用这块空间，Jackson默认把这个内存空间封装成一个SoftReference保存在ThreadLocal中。代码如下：
+public static BufferRecycler getBufferRecycler() {
+	SoftReference<BufferRecycler> ref = _recyclerRef.get();
+	BufferRecycler br = (ref == null) ? null : ref.get();
+	if (br == null) {
+		br = new BufferRecycler();
+		_recyclerRef.set(new SoftReference<BufferRecycler>(br));
+	}
+	return br;
+}
+使用Java Agent的相关技术：热部署JRebel, 线上诊断工具Arthas, Btrace, Greys。
+如何在Java的main函数前执行某些代码?
+使用Java Agent方式，执行public static void premain(String agentArgs, Instrumentation inst);
+在加载Java Agent之后，会找到META-INF/MANIFFEST.MF里面的Agent-Class或者Premain-class指定的类，并运行对应的agentmain或者premain。
+如何加载Java Agent？两种方式
+1. 程序运行前加载；通过JVM参数-javaagent:*.jar启动，程序启动时，会优先加载Java Agent，并执行其premain方法，这个时候，大部分的类都没有被加载，这个时候可以实现堆新加载的类进行字节码修改，但是如果premain方法执行失败或抛出异常，那么JVM会被中止，这是致命的问题。
+2. 程序运行后加载；程序启动后，通过某种特定的手段加载Java Agent，这个特定的手段就是VirtualMachine的attach api，这个api其实是JVM进程之间的沟通桥梁，底层通过socket进行通信，JVM A可以发送指令给JVM B，B收到指令后，可以执行对应的逻辑。比如命令行使用的jstack, jcmd, jps等，基于此机制实现。因为是进程间通信，所以使用attach api的也是一个独立的Java进程。
+
+-verbose:gc -XX:+PrintGCDetails -Xmx2g -Xms2g -Xmn1g
+-XX:PertenursSizeThreshold=2M -XX:+UseConcMarkSweepGC -XX:+UseParNewGC(Y代的收集算法，可以和CMS配合)
+-XX:CMSInitiatingOccupancyFraction=90 -XX:+UseCMSInitiatingOccupancyOnly
+-XX:MaxDirecMemorySize=512m -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m
+JVM使用过的内存就不会归还给操作系统，除非JVM进程宕机或者重启。
+
+可以在jvisualvm中的"MBeans"标签下的java.nio.BufferPool中的"direct"查看使用了多少DirectMemory。
+
+可以设置一个JVM参数: -XX:NativeMemoryTracking=[off|summary|detail]，可以使用jcmd来查看内存的占用部分：
+jcmd <pid> VM.native_memory summary 
+
+-XX:PretenureSizeThreshold:超过这个值的对象直接在Old区分配内存，默认值是0，意思是不管多大都是先在Eden中分配内存。
+
+在Hystrix中的插件实现中，提供了5个扩展点，通过实现这些插件接口，可以很好结合内部框架使用，比如数据埋点，动态配置等。
+SPI 全称为 Service Provider Interface)，是一种服务提供发现机制，通过ServiceLoader类的load方法，可以自动找到实现对应接口的实现类。
+熔断器内部有三个状态:Closed, half_open, open。默认情况下处于closed，当请求的失败率过高达到阈值时，自动从closed切换成open，这时所有的请求会执行降级逻辑。熔断开启之后，如果过了一个试探窗口(5000ms)，其中一个请求线程会把熔断状态从open切换成half_open，表明要开始试探下游服务是否已经恢复。如果下游已经恢复，那么这个请求正常返回之后，会执行markSuccess方法。
+
+如果Hystrix使用线程池模式，那么存在一个ThreadLocal变量跨线程传递的问题，即主线程的ThreadLocal变量，无法在线程池中使用。解决方案：在Hystrix中，如果想跨线程共享数据，必须通过HystrixRequestVariableDefault申明变量。
+
+public interface HystrixCircuitBreaker {
+	public boolean allowRequest();
+	public boolean isOpen();
+	//Invoked on successful executions from HystrixCommand as part of feedback mechanism 
+	//when in a hasl-open state.
+	/* package*/void markSuccess();
+	public static class Factory {
+		private static ConcurrentHashMap<String, HystrixCircuitBreaker> circuitBreakersByCommand = new ConcurrentHashMap<String, HystrixCircuitBreaker>();
+		public static HystrixCircuitBreaker getInstance(HystrixCommandKey key, HystrixCommandGroupKey group, HystrixCommandProperties properties, HystrixCommandMetrics metrics) {
+			HystrixCircuitBreaker previouslyCached = circuitBreakerByCommand.get(key.name());
+			if (previouslyCached != null) {
+				return previouslyCached;
+			}
+			HystrixCircuitBreaker cbForCommand = circuitBreakerByCommand.putIfAbsent(key.name(), new HystrixCircuitBreakerImpl(key, group, properties));
+			if (cbForCommand == null) {
+				return circuitBreaksByCommand.get(key.name());
+			} else {
+				return cbForCommand;
+			}
+		}
+		public static HystrixCircuitBreaker getInstance(HystrixCommandKey key) {
+			return circuitBreakersByCommand.get(key.name());
+		}
+		static void reset() {
+			circuitBreakersByCommand.clear();
+		}
+	}
+	
+	static class HystrixCircuitBreakerImpl implements HystrixCircuitBreaker {
+		private final HystrixCommandProperties properties;
+		private final HystrixCommandMetrics metrics;
+		private AtomicBoolean circuitOpen = new AtomicBoolean(false);
+		private AtomicLong circuitOpenedOrLastTestedTime = new AtomicLong();
+		
+		protected HystrixCircuitBreakerImpl(HystrixCommandKey key, HystrixCommandGroupKey commandGroup, HystrixCommandProperties properties, HystrixCommandMetrics metrics) {
+            this.properties = properties;
+            this.metrics = metrics;
+        }
+		public void markSuccess() {
+			if (circuitOpen.get()) {
+				if (circuitOpen.compareAndSet(true, false)) {
+					metrics.resetStream();
+				}
+			}
+		}
+		@Override
+		public boolean allowRequest() {
+			if (properties.circuitBreakerForceOpen().get()) {
+				return false;
+			}
+			if (properties.circuitBreakerForceClosed().get()) {
+				isOpen();
+				return true;
+			}
+			return !open() || allowSingleTest();
+		}
+		
+		public boolean allowSingleTest() {
+			long timeCircuitOpenedOrWasLastTested = circuitOpenedOrLastTestedTime.get();
+			if (circuitOpen.get() && System.currentTimeMillis() > timeCircuitOpenedOrWasLastedTested + properties.circuitBreakerSleepWindowInMilliseconds().get()) {
+				if (circuitOpenedOrLastTestedTime.compareAndSet(timeCircuitOpenedOrWasLastedTested, System.currentTimeMillis())) {
+					return true;
+				}
+			}
+			return false;
+		}
+		
+		@Override
+		public boolean isOpen() {
+			if (circuitOpen.get()) {
+				return true;
+			}
+			HealthCounts health = metrics.getHealthCounts();
+			if (health.getTotalRequests() < properties.circuitBreakerRequestVolumThreshol().get()) {
+				return false;
+			}
+			if (health.getErrorPercentage() < properties.circuitBreakerErrorThresholdPercentage().get()) {
+				return false;
+			} else {
+				if (circuitOpen.compareAndSet(false, true)) {
+					circuitOpenedOrLastTestedTime.set(System.currentTimeMillis());
+					return true;
+				} else {
+					return true;
+				}
+			}
+		}
+	}
+	
+	static class NoOpCircuitBreaker implements HystrixCircuitBreaker {
+		@Override
+		public boolean allowRequest() {
+			return true;
+		}
+		@Override
+		public boolean isOpen() {
+			return false;
+		}
+		@Override
+		public void markSuccess() {
+		}
+	}
+}
+
+Hystrix线程池模式的优点：
+1. 减少所依赖服务发生故障时的影响面，比如ServiceA服务发生异常，导致请求大量超时，对应的线程池被打满，并不影响ServiceB,ServiceC的调用。
+2. 如果接口性能有变动，可以方便的动态调整线程池的参数或超时时间，前提是Hystrix参数实现了动态调整。
+缺点：
+1. 请求在线程池中执行，肯定会带来任务调度，排队和上下文切换带来的开销。
+2. 因为涉及到跨线程，就存在ThreadLocal数据的传递问题，比如在主线程初始化的ThreadLocal变量，在线程池中无法获取。
+
+AtomicBoolean 
+AtomicReference 
+
+extends HystrixCommand<T>,实现HystrixCommand的run方法和getFallback方法
+
+//This command should be used for a purely non-blocking call pattern. The caller of this command will be 
+//subscribed to the Observable<R> returned by the run() method.
+public abstract class HystrixObservableCommand<R> extends AbstractCommand<R> 
+	implements HystrixObservable<R>, HystrixInvokableInfo<R> {
+	...
+}
+//This command is essentially a blocking command but provides an Observable facade if used with observe()
+public abstract class HystrixCommand<R> extends AbstractCommand<R> 
+	implements HystrixExecutable<R>, HystrixInvokableInfo<R>, HystrixObservable<R> {
+	private final AtomicReference<Thread> executionThread = new AtomicReference<Thread>();
+	private final AtomicBoolean interruptOnFutureCancel = new AtomicBoolen(false);
+	...
+}
+
+HystrixCommand构造函数的常用参数:
+1. HystrixCommandGroupKey group 
+2. HystrixThreadPoolKey threadPool
+3. int executionIsolationThreadTimeoutInMilliseconds: Time in milliseconds at which point the calling thread will timeout(using Future#get) and walk away from the executing thread 
+4. Setter:Fluent interface for constructor arguments 
+
+ExecutionIsolationStrategy;
+HystrixCommandExecutionHook;
+HystrixPropertiesStrategy;
+HystrixEventNotifier;
+HystrixRequestCache;
+
+/*Abstract ExecutionHook with invocations at different lifecycle points of HystrixCommand and 
+HystrixObservableCommand execution with default no-op implementations.
+Note on thread-safety and performance.
+A single implementation of this class will be used globally so methods on this class will be invoked concurrently from multiple threads so all functionality must be thread-safe.
+Methods are also invoked synchronously and will add to execution time of the commands so all behavior should be fast. If anything time-consuming is to be done it should  be spawned asynchronously 
+onto separate worker threads. 
+*/
+public abstract class HystrixCommandExecutionHook {
+	...
+}
+
+查询接口过多的问题解决方案：使用单参+Specification模式，降低重复的查询方法，大大降低接口中的方法数量。
+异常设计不合理的解决方案：Checked Exception+正确异常处理姿势，使得代码更加优雅，降低调用方不处理异常带来的风险。
+

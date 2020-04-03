@@ -1,0 +1,472 @@
+objenesis是一个小型Java类库用来实例化一个特定class的对象。
+Java已经支持使用Class.newInstance()动态实例化类的实例，但类必须拥有一个合适的构造函数。有很多场景下不能使用这种方式实例化类。比如：
+	- 构造函数需要参数
+	- 构造函数有side effects负面影响
+	- 构造器会抛出异常
+因此在类库中经常会有类必须拥有一个默认构造函数的限制。Objenesis通过绕开对象实例构造函数来克服这个限制。
+实例化一个对象而不调用构造函数是特殊的，在某些场景下是适合的：
+	- 序列化，远程调用和持久化 -对象需要实例化并存储到一个特殊的状态，而没有调用代码
+	- 代理，AOP库和Mock对象 -类可以被子类继承而子类不用担心父类的构造函数
+	- 容器框架 -对象可以以非标准的方式被动态实例化。
+
+Buddy算法: 是用来做内存管理的经典算法，目的是为了解决内存的外碎片。
+
+public interface Spliterator<T> {
+	boolean tryAdvance(Consumer<? super T> action);
+	default void forEachRemaining(Consumer<? super T> action) {
+		do { } while(tryAdvance(action));
+	}
+	Spliterator<T> trySplit();
+	long estimateSize();
+	default long getExactSizeIfKnown() {
+		return (characteristics() & SIZED) == 0 ? -1L : estimateSize();
+	}
+	int characteristics();
+	default boolean hasCharacteristics(int characteristics) {
+		return (characteristics() & characteristics) == characteristics;
+	}
+	default Comparator<? super T> getComparator() {
+		throw new IllegalStateException();
+	}
+	public static final int ORDERED    = 0x00000010;
+	public static final int DISTINCT   = 0x00000001;
+	public static final int SORTED     = 0x00000004;
+	public static final int SIZED      = 0x00000040;
+	public static final int NONNULL    = 0x00000100;
+	public static final int IMMUTABLE  = 0x00000400;
+	public static final int CONCURRENT = 0x00001000;
+	public static final int SUBSIZED   = 0x00004000;
+	
+	public interface OfPrimitive<T, T_CONS, T_SPLITR extends Spliterator.OfPrimitive<T, T_CONS, T_SPLITR>> extends Spliterator<T> {
+		@Override
+		T_SPLITR trySplit();
+		@SuppressWarnings("overloads")
+		boolean tryAdvance(T_CONS action);
+		@SuppressWarnings("overloads")
+		default void forEacheRemaining(T_CONS action) {
+			do { } while (tryAdvance(action));
+		}
+	}
+	
+	public interface OfInt extends OfPrimitive<Integer, IntConsumer, OfInt> {
+		@Override
+		OfInt trySplit();
+		@Override
+		boolean tryAdvance(IntConsumer action);
+		@Override 
+		default void forEachRemaining(IntConsumer action) {
+			do { } while(tryAdvance(action));
+		}
+		@Override
+		default boolean tryAdvance(Consumer<? super Integer> action) {
+			if (action instanceof IntConsumer) {
+				return tryAdvance((IntConsumer) action);
+			} else {
+				if (Tripwire.ENABLED) {
+					Tripwire.trip(getClass(), 
+									"{0} calling Spliterator.OfInt.tryAdvance((IntConsumer) action::accept)");
+				}
+				return tryAdvance((IntConsumer) action::accept);
+			}
+		}
+		@Override
+		default void forEachRemaining(Consumer<? super Integer> action) {
+			if (action instanceof IntConsumer) {
+				forEachRemaining((IntConsumer) action);
+			} else {
+				if (Tripwire.ENABLED)
+                    Tripwire.trip(getClass(),
+                                  "{0} calling Spliterator.OfInt.forEachRemaining((IntConsumer) action::accept)");
+                forEachRemaining((IntConsumer) action::accept);
+			}
+		}
+	}
+}
+
+ConcurrentHashMap: Because we are using power-of-two expansion, the elements from each bin must either stay at same index, or move with a power of two offset. 
+
+红黑树本质上是一种二叉查找树，但它在二叉查找树的基础上额外添加了颜色标记，同时具有一定的规则。这些规则使红黑树保证了一种平衡，插入，删除，查找的最坏时间复杂度都为O(logn)。
+红黑树的统计性能要好于平衡二叉树(AVL树)，因此红黑树在很多地方有应用。比如Java集合框架中，很多部分(HashMap, ConcurrentHashMap, TreeMap, TreeSet等)，这些集合均提供了很好的性能。
+
+红黑树在原有二叉树的基础上增加了5个特征:
+1. 每个节点要么是红色，要么是黑色;
+2. 根节点永远是黑色;
+3. 所有的叶子节点都是黑色;
+4. 每个红色节点的两个子节点一定都是黑色;
+5. 从任意节点到其子树中每个叶子节点的路径都包含相同数量的黑色节点。
+
+红黑树的左右旋转: 
+指定节点x的左旋:把p变成右子树q的左孩子，同时把q的左孩子变成p的右子树。
+指定节点x的右旋:把p变成左子树q的右子树，同时把q的右子树送给p做左子树。
+
+指定节点的左旋:
+需要考虑几个点:
+	1. p的right, parent的变更
+	2. q的left, parent的变更 
+	3. q的left的parent的变更
+	4. p的parent的left或者right或者root的变更
+private void rotateLeft(Entry<K, V> p) {
+	if (p != null) {
+		Entry<K, V> q = p.right;
+		p.right = q.left;
+		if (q.left != null) {
+			q.left.parent = p;
+		}
+		q.parent = p.parent;
+		if (p.parent == null) {
+			root = q;
+		} else if (p.parent.left = p) {
+			p.parent.left = q;
+		} else {
+			p.parent.right = q;
+		}
+		q.left = p;
+		p.parent = q;
+	}
+}
+指定节点的右旋:
+考虑几个点:
+	1. p的parent, left的变更
+	2. p的parent的left或者righnt或者root
+	3. q的parent,right的变更
+	4. q的right的parent的变更
+private void rotateRight(Entry<K, V> p) {
+	if (p != null) {
+		Entry<K, V> q = p.left;
+		p.left = q.right;
+		if (q.right != null) {
+			q.right.parent = p;
+		}
+		
+		if (p.parent == null) {
+			root = q;
+		} else if (p.parent.left == p) {
+			p.parent.left = q;
+		} else {
+			p.parent.right = q;
+		}
+		
+		q.right = p;
+		q.parent = p.parent;
+		p.parent = q;
+	}
+}
+
+插入后红黑树结构变化：红黑树第5条规定任一节点到它子树的每个叶子节点的路径中都包括同样数量的黑节点。也就是说往红黑树中插入一个黑色节点时，会违背这个特征。同时第4条特征规定红色节点的左右孩子一定都是黑色节点，当给红色节点插入一个红色节点时，会违背这个特征。因此在插入节点后，需要进行结构调整，保证红黑树始终满足这5个特征。
+
+Curator的InterProcessMutex: A re-entrant mutex that works across JVMs. Uses Zookeeper to hold the lock. All processes in all JVMs that use the same lock path will achieve an inter-process critical section. Further, this mutex is "fair" - each user will get the mutex in the order requested(from ZK's point of view).
+
+如何用Zookeeper做一个分布式锁：
+为什么用临时顺序节点? 如果用永久节点，在实例意外挂时，无法删除永久节点，导致锁无法释放，从而死锁；如果用临时节点，在高并发的情况下，会有羊群效应。所以最有效的方式是用临时顺序节点。zkClient.createEphemeralSequential(...);
+具体步骤如下:
+	1. 建立一个持久节点(PERSISTENT)
+	2. 每当访问临界资源时，调用lock()/tryLock()，在第一步创建的节点下建立临时顺序节点EPHEMERAL_SEQUENTIAL，此时会生成有序的临时节点，从小到大，依次排序；
+	3. 在建立子节点之后，对lock下的子节点进行排序，并给该节点是否存在注册监听事件(监听比自己小的最大节点)。如果是最小节点获取锁，返回。如果不是在此阻塞(可使用CountDownLatch.await)。等待到监听事件发生后，解除锁定(CountDownLatch.countDown)，获得锁。
+	4. 访问临界区结束后，调用unlock，删除临时顺序节点，释放锁。从而触发监听事件。
+
+zk分布式锁的实现有两种方式，一是原生方式，使用java和zk api书写以上逻辑实现分布式锁，操作zookeeper使用的是apache提供的zookeeper的包。通过实现Watch接口，实现process(WatchedEvent event)方法来实施监控，使CountDownLatch来完成监控，在等待锁的时候使用CountDownLatch来计数，等到后进行countDown，停止等待，继续运行。
+另一种方式是使用Curator框架来实现分布式锁，Curator是Netflix公司一个开源的zookeeper客户端，在原生API接口上进行了包装，解决了很多ZooKeeper客户端非常底层的细节开发。同时内部实现了诸如Session超时重连，Watcher反复注册等功能，实现了Fluent风格的API接口，是使用最广泛的zookeeper客户端之一。
+两种方式对比来说，原生方式自己实现逻辑比较灵活，个性化高但是开发量比较大，使用Curator实现分布式锁非常简单，几行代码就可以搞定，隐藏了很多实现细节。
+
+Zookeeper需要考虑锁超时的情况，Curator已经有现成的API:InterProcessMutex.acquire(5, TimeUnit.SECONDS)，而原生的api怎么实现? (可以考虑: CountDownLatch.await(long timeout, TimeUnit unit))
+还需要考虑可重入的问题。
+
+为了兼容dubbo2.6.x版本配置，在使用Zookeeper作为注册中心，且没有显示配置配置中心的情况下，Dubbo框架会默认将此Zookeeper用作配置中心，但将只作为服务治理用途。
+
+Dubbo的应用启动阶段: Dubbo框架如何将所需要的配置采集起来(包括应用配置，注册中心配置，服务配置等)，已完成服务的暴露和引用流程。根据驱动方式的不同(比如Spring或裸API编程)配置形式上肯定会有所差异，可参考XML配置，Annotation配置，API配置。除了外围驱动方式上的差异，Dubbo的配置读取总体上遵循以下几个原则:
+	1. Dubbo支持了多层级的配置，并按预定优先级自动实现配置间的覆盖，最终所有配置汇总到数据总线URL后驱动后续的服务暴露，引用等流程。
+	2. ApplicationConfig, ServiceConfig, ReferenceConfig都是配置来源的一种，是直接面向用户编程的配置采集方式。
+	3. 配置格式以Properties为主，在配置内容上遵循约定的path-based的命名规范。
+
+分布式系统怎么做服务治理:至少要考虑下面几点，
+	1. 服务生命周期管理：包括服务的上线审批，下线通知，服务的在线升级以及上下线的服务文档库的建设。
+	2. 服务的上下线管控: 由于服务的发布很简单，上线会越来越随意，导致有时架构师都不知道上线了什么服务，甚至出现重复服务，而服务下线比上线还要困难，因为业务调整，需要 结束某些服务的生命周期，服务提供者有时会直接将服务下线，导致依赖该服务的应用不能正常工作，应该是先将该服务标识为过时，然后通知调用方尽快修改调用，通过性能KPI接口和调用链分析，确认没有消费者再停用服务
+	3. 高度自动化和DevOps支持，一键部署和回退，比如Docker容器部署，容器自动编排等。
+	4. 跨团队协作问题解决。
+	5. 服务安全：针对内部应用，服务框架常采用长连接管理客户端，针对非信任的第三方应用，或者非信任消费者，需要具备黑白名单访问机制，用户名密码校验，公私钥校验等。防止客户端非法链路过多，占用太多句柄，线程和缓存资源等，影响服务提供者的质量。
+	6. 服务高SLA保障：业务高峰期，系统资源会成为瓶颈，需要对非核心服务比如用户评论、粉丝管理、积分管理等服务做限制，保障核心服务的正常运行，服务框架需要考虑如何关停非核心服务又不影响其它的核心服务。
+	7. 快速定位故障：服务化之后一个业务流程底层可能涉及成千上百的服务调用，任何一个服务发生故障都可能导致业务不可用，由于分布式部署，部署在成千上百台机器上，若仍使用原来的故障定位手段效率会非常低，服务化带来的价值也会大打折扣。
+	8. 每个时期的工作：服务设计阶段；服务运行阶段；服务持续治理阶段。
+	9. 服务治理SLA的收集KPI。可以通过监控中心的引入，收集消费者和提供者的相关指标：调用次数和调用时间等。可以将这些指标作为SLA保障的基础数据支持。
+	
+常用的服务治理方案：服务注册，服务流控，服务降级，服务动态扩容/缩容，超时控制，负载均衡，分布式调用链，分布式配置中心等。
+
+public CyclicBarrier(int parties, Runnable barrierAction)，用于线程到达屏障时，优先执行barrierAction，方便处理更复杂的业务场景。
+CyclicBarrier和CountDownLatch的区别：
+1. CountDownLatch的计数器只能使用一次，而CyclicBarrier的计数器可以使用reset()重置，使用多次，所以CyclicBarrier能够使用更为复杂的场景；
+2. CyclicBarrier还提供了一些其他有用的方法，比如getNumberWaiting()获取CyclicBarrier阻塞的线程数量，isBroken()方法查询线程是否被中断；构造函数中提供的barrierAction，用于到达屏障后，优先执行；
+3. CountDownLatch运行一个或多个线程等待一组事件的发生，而CyclicBarrier用于等待其他线程运行到栅栏位置。
+
+public class LinkedHashMap<K, V> extends HashMap<K, V>
+	implements Map<K, V> {
+	//LinkedHashMap继承了HashMap，从整体上使用了HashMap的结构，同时对HashMap.Entry<K,V>进行了继承LinkedHashMap<K, V>，增加了before, after指针，指向了前向和后向的节点。
+	
+	static class Entry<K, V> extends HashMap.Node<K, V> {
+		Entry<K, V> before, after;
+		Entry(int hash, K key, V value, Node<K, V> next) {
+			super(hash, key, value, next);
+		}
+	}
+	
+	private static final long serialVersionUID = 3801124242820219131L;
+	transient LinkedHashMap.Entry<K, V> head;
+	transient LinkedHashMap.Entry<K, V> tail;
+	final boolean accessOrder;
+	
+	public boolean containsValue(Object value) {
+		for (LinkedHashMap.Entry<K, V> e = head; e != null; e = e.after) {
+			V v = e.value;
+			if (v == value || (value != null && value.equals(V))) 
+				return true;
+		}
+	}
+	
+	public V get(Object key) {
+		Node<K, V> e;
+		if ((e = getNode(hash(key), key)) == null)
+			return null;
+		if (accessOrder)
+			afterNodeAccess(e);
+		return e.value;
+	}
+}
+
+//Represents a function that accepts two arguments and produces a result.
+//This is the two-arity specialization of Function;
+@FunctionalInterface
+public interface BiFunction<T, U, R> {
+	R apply(T t, U u);
+	default <V> BiFunction<T, U, V> andThen(Function<? super R, ? extends V> after) {
+		Objects.requiresNonNull(after);
+		return (T t, U u) -> after.apply(apply(t, u));
+	}
+}
+
+public class Semaphore implements java.io.Serializable {
+	private static final long serialiVersionUID = -3222578661600680210L;
+	private final Sync sync;
+	//Synchronization implementation for semaphore. Uses AQS state to represent permits. 
+	//Subclassed into fair and nonfair versions.
+	abstract static class Sync extends AbstractQueuedSynchronizer {
+		private static final long serialVersionUID = 1192457210091910933L;
+		Sync(int permits) {
+			setState(permits);
+		}
+		final int getPermits() {
+			return getState();
+		}
+		final int nonfairTryAcquireShared(int acquires) {
+			for (;;) {
+				int available = getState();
+				int remaining = available - acquires;
+				if (remaining < 0 || compareAndSetState(available, remaining))
+					return remaining;
+			}
+		}
+		protected final boolean tryReleaseShared(int releases) {
+			for (;;) {
+				int current = getState();
+				int next = current + releases;
+				if (next < current) //overflow
+					throw new Error("Maximum permit count exceeded");
+				if (compareAndSetState(current, next))
+					return true;
+			}
+		}
+		final void reducePermits(int reductions) {
+			for (;;) {
+				int current = getState();
+				int next = current - reductions;
+				if (next > current) // underflow
+					throw new Error("Permit count underflow");
+				if (compareAndSetState(current, next))
+					return;
+			}
+		}
+		final int drainPermits() {
+			for (;;) {
+				int current = getState();
+				if (current == 0 || compareAndSetState(current, 0))
+					return current;
+			}
+		}
+	}
+	
+	//NonFair version
+	static final class NonfairSync extends Sync {
+		private static final long serialVersionUID = -2694183684443567898L;
+		NonfairSync(int permits) {
+			super(permits);
+		}
+		protected int tryAcquireShared(int acquires) {
+			return nonfairTryAcquiredShared(acquires);
+		}
+	}
+	
+	//Fair version 
+	static final class FairSync extends Sync {
+		private static final long serialVersionUID = 2014338818796000944L;
+        FairSync(int permits) {
+            super(permits);
+        }
+		protected int tryAcquireShared(int acquires) {
+			for (;;) {
+				if (hasQueuedPredecessors())
+					return -1;
+				int available = getState();
+				int remaining = available - acquires;
+				if (remaining < 0 || compareAndSetState(available, remaining))
+					return remaining;
+			}
+		}
+	}
+	public Semaphore(int permits) {
+		sync = new NonfairSync(permits);
+	}
+	public Semaphore(int permits, boolean fair) {
+		sync = fair ? new FairSync(permits) : new NonfairSync(permits);
+	}
+	
+	public void acquire() throws InterruptedException {
+		sync.acquireSharedInterruptibly(1);
+	}
+	public void acquireUninterruptibly() {
+		sync.acquireShared(1);
+	}
+	public boolean tryAcquire() {
+		return sync.nonfairTryAcquireShared(1) >= 0;
+	}
+	public boolean tryAcquire(long timeout, TimeUnit unit) throws InterruptedException {
+		return sync.tryAcquireSharedNanos(1, unit.toNanos(timeout));
+	}
+	public void release() {
+		sync.releaseShared(1);
+	}
+	public void acquire(int permits) throws InterruptedException {
+        if (permits < 0) throw new IllegalArgumentException();
+        sync.acquireSharedInterruptibly(permits);
+    }
+	public void acquireUninterruptibly(int permits) {
+        if (permits < 0) throw new IllegalArgumentException();
+        sync.acquireShared(permits);
+    }
+	public boolean tryAcquire(int permits) {
+        if (permits < 0) throw new IllegalArgumentException();
+        return sync.nonfairTryAcquireShared(permits) >= 0;
+    }
+	public boolean tryAcquire(int permits, long timeout, TimeUnit unit)
+        throws InterruptedException {
+        if (permits < 0) throw new IllegalArgumentException();
+        return sync.tryAcquireSharedNanos(permits, unit.toNanos(timeout));
+    }
+	public void release(int permits) {
+        if (permits < 0) throw new IllegalArgumentException();
+        sync.releaseShared(permits);
+    }
+	public int availablePermits() {
+		return sync.getPermits();
+	}
+	public int drainPermits() {
+		return sync.drainPermits();
+	}
+	protected void reducePermits(int reduction) {
+		if (reduction < 0) throw new IllegalArgumentException();
+		sync.reducePermits(reduction);
+	}
+	public boolean isFair() {
+		return sync instanceof FairSync;
+	}
+	public final boolean hasQueuedThreads() {
+		return sync.hasQueuedThreads();
+	}
+	public final int getQueueLength() {
+		return sync.getQueueLength();
+	}
+	protected Collection<Thread> getQueuedThreads() {
+		return sync.getQueuedThreads();
+	}
+	public String toString() {
+		return super.toString() + "[Permits = " + sync.getPermits() + "]";
+	}
+}
+
+public interface HystrixObservable<R> extends HystrixInvokable<R> {
+	public Observable<R> observe();
+	public Observable<R> toObservable();
+}
+
+/* when the circuit was marked open or was last allowed to try a 'singleTest' */
+private AtomicLong circuitOpenedOrLastTestedTime = new AtomicLong();
+/* HystrixThreadPool
+ThreadPool used to executed HystrixCommand.run() on separate threads when configured to do so with HystrixCommandProperties.executionIsolationStrategy().
+Typically each HystrixCommandGroupKey has its own thread-pool so that any one group of commands can not starve others from being able to run. 
+A HystrixCommand can be configured with a thread-pool explicitly by injecting a HystrixThreadPoolKey or via the HystrixCommandPropertis.executionIsolationThreadPoolKeyOverride() otherwise it will derive a HystrixThradPoolKey from the injected HystrixCommandGroupKey.
+The pool should be sized large enough to handle normal healthy traffic but small enough that it will constrain concurrent execution if backend calls become latent.
+*/
+
+/*
+Collapse multiple requests into a single HystrixCommand execution based on a time window and optionally a max batch size.
+This allows an object model to hava multiple calls to the command that execute/queue many times in a short period(milliseconds) and have them all get batched into a single backend call.
+Typically the time window is something like 10ms give or take.
+NOTE: Do NOT retain any state within instances of this class.
+It must be stateless or else it will be non-deterministic because most instances are discarded while some are retained and become the "collapsers" for all the ones that are discarded. 
+*/
+public abstract class HystrixCollapser<BatchReturnType, ResponseType, RequestArgumentType> 
+	implements HystrixExecutable<ResponseType>, HystrixObservable<ResponseType> {
+	...
+}
+
+Hystrix中的Semaphore的设计：
+static interface TryableSemaphore {
+	public abstract boolean tryAcquire();
+	public abstract void release();
+	public abstract int getNumberOfPermitUsed();
+}
+/*
+Semaphore that only suports tryAcquire and never blocks and that supports a dynamic permit count.
+Using AtomicInteger increment/decrement instead of java.util.concurrent.Semaphore since we don't need blocking and need a custom implementation to get the dynamic permit count and since AtomicInteger achieves the same behavior and performance without the more complex implementation of the acual Semaphore class using AbstractQueuedSynchronizer.
+*/
+static class TryableSemaphoreActual implements TryableSemaphore {
+	protected final HystrixProperty<Integer> numberofPermits;
+	private final AtomicInteger count = new AtomicInteger(0);
+	public TryableSemaphoreActual(HystrixProperty<Integer> numberOfPermits) {
+		this.numberOfPermits = numberOfPermits;
+	}
+	@Override
+	public boolean tryAcquire() {
+		int currentCount = count.incrementAndGet();
+		if (currentCount > numberOfPermits.get()) {
+			count.decrementAndGet();
+			return false;
+		} else {
+			return true;
+		}
+	}
+	@Override
+	public void release() {
+		count.decrementAndGet();
+	}
+	@Override
+	public int getNumberOfPermitsUsed() {
+		return count.get();
+	}
+}
+
+static class TryableSemaphoreNoOp implements TryableSemaphore {
+	public static final TryableSemaphore DEFAULT = new TryableSemaphoreNoOp();
+
+    @Override
+	public boolean tryAcquire() {
+		return true;
+	}
+	@Override
+	public void release() {}
+	@Override
+	public int getNumberOfPermitsUsed() {
+		return 0;
+	}
+}
+
+
+
+

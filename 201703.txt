@@ -1,0 +1,562 @@
+TreeMap的firstKey(), lastKey(), lowerKey(), higherKey(), floorKey(), ceilingKey()。
+ceilingKey(K key)的作用是“返回大于等于key的最小的键值所对应的key，没有的话返回null”
+public K ceilingKey(K key) {
+	return keyOrNull(getCeilingEntry(key));
+}
+
+final Entry<K, V> getCeilingEntry(K key)的作用是"获取TreeMap中大于/等于key的最小节点，若不存在，就返回null"。
+HashMap是先插入数据再进行扩容的，但是如果是刚刚初始化容器的时候是先扩容再插入数据。
+
+public interface Set<E> extends Collection<E> {
+...
+}
+
+JDK1.8之前多线程并发下HashMap会发生死循环?
+JDK1.8后，除了对HashMap增加红黑树外，对原有造成死锁的关键原因(新table复制在头端添加元素)改进为依次在末端添加新的元素。虽然JDK8后添加红黑树改进了链表过长查询遍历慢问题和resize时出现导致put死循环的bug，但还是非线程安全的，比如数据丢失等。因此，多线程情况下，还是建议使用ConcurrentHashMap。
+
+When using the iterator of a synchronized collection, we should use synchronized block to safeguard the iteration code because the iteration code because the iterator itself is not thread-safe. Consider the following code:
+List<String> safeList = Collections.synchronizedList(new ArrayList<>());
+// adds some elements to the list
+Iterator<String> iterator = safeList.iterator();
+synchronized(safeList) {
+	while (iterator.hasNext()) {
+		String next = iterator.next();
+	}
+}
+
+package java.util.concurrent;
+public class CopyOnWriteArrayList<E> 
+	implements List<E>, RandomAccess, Cloneable, java.io.Serializable {
+...	
+}
+COW: 是一种程序设计中的优化策略，基本思路：从一开始共享同一内容，当要修改时，才会真正把内容Copy出去形成一个新的内容然后再改，这是一种延时懒惰策略。从JDK1.5开始，j.u.c提供了两个CopyOnWrite机制实现的容器：CopyOnWrtieArrayList和CopyOnWrtieArraySet。
+但com.sun.jersey.client.impl.CopyOnWriteHashMap实现。
+COW的两个缺点：内存占用问题和数据一致性问题。
+
+
+
+为什么java.util.concurrent包中没有ArrayList?
+替代方案：
+1. 线程安全的就用CopyOnWriteArrayList,它在修改时把数据复制一份再来修改，因此后续修改不影响正在迭代的其他线程。
+2. List synchronizedList = Collections.synchronizedList(new ArrayList<>());
+JDK 5在java.util.concurrent里引入了ConcurrentHashMap，在需要支持高并发的场景，使用它代替HashMap。为什么没有ArrayList的并发实现呢？难道在多线程场景下我们只有Vector这一种线程安全的数组实现可以选择？为什么在java.util.concurrent没有可以代替Vector呢？
+
+答：在java.util.concurrent包中没有加入并发的ArrayList实现的主要原因是：很难去开发一个通用并且没有并发瓶颈的线程安全的List。
+像ConcurrentHashMap这样的类的真正价值并不是它们保证了线程安全。而在于它们在保证线程安全的同时不存在并发瓶颈。举个例子，ConcurrentHashMap采用了锁分段技术和弱一致性的Map迭代器去规避并发瓶颈。
+所以问题在于，像“Array List”这样的数据结构，你不知道如何去规避并发的瓶颈。拿contains() 这样一个操作来说，当你进行搜索的时候如何避免锁住整个list？
+
+另一方面，Queue和Deque(基于Linked List)有并发的实现是因为他们的接口相比List的接口有更多的限制，这些限制使得实现并发成为可能。
+CopyOnWriteArrayList是一个有趣的例子，它规避了只读操作（如get/contains）并发的瓶颈，但是它为了做到这点，在修改操作中做了很多工作和修改可见性规则。 此外，修改操作还会锁住整个List，因此这也是一个并发瓶颈。所以从理论上来说，CopyOnWriteArrayList并不算是一个通用的并发List。
+
+JDK7的ConcurrentHashMap:分段锁，就是一个Segment数组，Segment通过继承ReentrantLock来进行加锁，所以每次需要加锁的操作锁住的是一个segment，这样只要保证每个Segment是线程安全的，也就实现了全局的线程安全。concurrencyLevel:并行级别，默认是16，也就是说ConcurrentHashMap有16个Segments，所以理论上最多可以同时支持16个线程并发写，只要它们的操作分布在不同的Segment上，这个值可以在初始化的时候设置为其他值，但是一旦初始化后，它是不可用扩容的。
+
+发现线程CPU使用率逐渐递增，通过jvisualvm，快速找到了问题的堆栈，发现某个redis操作，里面调用了lua脚本，并使用了evalsha()的方式执行。
+perf
+monitor -c 5 demo.MathGame primeFactors
+ognl '@xxx.common.redis.collections.UniqConcurrentSet@INSTANCE.dataIsNullSet.size()'
+
+由于MyBatis二级缓存的数据不一定存储到内存中，它的存储介质多种多样，所以需要给缓存的对象执行序列化。(如果存储在内存中，不序列化也可以)
+开启本Mapper的namespace下的二级缓存
+<cache eviction="LRU" flushInterval="100000" readOnly="true" size="1024"/>
+eviction代表缓存回收策略，目前MyBatis提供以下策略:
+	1. LRU
+	2. FIFO
+	3. SOFT:软引用，移除基于垃圾回收器状态和软引用规则的对象
+	4. WEAK:弱引用，更积极的基于垃圾收集器状态和弱引用规则的对象
+
+ArrayList默认初始化容量是10
+
+CopyOnWriteArrayList有几个点:
+1. 实现了List, RandomAccess, Cloneable, Serializable接口
+2. 内部持有final transient ReentrantLock lock = new RentrantLock();
+3. 底层用private transient volatile Object[] array;
+4. 读写分离，写时复制出一个新的数组，完成插入/修改/移除操作后将新数组赋值给array；
+Vector是增删改查方法都加了synchronized，保证同步，但是每个方法执行的时候都要去获得锁，性能就会大大下降，而CopyOnWriteArrayList 只是在增删改上加锁，但是读不加锁，在读方面的性能就好于Vector，CopyOnWriteArrayList支持读多写少的并发情况。
+
+Java7中使用Entry来代表每个HashMap中的数据节点，Java8使用Node,基本没有什么区别。都是key, value, hash, next这4个属性。不过Node只能用于链表的情况，红黑树的情况需要使用TreeNode。根据数组元素中的第一个节点数据类型是Node还是TreeNode来判断该位置下是链表还是红黑树。
+Java7是先扩容再插入新值，Java8先插入新值再扩容。
+hashmap扩容时每个entry需要再计算一次hash吗？不需要，但是需要进行迁移。
+Java8的Key, Value都不能为NULL，如下所示：
+public V put(K key, V value) {
+	return putVal(key, value, false);
+}
+final V putVal(K key, V value, boolean onlyIfAbsent) {
+	if (key == null || value == null) throw new NullPointerException();
+...
+}
+
+HashMap当>=8时，链表转红黑树，当<=6时，红黑树转链表。
+ConcurrentHashMap使用sun.misc.Unsafe U;
+第一个节点时，使用U.compareAndSwapInt(...)，失败的话，使用synchronized。
+初始化和扩容时，使用CAS操作，防止多线程初始化或扩容，直接放弃CPU，Thread.yield();
+private final Node<K,V>[] initTable() {
+    Node<K,V>[] tab;
+	int sc;
+    while ((tab = table) == null || tab.length == 0) {
+        if ((sc = sizeCtl) < 0)
+            Thread.yield(); // lost initialization race; just spin
+            else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
+            try {
+                if ((tab = table) == null || tab.length == 0) {
+                    int n = (sc > 0) ? sc : DEFAULT_CAPACITY;
+                    @SuppressWarnings("unchecked")
+                    Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
+                    table = tab = nt;
+                    sc = n - (n >>> 2);
+                }
+            } finally {
+                    sizeCtl = sc;
+            }
+            break;
+        }
+    }
+    return tab;
+}
+transferIndex是ConcurrentHashMap的属性，用于控制迁移的位置。
+BlockingQueue的四种模式：Throws exception;Special value;Blocks;Times out;
+public class ArrayBlockingQueue<E> extends AbstractQueue<E>
+	implements BlockingQueue<E>, java.io.Serializable {
+	final ReentrantLock lock;
+	private final Condition notEmpty;
+	private final Condition notFull;
+	...
+}
+public class LinkedBlockingQueue<E> extends AbstractQueue<E>
+	implements BlockingQueue<E>, java.io.Serializable {
+	private final int capacity;
+	private final AtomicInteger count = new AtomicInteger();
+	transient Node<E> head;
+	private transient Node<E> las;
+	private final ReentrantLock takeLock = new ReentrantLock();
+	private final Condition notEmpty = takeLock.newCondition();
+	private final ReentrantLock putLock = new ReentrantLock();
+	private final Condition notFull = putLock.newCondition();
+	...
+}
+
+public class SynchronousQueue<E> extends AbstractQueue<E>
+	implements BlockingQueue<E>, java.io.Serializable {
+	
+}
+很少使用SynchronousQueueQueue这个类，它在线程池的实现类ScheduledThreadPoolExecutor中有使用。
+
+public class ScheduledThreadPoolExecutor
+	extends ThreadPoolExecutor
+	implements ScheduledExecutorService {
+...
+}
+public class PriorityBlockingQueue<E> extends AbstractQueue<E>
+	implements BlockingQueue<E>, java.io.Serializable {
+...
+}
+PriorityBlockingQueue其并发控制采用ReentrantLock, 使用基于数组的二叉堆来存放元素，所有的public方法采用同一个ReentrantLoc进行并发控制。
+
+出现线程安全的主要来源于JMM的设计，主要集中在主内存和线程的工作内存而导致的内存可见性问题，以及重排序导致的问题，进一步有happens-before规则。
+synchronized编译成的class文件，使用javap -v *.class查看，monitorenter monitorexit monitorexit;
+synchronized具有重入性，每个对象拥有一个计数器，当线程获取该对象锁后，计数器会加一，释放锁后将计数器减一。
+任意一个对象都拥有自己的监视器，当这个对象由同步块或者这个对象的同步方法调用时，执行方法的线程必须先获取该对象的监视器才能进入同步块和同步方法，如果没有获取到监视器的线程将会被阻塞在同步块和同步方法的入口处，进入到BLOCKED状态
+线程A加锁->执行临界区代码->释放锁 
+对象监视器monitor 
+(1). CAS操作;(2). Java对象头
+
+使用锁时，线程获取锁是一种悲观策略，即假设每一次执行临界区代码都会产生冲突，所以当前线程获取到锁的同时也会阻塞其他线程获取该锁。而CAS操作(又称为无锁操作)是一种乐观锁策略，它假设所有线程访问共享资源的时候不会出现冲突，既然不会出现冲突就不会阻塞其他线程的操作。因此线程就不会出现阻塞停顿的状态。那么如果出现冲突怎么处理? 无锁操作使用CAS又叫做比较交换来鉴别线程是否出现冲突，出现冲突就重试当前操作直到没有冲突为止。
+CAS的实现需要硬件指令集的支撑，在JDK5后虚拟机才可以使用处理器提供的CMPXCHG指令实现。
+
+未优化前的synchronized最主要的问题是：在存在线程竞争的情况下会出现线程阻塞和唤醒锁带来的性能问题，因为这是一种互斥同步(阻塞同步)。而CAS并不是武断的将线程挂起，当CAS操作失败后会进行一定的尝试，而非进行耗时的挂起唤醒操作，因此也叫做非阻塞同步。
+CAS的问题:
+1. ABA问题:使用AtomicStampedReference来解决
+2. 自旋时间过长:如果JVM能支持处理器提供的pause指令，那么在效率上会有一定的提升
+3. 只能保证一个共享变量的原子操作:利用对象整合多个共享变量，使用AtomicRefrence来保证引用对象之间的原子性。
+
+AtomicReference和AtomicInteger非常类似，不同之处就在于AtomicInteger是对整数的封装，底层采用的是compareAndSwapInt实现CAS，比较的是数值是否相等，而AtomicReference则对应普通的对象引用，底层使用的是compareAndSwapObject实现CAS，比较的是两个对象的地址是否相等。也就是它可以保证你在修改对象引用时的线程安全性。
+
+对于ABA问题带来的隐患，各种乐观锁的实现中通常会使用版本戳version来对记录或对象标记，避免并发操作带来的问题。在Java中，AtomicStampedReference<E>也实现了这个作用，它通过包装[E, Integer]的元组来对对象标记版本戳stamp，从而避免ABA问题。
+Java对象头里的Mark Word里默认的存放的对象的Hashcode,分代年龄和锁标记位。
+
+Java SE1.6中，锁一共有4种状态：无锁状态，偏向锁状态，轻量级锁状态和重量级锁状态，这几个状态会随着竞争情况逐渐升级。锁可以升级但不能降级，意味着偏向锁升级成轻量级锁后不能降级成偏向锁。这种锁升级却不能降级的策略，目的是为了提高获得锁和释放锁的效率。
+
+偏向锁在JDK6和JDK7里默认是启用的，但是它在应用程序启动几秒后才激活，可以使用JVM参数来关闭延迟:-XX:BiasedLockingStartupDelay=0。如果确定应用程序里的所有的锁通常情况下处于竞争状态，可以通过JVM参数关闭偏向锁，-XX:UseBiasedLocking=false，程序默认会进入轻量级锁状态。
+
+Arthas的watch命令:
+watch org.elasticsearch.action.index.IndexRequest validate "target"
+Arthas的ognl
+ognl获取日志实现: ognl '@com.taobao.arthas.demo.web.UserController@LOGGER'
+ognl动态修改日志级别:
+ognl '@com.taobao...UserController@LOGGER.setLevel(@ch.qos.logback.classic.Level@DEBUG)'
+ognl查看日志配置文件加载位置:
+ognl '#map1=@org.slf4j.LoggerFactory@getLogger("root").loggerContext.objectMap,
+	#map1.get("CONFIGURATION_WATCH_LIST")'
+Arthas热更新类: redefine UserController.class
+Arthas实时反编译: jad
+Arthas监控方法调用栈:trace com.taobao.arthas.demo.web.UserController* > trace.logback
+Arthas展示已加载类详情: sc -d java.lang.String
+Arthas查看类加载器信息: classloader -t / -l 
+Arthas查看线程信息: thread -n 3 -i 3000
+
+synchronized与ReentrantLock的区别:
+1. 两者有相同的并发性和内存语义，但ReentrantLock此外还多了锁投票，定时锁等待和可中断锁等待;ReentrantLock有四种方式获取锁:lock(), tryLock(), tryLock(long timeout, TimeUnit unit), lockInterruptly();
+2. synchronized在JVM层面实现，不但可以通过监控工具监控synchronized的锁定，而且在代码出现异常时，JVM会自动释放锁定。但ReentrantLock不行，需要保证锁一定释放，在finally中
+3. 在资源竞争不是很激烈的情况下，synchronized的性能优于ReentrantLock。但是在资源竞争很激烈的情况下，synchronized的性能会下降几十倍，但是ReentrantLock的性能维持常态。
+
+Redis有哪几种数据结构: String, List, Hash, Set, ZSet, 位图, HyperLogLog, pub/sub, transactions;
+
+AtomicReference: 通过volatile和Unsafe提供的CAS函数实现原子性。自旋+CAS的无锁操作保证共享变量的线程安全。
+1. value是volatile,这保证：当某线程修改了value时，其他线程看到的是value的最新值，即修改后的volatile值。
+2. 通过CAS设置value，这保证:某线程通过CAS函数(compareAndSet)设置value时，它的操作是原子性的，即线程在操作value时，不会被中断。
+但CAS操作可能操作ABA问题，AtomicStampedReference可以解决这个问题
+AtomicStampedReference：构造方法中initialStamp(时间戳)用来唯一标识引用变量，在构造器内部，实例化了一个Pair对象，Pair对象记录了对象引用和时间戳信息，采用int作为时间戳。使用时，要保证时间戳唯一(一般做成自增), 如果时间戳重复，还会出现ABA问题。AtomicStampedReference中的每个引用都带上了pair.stamp时间戳，这样就可以解决CAS中的ABA问题。
+AtomicMarkableReference: AtomicStampedReference的引用变量中途更改了几次，如果不关系引用变量更改了几次，只关系是否更改过，就有了AtomicMarkableReference。AtomicMarkableReference的唯一区别就是不再用int标识引用，而是使用boolean变量表示引用变量是否被更改过。
+
+DRDS前身为淘宝TDDL，支持自动化水平拆分，在线平滑扩缩容，弹性扩展，透明读写分离，具备数据库全生命周期运维管控能力。
+
+DRDS将拆分键通过拆分函数计算得到一个计算结果，然后根据结果将数据拆分到RDS实例上。
+数据表拆分的首要原则是尽可能找到数据所归属的业务逻辑实体，并确定大部分(或核心的)SQL操作或者具备一定的并发的SQL都围绕这个实体进行，然后可使用该实体对应的字段作为拆分键。
+- 根据数据分布和访问的均衡度来考虑拆分键，尽量将数据表中的数据相对均匀地分布在不同分表中，DRDS的全局强一致二级索引和Parallel Query能够改善在此场景下SQL并发度和响应时间。
+
+DRDS对SQL的优化方法与单机MySQL不同，侧重考虑分布式环境中的网络IO开销，会尽量将SQL中的运算下推到底层各个分库(RDS/MySQL)执行，从而减少网络IO开销/提升SQL执行效率。
+DRDS提供了一些指令来获取SQL的执行信息，辅助SQL的优化，例如获取SQL执行计划的explain指令，获取SQL执行过程和开销的trace指令。
+	1. explain {SQL}
+	2. explain detail {SQL}
+	3. explain execute {SQL}
+
+1. 对于某些聚合操作，提供util函数，按拆分键进行组合，尽量落到一个分库上，然后执行join/group by/order by。
+2. 增量计算
+
+
+在DRDS中，可由RDS/MySQL执行的SQL计算称为可下推计算，可下推计算能够减少数据传输，减少网络层和DRDS层的开销，提升SQL语句的执行效率。
+因此，DRDS SQL语句优化的基本原则为：尽量让更多的计算可下推到RDS上执行。
+可下推的计算主要包括:
+1. join连接
+2. 聚合计算，如count, group by等
+3. 排序，order by
+4. 去重，distinct
+5. 函数计算， now()等
+6. 子查询
+
+DRDS 在执行带有 LIMIT [ offset, ] row_count 的查询时，实际上是依次将offset 之前的记录读取出来并直接丢弃，这样当offset非常大的时候，即使row_count 很小，也会导致查询非常缓慢。针对这种情况，SQL优化方向是先查出id集合,再通过IN匹配真正的记录内容，改写后的SQL查询如下:
+select * from sample_order o where o.id in (
+	select id from sample_order order by id limit 10000, 2
+);
+
+分组及排序优化：在 DRDS 中，如果在一条SQL查询中必须同时使用DISTINCT、GROUP BY与ORDER BY，应尽可能保证DISTINCT、GROUP BY与ORDER BY 语句后所带的字段相同，且尽量为拆分键，使最终的SQL 查询只返回少量数据。这样能够让分布式查询中消耗的网络带宽最小，并且不需要取出大量数据在临时表内进行排序，系统的性能能够达到最优状态。
+
+使用DRDS时，应尽可能将 JOIN 查询优化成能够在分库上执行的可下推的 JOIN 形式。
+
+以广播表与拆分表之间的 JOIN 为例，应将广播表作为 JOIN 驱动表（将 JOIN 中的左表称为驱动表）。DRDS 的广播表在各个分库都会存放一份同样的数据，当作为 JOIN 驱动表时，该表与分表的 JOIN 可以转化为单库的 JOIN 并进行合并计算，提高查询性能。
+
+注意：广播表在分库上通过同步机制实现数据一致，有秒级延迟。
+
+在 DRDS 层的 JOIN 计算中，大多数情况下采用的 JOIN 算法都是 Nested Loop 及其派生算法（若 JOIN 有排序要求，则使用 Sort Merge 算法）。采用 Nested Loop 算法时，如果 JOIN 中左表的数据量越少，那么 DRDS 对右表做查询的次数就越少，如果右表上建有索引或者表中的数据量也很少，则 JOIN 的速度会更快。因此，在 DRDS 中，分布式 JOIN 的左表被称为驱动表，对分布式 JOIN 的优化应将小表作为驱动表，且让驱动表带有尽可能多的过滤条件。
+
+子查询优化：在包含子查询的 SQL 优化中，应尽可能将查询下推到具体的分库上执行，并减少DRDS层的计算量。要达到这一目标，可以尝试两个方面的优化：
+	-将子查询的形式改写为多表JOIN形式，并参照JOIN优化方法进一步优化；
+	-尽量在JOIN条件或过滤条件中带上拆分键，有利于DRDS将查询下推到特定的分库，避免全表扫描
+DRDS慢SQL明细:
+show full {slow|physical_slow} [where where_condition]
+								[order by col_name [asc|desc], ...]
+								[limit {[offset,] row_count|row_count offset offset}]
+
+数据库连接池是对数据库进行统一管理的技术，主要目的是提高应用性能，减轻数据库负载。
+	- 资源复用：连接可以重复利用，避免频繁创建，释放连接所引起的大量性能开销。在减少系统消耗的基础上，同时增加了系统的平稳性。
+	- 提高系统响应效率：连接的初始化工作完成后，所有请求可以直接利用现有连接，避免了连接初始化和释放的开销，提高了系统的响应效率。
+	- 避免连接泄露：连接池可根据预设的回收策略，强制回收连接，从而避免连接资源泄露。
+Druid
+分析型只读实例是用来增强DRDS主实例对于复杂的大查询的处理能力，通过在DRDS主实例的本地执行引擎基础上增加MPP架构的分布式计算引擎，可以通过外接计算集群突破DRDS主实例上单机计算资源(内存，CPU,IO)的限制。分析型只读实例主要用于加速海量数据下的复杂分析类SQL的执行效率，可极大降低此类SQL的响应时间，尤其对于海量数据量下的多表join,聚合，排序操作有明显效果。
+
+排查系统问题：
+1. 内存
+2. CPU
+3. 网络IOPS
+4. 磁盘IO
+5. jstat查看GC是否频繁，MinGC/FullGC
+6. jstack/jmap查看线程堆栈是否有deadlock
+7. 查看堆栈是否有大量time-wait
+8. 数据库的各种指标:IO/内存/CPU/慢SQL/连接池
+9. 缓存的命中率
+10. 大量的ERROR日志，自动化运维收集
+11. access_log是否有500日志，是否有慢http响应
+12. 是否有依赖服务导致雪崩，即Hystrix是否有熔断
+
+AbstractQueuedSynchronizer provides a framework for implementing blocking locks and related synchronizers(semaphores, events, etc) that relay on FIFO.
+- tryAcquire
+- tryRelease
+- tryAcquireShared
+- tryReleaseShared
+- isHeldExclusively
+
+All other methods are delared final because they cannot be independently varied.
+
+public abstract class AbstractQueuedSynchronizer 
+	extends AbstractOwnableSynchronizer
+	implements java.io.Serializable {...}
+采用自旋方式入队:CAS设置tail过程中，竞争一次竞争不到，就多次竞争，直到竞争到。
+AQS在并发环境下，加锁和解锁需要下面三个部件的协调:
+1. 锁状态。state，为0代表没有线程占有锁，可以去争抢锁，用CAS将state设为1，如果成功，说明抢到了锁，其他线程就无法抢到。如果锁重入，state+1，解锁就是-1。在state变成0时，唤醒等待队列中的第一个线程，让其来占有锁。
+2. 线程的阻塞和解除阻塞，AQS采用了LockSupport.park(Thread)来挂起线程，用unpark来唤醒线程
+3. 阻塞队列。因为争抢锁的线程很多，只能有一个线程拿到锁，其他线程必须等待。这个时候需要一个queue来管理这些线程，AQS用FIFO队列，每个node都持有后继节点的引用。AQS采用CLH锁的变体来实现。
+
+java -XX:+PrintCommandLineFlags -version
+
+Spring Cloud Zookeeper features:
+1. Service Discovery:intances can be registered with Zookeeper and clients can discover the instance using Spring-managed beans
+2. Supports Ribbon, the client side load-balancer via Spring Cloud Netflix
+3. Supports Zuul, a dynamic router and filter via Spring Cloud Netflix
+4. Distributed Configuration: using Zookeeper as a data store
+
+ 
+zookeeper的使用场景
+1. 分布式锁
+2. Saturn的调度节点/高可用
+3. Spring Cloud Zookeeper(The patterns provided include Service Discovery and Distributed Configuration)
+
+ZK实现分布式锁：通过Zookeeper上的数据节点来表示一个锁。
+排他锁
+共享锁
+/shared_lock/[HostName]-临时顺序节点
+羊群效应
+使用如下改动来避免羊群效应：
+1. 客户端调用create接口/shared_lock/[host-name]-请求类型-序号的临时顺序节点。
+2. 客户端调用getChildren接口获取所有已经创建的子节点列表(不注册任何watcher);
+3. 如果无法获取共享锁，就调用exist接口来将比自己小的节点注册watcher。对于读请求：向比自己序号小的最后一个写请求节点注册watcher监听。对于写请求：向比自己小的最后一个节点注册watcher监听。
+4. 等待watcher通知，继续进入步骤2。
+此方案改动主要在于：每个锁竞争者，只需要关注/shared_lock节点下序号比自己小的那个节点即可。
+
+Atomikos, TCC(Try-Confirm-Cancel)
+
+TCC-Transaction: 
+Fescar:
+
+TCC将事务提交分为Try-Confirm-Cancel3个操作:
+Try:预留业务资源/数据校验
+Confirm:确认执行业务操作
+Cancel:取消执行业务操作
+TCC事务处理流程和2PC二阶段提交类似，不过2PC是在跨库的DB层面，而TCC本质上是应用层的2PC.
+TCC优点：应用自己定义数据库操作的粒度，使得降低锁冲突，提高吞吐量成为可能;
+TCC缺点：
+	- 对应用的侵入性强。业务逻辑的每个分支都需要实现try, confirm, cancel三个操作，应用侵入性强，改造成本高。
+	- 实现难度较大。需要按照网络状态，系统故障等不同的失败原因实现不同的回滚策略。为了满足一致性的要求，confirm和cancel接口必须实现幂等性。
+个人感悟：对于超时，要进行处理。对于超时期间的，除了hook外，要定时扫描。
+
+tcc-transaction:1.2框架使用transactionRepository持久化事务日志。可以选择FileSystemTransactionRepository,SpringJdbcTransactionRepository,RedisTransactionRepository,ZooKeeperTransactionRepository。
+
+Hmily:高并发分布式事务，对于RPC超时，定时扫描，如果发现超时的try阶段，会调用cancel方法回滚，从而达到最终一致性。
+
+public interface Delayed extends Comparable<Delayed> {
+	long getDelay(TimeUnit unit);
+}
+
+public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
+	implements BlockingQueue<E> {
+	private final transient ReentrantLock lock = new ReentrantLock();
+	private final PriorityQueue<E> q = new PriorityQueue<E>();
+	private Thread leader = null;
+	private final Condition avaiable = lock.newCondition();
+	...
+	public boolean add(E e) {
+		return offer(e);
+	}
+	public boolean offer(E e) {
+		final ReentrantLock lock = this.lock;
+		lock.lock();
+		try {
+			q.offer(e);
+			if (q.peek() == e) {
+				leader = null;
+				available.signal();
+			}
+			return true;
+		} finally {
+			lock.unlock();
+		}
+	}
+	
+	public E poll() {
+		final ReentrantLock lock = this.lock;
+		lock.lock();
+		try {
+			E first = q.peek();
+			if (first == null || first.getDelay(NANOSECONDS) > 0) {
+				return null;
+			} else {
+				return q.poll();
+			}
+		} finally {
+			lock.unlock();
+		}
+	}
+	
+	public E take() throws InterruptedException {
+		final ReentrantLock lock = this.lock();
+		lock.lockInterruptibly();
+		try {
+			for(;;) {
+				E first = q.peek();
+				if (first == null) {
+					available.await();
+				} else {
+					long delay = first.getDelay(NANOSECONDS);
+					if (delay <= 0) {
+						return q.poll();
+					}
+					first = null;   //don't retain ref while waiting
+					if (leader != null) {
+						available.await();
+					} else {
+						Thread thisThread = Thread.currentThread();
+						leader = thisThread;
+						try {
+							availabel.awaitNanos(delay);
+						} finally {
+							if (leader == thisThread) {
+								leader = null;
+							}
+						}
+					}
+				}
+			}
+		} finally {
+			if (leader == null && q.peek() != null) {
+				available.signal();
+			}
+			lock.unlock();
+		}
+	}
+}
+
+Reactor之发射器(Flux, Mono)创建函数
+Flux:发射0-N个元素的异步发射器
+Flux<T>是一个标准Publisher<T>，表示0到N个发射项的异步序列，可选地以完成信号或错误终止。与Reactive Streams规范中一样，这三种类型的信号转换为对下游订阅者的onNext、onComplete或onError方法的调用。
+Mono:发生0-1个元素的异步发射器
+Mono<T>是一个专门的Publisher<T>，它最多发出一个项，然后可选地以onComplete信号或onError信号结束。
+
+基于RM本地事务实现TCC事务框架时，一个TCC型服务的cancel业务要么执行，要么不执行，不需要考虑部分执行的情况。
+TCC服务的try/confirm/cancel业务方法在RM上的数据存取操作，其RM本地事务是由Spring容器的PlatformTransactionManager来commit/rollback的，TCC事务框架想要了解RM本地事务的状态，只能通过接管Spring的事务管理器功能。
+MySQL5.7之后开始支持XA强一致性分布式事务。
+
+Arthas：jad/mc/redefine线上热更新一条龙
+jad反编译代码:
+jad --source-only com.example...UserController > /tmp/UserController.java
+修改反编译的代码
+sc查找加载UserController的ClassLoader:
+sc -d *UserController | grep classLoaderHash
+classLoaderHash 1be6f5c3
+可以发现是spring boot的LaunchedURLClassLoader@1be6f5c3加载的
+mc内存编译代码
+保存好修改后的代码后，使用mc(Memory Compiler)命令来编译，并且通过-c参数指定ClassLoader:
+mc -c 1be6f5c3 /tmp/UserController.java -d /tmp
+redefine热更新代码
+再使用redefine命令重新加载新编译好的UserController.class
+redefind /tmp/com/example/demo/arthas/user/UserController.class
+
+Collections.synchronizedList(new ArrayList<>());
+public E get(int index) {
+	synchronized(mutex) {return list.get(index);}
+}
+public ListIterator<E> listIterator() {
+	return list.listIterator();   //Must be manually synched by user
+}
+CopyOnWriteArrayList
+CopyOnWriteArraySet
+
+public class ArrayBlockingQueue<E> extends AbstractQueue<E>
+	implements BlockingQueue<E>, java.io.Serilizable {
+	private static final long serialVersionUID = -6666L;
+	final Object[] items;
+	int takeIndex;
+	int putIndex;
+	int count;
+	final ReentrantLock lock;
+	private final Condition notEmpty;
+	private final Condition notFull;
+	transient Itrs itrs = null;
+	...
+	
+	public void put(E e) throws InterrputedException {
+		checkNotNull(e);
+		final ReentrntLock lock = this.lock();
+		lock.lockInterrputibly();
+		try {
+			while (count == items.length) {
+				notFull.await();
+			enqueue(e);
+			}
+		} finally {
+			lock.unlock();
+		}
+	}
+	private static void checkNotFull(Object v) {
+		if (v == null) 
+			throw new NullPointerException();
+	}
+	
+	private void enqueue(E x) {
+		final Object[] items = this.items;
+		items[putIndex] = x;
+		if (++ putIndex == item.length) {
+			putIndex = 0;
+		}
+		count ++;
+		notEmpty.signal();
+	}
+}
+
+ArrayBlockingQueue是一个线程安全的，基于数组，有界的，阻塞的，FIFO队列。试图向已满队列中放入元素或者试图从空队列中提取元素都将导致阻塞。ArrayBlockingQueue基于ReentrantLock来实现线程安全，所以提供基于ReentrantLock的公平性选择。
+在JUC的很多类里，都会有这种写法：把类的属性赋值给方法内的一个变量。这是因为类的属性存放在堆里，方法内的变量是存放在方法栈上，访问方法栈比访问堆要快。在这里，this.lock属性要访问两次，通过赋值给方法的局部变量，就节省了一次堆的访问。其他的类属性只访问一次就不需要这样处理了。
+
+A ConcurrentLinkedQueue is an appropriate choice when many thread will share access to a common collection. This implementation employs an efficient non-blocking algorithm based on one described in...
+Iterators are weakly consistent, returning elements reflecting the state of the queue at some point at or since the creation of the iterator. They do not throw ConcurrentModificationException, and may proceed concurrently whith other operations. Elements contained in the queue since the creation of the iterator will be returned exactly once.
+
+public class ConcurrentLinkedQueue<E> extends AbstractQueue<E>
+	implements Queue<E>, java.io.Serializable {
+	private static final long serialVersionUID = 666L;
+	private transient volatile Node<E> head;
+	private transient volatile Node<E> tail;
+	
+	private static class Node<E> {
+		volatile E item;
+		volatile Node<E> next;
+		Node(E item) {
+			UNSAFE.putObject(this, itemOffset, item);
+		}
+		boolean casItem(E cmp, E val) {
+			return UNSAFE.compareAndSwapObject(this, itemOffset, cmp, val);
+		}
+		void lazySetNext(Node<E> val) {
+			UNSAFE.putOrderedObject(this, nextOffset, val);
+		}
+		boolean casNext(Node<E> cmp, Node<E> val) {
+			return UNSAFE.compareAndSwapObject(this, nextOffset, cmp, val);
+		}
+		//Unsafe mechanics
+		private static final sun.misc,Unsafe UNSAFE;
+		private static final long itemOffset;
+		private static final long nextOffset;
+		static {
+			try {
+				UNSAFE = sun.misc.Unsafe.getUnsafe();
+				Class<?> k = Node.class;
+				itemOffset = UNSAFE.objectFieldOffset(k.getDeclaredField("item"));
+				nextOffset = UNSAFE.objectFieldOffset(k.getDeclaredField("next"));
+			} catch (Exception e) {
+				throw new Error(e);
+			}
+		}
+	}
+}
+
+public class ConcurrentLinkedDeque<E> extends AbstractCollection<E>
+	implements Deque<E>, java.io.Serializable {
+	private static final long serialVersionUID = 666L;
+	private final Node<E> header;
+	private final Node<E> tailer;
+	static final class Node<E> extends AtomicReference<Node<E>> {
+		private static final long serialVersionUID = 666L;
+		private volatile Node<E> prev;
+		final E element;
+		
+	}
+}
+
+ConcurrentLinkedQueue和ConcurrentLinkedDeque是以非阻塞算法实现的高性能队列，其使用场景一般是在并发环境下，需要队列和栈这类数据结构才会使用。而阻塞队列BlockingQueue通过利用了”锁“来实现，也就是会阻塞调用线程，其使用场景一般是在Producter-Consumer模式中，用于线程之间的数据交换或系统解耦。
+BlockingQueue对于每一个基本方法，抛出异常和返回特殊值的方法定义和Queue是完全一样的，BlockingQueue只是增加了两类和阻塞相关的方法: put(e), take();offer(e,time,unit), poll(time, unit)。
+

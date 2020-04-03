@@ -1,0 +1,398 @@
+Kafka如何保证消息的顺序性：
+1. 一个topic,一个partition,一个consumer，内部单线程消费，单线程吞吐量太底，一般不会用这个
+2. 写N个内存queue，具有相同key的数据都到同一个内存queue；然后对应N个线程，每个线程分别消费一个内存queue即可，这样就能保证顺序性。
+Spring Cloud如何实现异步调用
+1. 使用Hystrix,
+@HystrixCommand(fallbackMethod="xxxfallBack")
+public Future<String> helloComsumerAsync() {
+	return new AsyncResult<String> () {
+		@Override
+		public String invoke() {
+			return restTemplate.getForEntity("xxURL", String.class).getBody;
+		}
+	}
+}
+2. 响应式调用
+public Observable<String> helloConsumerResponse() {
+	return Observable.create(new Observable.OnSubscribe<String>() {
+		@Override
+		public void call(Subscriber<? super String> subscriber) {
+			String body = restTemplate.getForEntity("xxURL", String.class).getBody;
+			subscriber.onNext(body);
+			subscriber.onCompleted();
+		}
+	});
+}
+3. @Async, 配置自定义的Bean ThreadPoolTaskScheduler
+ThreadPoolExecutor.AbortPolicy:丢弃任务并抛出RejectedExecutionException异常。注：默认策略！！！！！！
+ThreadPoolExecutor.DiscardPolicy：也是丢弃任务，但是不抛出异常。
+ThreadPoolExecutor.DiscardOldestPolicy：丢弃队列最前面的任务，然后重新尝试执行任务（重复此过程）
+ThreadPoolExecutor.CallerRunsPolicy：由调用线程处理该任务
+
+Proceed in 3 steps:
+1. If fewer than corePoolSize threads are running, try to start a new thread whit the given 
+	command as its first task. The call to addWorker atomically checks runState and workerCount
+	, and so prevents false alarms that would add threads when it should't, by returning false.
+2. If a task can be successfully queued, then we still need to double-check whether we should have
+	added a thread (because existing ones died since last checking) or that the pool shut down since
+	entry into this method. So we recheck state and if necessary roll back the enqueuing if stopped,
+	or start a new thread if there are none.
+3. If we cannot queue task, then we try to add a new thread. If it fails, we know we are shut down 
+	or saturated and so reject the task.
+
+问题：在使用Spring Cloud的Ribbon或Feign来实现服务调用的时候，如果我们的机器或网络环境等原因不是很好的话，有时候会发现这样一个问题：我们服务消费方调用服务提供方接口的时候，第一次请求经常会超时，而之后的调用就没有问题了。
+原因：造成第一次服务调用出现失败的原因主要是Ribbon进行客户端负载均衡的Client并不是在服务启动的时候就初始化好的，而是在调用的时候才会去创建相应的Client，所以第一次调用的耗时不仅仅包含发送HTTP请求的时间，还包含了创建RibbonClient的时间，这样一来如果创建时间速度较慢，同时设置的超时时间又比较短的话，很容易就会出现上面所描述的显现。
+解决方案：将ribbon设置为饥饿模型，如下：
+ribbon.eager-load.enabled=true
+ribbon.eager-load.clients=hello-service, user-service 
+Spring Cloud Ribbon是基于Netflix Ribbon实现的一套客户端负载均衡的工具。它是一个基于HTTP和TCP的客户端负载均衡器。它可以通过在客户端中配置ribbonServerList来设置服务端列表去轮询访问以达到均衡负载的作用。
+当Ribbon与Eureka联合使用时，ribbonServerList会被DiscoveryEnabledNIWSServerList重写，扩展成从Eureka注册中心获取服务实例列表。同时它也会用NIWSDiscoveryPing来取代IPing, 它将职责委托给Eureka来确认服务端释放已经启动。
+当Ribbon与Consul联合使用时，ribbonServerList会被ConsulServerList来扩展成从Consul获取服务实例列表。同时由ConsulPing来作为IPing接口的实现。
+在使用Spring Cloud Ribbon时，不管是Eureka还是Consul结合，都会在引入Spring Cloud Eureka或Spring Cloud Consul依赖的时候通过自动化配置来加载上述所说的配置内容，可以快速在Spring Cloud中实现服务间的负载均衡。
+Semaphore的实现原理：
+public class Semaphore implements java.io.Serializable {
+	private static final long serialVersionUID = ***L;
+	//All mechanics via AbstractQueuedSynchronizer subclass
+	private final Sync sync;
+	//Synchronization implementation for semaphore. Uses AQS state 
+	//to represent permits. Subclassed into fair and nonfair versions.
+	abstract static clss Sync extends AbstractQueuedSynchronizer {
+		private static final long serialVersionUID = 1192457210091910933L;
+
+        Sync(int permits) {
+            setState(permits);
+        }
+
+        final int getPermits() {
+            return getState();
+        }
+
+        final int nonfairTryAcquireShared(int acquires) {
+            for (;;) {
+                int available = getState();
+                int remaining = available - acquires;
+                if (remaining < 0 ||
+                    compareAndSetState(available, remaining))
+                    return remaining;
+            }
+        }
+
+        protected final boolean tryReleaseShared(int releases) {
+            for (;;) {
+                int current = getState();
+                int next = current + releases;
+                if (next < current) // overflow
+                    throw new Error("Maximum permit count exceeded");
+                if (compareAndSetState(current, next))
+                    return true;
+            }
+        }
+
+        final void reducePermits(int reductions) {
+            for (;;) {
+                int current = getState();
+                int next = current - reductions;
+                if (next > current) // underflow
+                    throw new Error("Permit count underflow");
+                if (compareAndSetState(current, next))
+                    return;
+            }
+        }
+
+        final int drainPermits() {
+            for (;;) {
+                int current = getState();
+                if (current == 0 || compareAndSetState(current, 0))
+                    return current;
+            }
+        }
+	}
+	
+	/**
+     * NonFair version
+     */
+    static final class NonfairSync extends Sync {
+        private static final long serialVersionUID = -2694183684443567898L;
+
+        NonfairSync(int permits) {
+            super(permits);
+        }
+
+        protected int tryAcquireShared(int acquires) {
+            return nonfairTryAcquireShared(acquires);
+        }
+    }
+
+    /**
+     * Fair version
+     */
+    static final class FairSync extends Sync {
+        private static final long serialVersionUID = 2014338818796000944L;
+
+        FairSync(int permits) {
+            super(permits);
+        }
+
+        protected int tryAcquireShared(int acquires) {
+            for (;;) {
+                if (hasQueuedPredecessors())
+                    return -1;
+                int available = getState();
+                int remaining = available - acquires;
+                if (remaining < 0 ||
+                    compareAndSetState(available, remaining))
+                    return remaining;
+            }
+        }
+    }
+}
+
+Spring Bean在ApplicationContext中的生命周期：
+1. 启动容器
+2. 调用BeanFactoryPostProcessor的postProcessBeanFactory()方法对工厂定义信息进行后处理
+3. 通过getBean()调用某一个Bean
+4. 调用InstantiationAwareBeanPostProcessor的postProcessBeforeInstantiation()方法
+5. 实例化
+6. 调用InstantiationAwareBeanPostProcessor的postProcessAfterInstantiation()方法
+7. 调用InstantiationAwareBeanPostProcessor的postProcessPropertyValues()方法 
+8. 设置属性值
+9. 调用BeanNameAware的setBeanName()方法
+10. 调用BeanFactoryAware的SetBeanFactory()方法 
+11. 调用ApplicationContextAware的setApplicationContext()方法 
+12. 调用BeanPostProcessor的postProcessBeforeInitialization()方法 
+13. 调用InitializingBean的afterPropertiesSet()方法 
+14. 通过init-method属性配置的初始化方法 
+15. 调用BeanPostProcessor的postProcessAfterInitializaton()方法 
+X. (对于prototype的Bean，后续交由调用者管理;对于singleton继续16)
+16. 容器销毁 
+17. 调用DisposableBean的destory()方法 
+18. 通过destory-method属性设置的销毁方法
+
+//Run the Spring application, creating and refreshing a new ApplicationContext
+public ConfigurableApplicationContext run(String... args) {
+	StopWatch stopWatch = new StopWatch();
+	stopWatch.start();
+	ConfigurableApplicationContext context = null;
+	FailureAnalyzers analyzers = null;
+	configureHeadlessProperty();
+	SpringApplicationRunListeners listeners = getRunListeners(args);
+	listeners.starting();
+	try {
+		ApplicationArguments applicationArguments = new DefaultApplicationArguments(args);
+		ConfigurableEnvironment environment = prepareEnvironment(listeners, applicationArguments);
+		Banner printedBanner = printBanner(environment);
+		context = createApplicationContext();
+		analyzers = new FailureAnalyzers(context);
+		prepareContext(context, environment, listeners, applicationArguments, printedBanner);
+		refreshContext(context);
+		afterRefresh(context, applicationArguments);
+		listeners.finished(context, null);
+		stopWatch.stop();
+		if (this.logStartupInfo) {
+			new StartupInfoLogger(this.mainApplicationClass).logStarted(
+				getApplicationLog(), stopWatch);
+		}
+		return context;
+	} catch (Throwable ex) {
+		handleRunFailure(context, listeners, analyzers, ex);
+		throw new IllegalStateException(ex);
+	}
+}
+Spring Boot中的Spring.factorites内容如下：
+# PropertySource Loaders
+org.springframework.boot.env.PropertySourceLoader=\
+org.springframework.boot.env.PropertiesPropertySourceLoader,\
+org.springframework.boot.env.YamlPropertySourceLoader
+
+# Run Listeners
+org.springframework.boot.SpringApplicationRunListener=\
+org.springframework.boot.context.event.EventPublishingRunListener
+
+# Application Context Initializers
+org.springframework.context.ApplicationContextInitializer=\
+org.springframework.boot.context.ConfigurationWarningsApplicationContextInitializer,\
+org.springframework.boot.context.ContextIdApplicationContextInitializer,\
+org.springframework.boot.context.config.DelegatingApplicationContextInitializer,\
+org.springframework.boot.context.embedded.ServerPortInfoApplicationContextInitializer
+
+# Application Listeners
+org.springframework.context.ApplicationListener=\
+org.springframework.boot.ClearCachesApplicationListener,\
+org.springframework.boot.builder.ParentContextCloserApplicationListener,\
+org.springframework.boot.context.FileEncodingApplicationListener,\
+org.springframework.boot.context.config.AnsiOutputApplicationListener,\
+org.springframework.boot.context.config.ConfigFileApplicationListener,\
+org.springframework.boot.context.config.DelegatingApplicationListener,\
+org.springframework.boot.liquibase.LiquibaseServiceLocatorApplicationListener,\
+org.springframework.boot.logging.ClasspathLoggingApplicationListener,\
+org.springframework.boot.logging.LoggingApplicationListener
+
+# Environment Post Processors
+org.springframework.boot.env.EnvironmentPostProcessor=\
+org.springframework.boot.cloud.CloudFoundryVcapEnvironmentPostProcessor,\
+org.springframework.boot.env.SpringApplicationJsonEnvironmentPostProcessor
+
+# Failure Analyzers
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+org.springframework.boot.diagnostics.analyzer.BeanCurrentlyInCreationFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.BeanNotOfRequiredTypeFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.BindFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.ConnectorStartFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.NoUniqueBeanDefinitionFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.PortInUseFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.ValidationExceptionFailureAnalyzer
+
+# FailureAnalysisReporters
+org.springframework.boot.diagnostics.FailureAnalysisReporter=\
+org.springframework.boot.diagnostics.LoggingFailureAnalysisReporter
+
+在UML系统开发中有三个主要的模型：
+	-功能模型：从用户的角度展示系统的功能，包括用例图
+	-对象模型：采用对象，属性，操作，关联等概念展示系统的结构和基础，包括类图，对象图。
+	-动态模型：展示系统的内部行为。包括序列图，活动图，状态图
+区分UML模型和UML图是非常重要的，UML图包括用例图，协作图，活动图，序列图，部署图，构件图，类图，状态图，是模型中信息的图形表达方式，但是UML模型独立于UML图存在。UML的当前版本只提供了模型信息的交换，而没有提供图信息的交换。
+
+UML总共9种图，有不同的分类方式。
+UML图分为用例视图(用例图)，设计视图(类图，对象图)，进程视图(序列图，协作图，状态图，活动图)，实现视图(构件图)，拓扑视图(部署图)。
+UML图又可以分为静态视图和动态视图。静态图分为：用例图，类图，对象图，包图，构件图，部署图。动态图分为：状态图，活动图，协作图，序列图。
+类图有下面6种关系：泛化(Generalization)，实现(Realization)，关联(Association)，聚合(Aggregation)，组合(Composition)，依赖(Dependency)。
+各种关系的强弱顺序：泛化 = 实现 > 组合 > 聚合 > 关联 > 依赖
+用户根据用例图抽象成类，描述类的内部结构和类与类之间的关系，是一种静态结构图。
+【泛化关系】是一种继承关系，表示一般与特殊的关系，它指定了子类如何继承父类的所有特征和行为
+【实现关系】是一种类与接口的关系，表示类是接口所有特征和行为的实现。
+【关联关系】是一种拥有的关系，它使一个类知道另一个类的属性和方法。关联可以单向或者双向。双向的关联可以有两个箭头或者没有箭头，单向的关联有一个箭头
+【聚合关系】是整体和部分的关系，且部分可以离开整体而单独存在。聚合关系是关联关系的一种，是强的关联关系；关联和聚合在语法上无法区分，必须考察具体的逻辑关系。
+【组合关系】是整体与部分的关系，但部分不能离开整体而单独存在。组合关系是关联关系的一种，是比聚合关系还要强的关系，它要求普通的聚合关系种代表整体的对象负责部分的对象的生命周期
+【依赖关系】是一种使用的关系，即一个类的实现需要另一个类的协助，所以要尽量不使用双向的互相依赖。
+状态图：是一种由状态，变迁，事件和活动组成的状态机，用来描述类的对象所有可能的状态以及事件发生时状态的转移条件
+活动图：是状态图的一种特殊情况，这些状态大都处于活动状态。本质是一种流程图，它描述了活动到活动的控制流。
+序列图：
+构件图：用来表示系统中构件与构件之间，类或者接口与构件之间的关系图。其中，构件图之间的关系表现为依赖关系，定义的类或接口与类之间的关系表现为依赖关系或实现关系。
+部署图：描述了系统运行时进行处理的结点以及在结点上活动的构件的配置。强调了物理设备以及之间的连接关系。
+跨库的join的几种解决方案：
+1. 全局表(适用条件：某些小表并且很少修改的，比如DRDS中的广播表)
+2. 字段冗余(适用条件：字段较少，缺点：更新时需同时更新到不同的表，适用于不可变字段)
+3. 数据同步 
+4. 系统层面封装(通过应用层先查询A库数据再查询B库数据，进行组合，只适用于很少场景)
+5. 同步到数仓(将历史数据进行数据汇总后保存，当天数据不支持此操作，或者实时性不高)
+6. 分割成多个join(按实际情况分割)
+
+Spring Cloud如何优雅的下线服务:
+方式一：kill <pid>，该方式借助于Spring Boot的Shutdown hook, 应用本身下线也是优雅的，但如果适用Eureka，默认会最长90秒的延迟，其他应用才会感知该服务下线。因此该方式不够优雅
+方式二：/shutdown 端点(不建议)，配置management.endpoint.shutdown.enabled=true, endpoints.web.exposure.include=shutdown,发送post到*/actuator/shutdown 
+方式三：/pause端点(生产可用，但有一点缺陷)，暴露/pause端点，适用post调用*/actuator/pause后Eureka Server上状态会标记为DOWN，但应用本身可以正常对外服务，等90秒后，再停止服务。但是如果服务发现组件用的是Eureka并且开启了健康检查eureka.client.health.enabled = true， 那么/pause端点无效!!!
+方式四：/service-registry端点(生产可用),暴露/service-registry端点 
+
+Kafka通过Zookeeper管理集群配置，选举leader，以及在Consumer Group变化时进行rebalance。
+
+Leader Replica:
+概念：每一个Partition有且只有一个Replica可以作为Leader
+职责：负责处理所有Producer、Consumer的请求；与此同时，Leader还负责监管和维护ISR(In-Sync Replicas：副本同步队列)中所有follower的滞后状态。
+Follower Replica:
+概念：每个Partition中除了Leader以外所有的Replica均为Follower
+职责：不处理任何来自客户端的请求；只通过Fetch Request拉取Leader replica的数据进行同步 
+Kafka中所说的offset本质上是一个逻辑值，代表的是目标数据对应在Partition上的偏移量；而数据在磁盘上的实际偏移量是存储在对应Segment的.index文件中。
+Offset相关概念：
+LEO(LogEndOffset):表示每个Partition中log最后一条message的位置
+HW(HighWatermark):表示Consumer能够看到该Partition的位置
+Replica相关概念：
+ISR(In-Sync Replicas):副本同步列表(包含Leader和Follower)
+OSR(Outof-Sync Replicas):由于同步落后而被剔除的副本列表，阈值参数：replica.lag.time.max.ms
+AR(Assigned Replica): 所有副本集；AR = ISR + OSR
+
+Kafka在Producer阶段通过request.required.acks参数提供了不同类型的应答机制以方便用户在系统吞吐量和一致性之间进行权衡：
+	- 1(Default)：表示Producter在ISR中的Leader成功接收到消息后并确认后，则表示消息成功写入。
+	- 0：表示Producer将消息发送到Broker中后无需等待Broker的确认；即：只管发消息，不关心消息是否被成功接收
+	- -1(all)：表示Producer需要等待ISR中所有的Replica都确认收到消息才算写入成功；如果ISR中只剩下Leader，则等同于request.required.acks=1的效果
+
+在老版本的Kafka(0.11.0.0以前)中，存在一个潜在的数据一致性问题，这个问题在0.11.0.0中通过leader epoch机制来消除该问题。可以把epoch理解为代(版本)的概念，即每一次的leader对应一个唯一的epoch，如果leader更换，则对应的epoch值也会随之更换，而过期的epoch请求则都会被忽略。
+
+Spring Cloud Consul:
+	1. Service Discovery with Consul;
+	2. 
+
+Consul Agents集群之间通过Gossip协议进行通信，并且适用Raft一致性协议。
+
+ConcurrentLinkedQueue:This implementation employs an efficicent non-blocking algorithm based on one described in xx Simple, Fast, and Practical Non-Blocking and Blocking Concurrent Queue Algorithms.
+public class ConcurrentLinkedQueue<E> extends AbstractQueue<E>
+	implements Queue<E>, java.io.Serializable {
+	private static final long serialVersionUID = *L;
+	private static class Node<E> {
+		volatile E item;
+		volatile Node<E> next;
+		Node(E item) {
+			UNSAFE.putObject(this, itemOffset, item);
+		}
+		boolean casItem(E cmp, E val) {
+			return UNSAFE.compareAndSwapObject(this, itemOffset, cmp, val);
+		}
+		void lazySetNext(Node<E> val) {
+			UNSAFE.putOrderedObject(this, nextOffset, val);
+		}
+		void casNext(Node<E> cmp, Node<E> val) {
+			return UNSAFE.compareAndSwapObject(this, nextOffset, cmp, val);
+		}
+		private static final sun.misc.Unsafe UNSAFE;
+		private static final long itemOffset;
+		private static final long nextOffset;
+		static {
+			try {
+				UNSAFE = sun.misc.Unsafe.getUnsafe();
+				Class<?> k = Node.class;
+				itemOffset = UNSAFE.objectFieldOffset(k.getDeclaredField("item"));
+				nextOffset = UNSAFE.objectFieldOffset(k.getDeclaredField("next"));
+			} catch (Exception e) {
+				throw new Error(e);
+			}
+		}
+	}
+	private transient volatile Node<E> head;
+	private transient volatile Node<E> tail;
+	...
+}
+
+几种常用的消息队列：
+1. RabbitMQ:支持AMQP高级消息队列协议，适用ErLang语言编写，有消息确认机制和持久化机制，可以自定义路由。
+2. ActiveMQ: 是一个完全支持JMS1.1和J2EE规范的JMS Provider实现。适用JAVA编写
+3. RocketMQ: 使用Java语言，参考kafka，消息可靠性比kafka更好。支持广播消费和集群消费，提供严格的消息顺序
+4. Kafka 
+5. ZeroMQ: 
+6. Redis: 在Redis cluster集群中使用了本身提供的topic订阅功能，但不适合报文大的消息
+7. MetaMQ
+
+在事务的支持方面，RabbitMQ不支持事务，ActiveMQ和RocketMQ支持事务，Kafka不支持事务，但可以通过low level API保证仅消费一次。
+
+sample-client.ribbon.MaxAutoRetries=1
+sample-client.ribbon.MaxAutoRetriesNextServer=1
+sample-client.ribbon.OkToRetryOnAllOperations=true 
+sample-client.ribbon.ServerListRefreshInterval=2000
+sample-client.ribbon.ConnectTimeout=3000
+sample-client.ribbon.readTimeout=3000
+Redis常用的集群部署方式：
+	1. 主从master-slave
+	2. 哨兵Redis-Sentinel
+	3. 集群Redis-Cluster
+	4. Codis(豌豆荚使用Go编写的Redis Proxy)
+	5. Twemproxy(Twitter开源的Redis代理)
+
+public class CyclicBarrier {
+	private static class Generation {
+		boolean broken = false;
+	}
+	private final ReentrantLock lock = new ReentrantLock();
+	private final Condition trip = lock.newCondition();
+	private final int parties;
+	private final Runnable barrierCommand;
+	private Generation generation = new Generation();
+	private int count;
+}
+JVM内存泄露的种类：
+	1. 虚拟机栈：StackOverflowError(线程请求栈深度大于虚拟机允许的深度), OutOfMemoryError(如果栈的扩展时无法申请到足够的内存)
+	2. 堆：OutOfMemoryError
+	3. 方法区(元空间)：OutOfMemoryError
+	4. 程序计数器：不会出现泄露
+	5. 直接内存:OutOfMemoryError 
+
+ReentrantLock: Also note that the untimed tryLock() method does not honor the fairness setting. It will succeed if the lock is available even if other threads are waiting.
+Serialization of this class behaves in the same way as build-in locks: a deserialized lock is in the unlocked state, regardless of its state when serialized.
+This lock supports a maximum of 2147483647 recursive locks by the same thread. Attempts to exceed this limit result in Error throws from locking methods.

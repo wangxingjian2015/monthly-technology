@@ -1,0 +1,500 @@
+Consul的Use Cases:
+1. Service Discovery for connectivity;
+2. Service Segmentation for security;
+3. Service Configuration for runtime configuration;
+
+LoadBalancerClient，Spring Cloud做这一层抽象，很好的解耦了服务治理体系，使得可以轻易的替换不同的服务治理设施。是一个负载均衡客户端的抽象定义。
+
+@RestController
+public class DcController {
+	@Autowired
+	LoadBalancerClient loadBalancerClient;
+	@Autowired
+	RestTemplate restTemplate;
+	
+	@GetMapping("/consumer")
+	public String dc() {
+		ServiceInstance serviceInstance = loadBalancerClient.choose("eureka-client");
+		String url = "http://" + serviceInstance.getHost() + ":" + serviceInstance.getPort() + "/dc";
+		return restTemplate.getForObject(url, String.class);
+	}
+}
+
+try {
+	preRoute();
+} catch(ZuulException e) {
+	error(e);
+	postRoute();
+	return;
+}
+try {
+	route();
+} catch(ZuulException e) {
+	error(e);
+	postRoute();
+	return;
+}
+try {
+	postRoute();
+} catch(ZuulException e) {
+	error(e);
+	return;
+}
+上面代码源自com.netflix.zuul.http.ZuulServlet的service方法
+在发生异常时，往请求上下文RequestContext中添加一系列的error.*参数。SendErrorFilter
+@Override
+public boolean shouldFilter() {
+	return true;
+}
+为了扩展过滤器的处理逻辑，为RequestContext增加一些自定义属性，需要了解Zuul过滤器的核心处理器:com.netflix.zuul.FilterProcessor
+Zuul:请求路由和过滤
+Spring Cloud Zuul的过滤器:过滤类型(String filterType())，执行顺序(int filterOrder())，执行条件(boolean shouldFilter())，具体操作(Object run())；
+在Spring Cloud Zuul中，在http请求生命周期的各个阶段默认实现了一批核心过滤器，它们在API网关服务启动的时候自动加载和启用。定义在spring-cloud-netflix-core模块的org.springframework.cloud.netflix.zuul.filters包中
+pre过滤器:
+1. ServletDetectionFilter
+2. Servlet30WrapperFilter
+3. FormBodyWrapperFilter
+4. DebugFilter
+5. PreDecorationFilter
+通过设置zuul.addProxyHeaders=false关闭对头域的添加动作
+route过滤器:
+1. RibbonRoutingFilter:当存在serviceId时，对请求通过Ribbon和Hystrix来向服务实例发起请求，并将服务实例的请求结果返回。
+2. SimpleHostRoutingFilter:请求上下文中存在routeHost参数时，通过HttpClient发起请求，并没有使用Hystrix命令进行包装，这类请求并没有线程隔离和断路器的包含
+3. SendForwardFilter:该过滤器只对请求上下文中存在forward.to参数的请求进行处理，即用来处理路由规则中的forward本地跳转配置。
+post过滤器:
+1. SendErrorFilter
+2. SendResponseFilter
+
+Zuul处理Cookie和重定向
+在传递过程中，http请求头中的Cookie和Authorization都没有正确地传递给具体服务，最终导致会话状态没有得到保持
+
+@Configuration
+@ConditionalOnBean(RedisConnectionFactory.class)
+@ConditionalOnEnabledHealthIndicator("redis")
+public static class RedisHealthIndicatorConfiguration extends CompositeHealthIndicatorConfiguration<RedisHealthIndicator, RedisConnectionFactory> {
+	@Autowired
+	private Map<String, RedisConnectionFactory> redisConnectionFactories;
+	
+	@Bean
+	@ConditionalOnMissingBean(name = "redisHealthIndicator")
+	public HealthIndicator redisHealthIndicator() {
+		return createHealthIndicator(this.redisConnectionFactories);
+	}
+}
+信号量在实现并发控制时经常使用的手段，主要用来限制同时并发线程或者进程的数量。比如Zuul默认情况下就使用信号量来限制每个路由的并发数，以实现不同路由间的资源隔离。
+基于Consul实现分布式信号量
+
+jhipster
+
+Why is Thread.stop deprecated?
+Because it is inherently unsafe. Stopping a thread causes it to unlock all the monitors that it has locked. (The monitors are unlocked as the ThreadDeath exception propagates up the stack.) If any of the objects previously protected by these monitors were in an inconsistent state, other threads may now view these objects in an inconsistent state. Such objects are said to be damaged. When threads operate on damaged objects, arbitrary behavior can result. This behavior may be subtle and difficult to detect, or it may be pronounced. Unlike other unchecked exceptions, ThreadDeath kills threads silently; thus, the user has no warning that his program may be corrupted. The corruption can manifest itself at any time after the actual damage occurs, even hours or days in the future.
+
+Redis主从复制的优点：
+1. 读写分离，提高读写性能
+2. 数据备份，减少数据丢失的风险
+3. 高可用，避免单点故障
+
+Redis Sentinel集群
+Redis Sentinel本身是一个特殊状态的Redis服务器，启动命令:redis-server /xx/sentinel.conf --sentinel
+sentinel模式下的启动流程与普通redis server不一样，不会加载RDB文件以及AOF文件，本身也不会存储业务数据。
+
+Sentinel在与服务器建立连接时，会建立两个连接，其中一个是订阅连接。Sentinel会定时的通过订阅连接向_sentinel:hello频道发送消息。同时，Sentinel也会订阅_sentinel:hello频道的消息，也就是Sentinel即向该频道发布消息，也从该频道订阅消息。
+Sentinel有一个字典对象sentinels,保存着监视同一主服务器的其他所有Sentinel服务器，当一个Sentinel接收到来自_sentinel:hello频道的消息时，会先比较发送该消息的是不是自己，如果是则忽略。否则更新sentinels中的内容，并对新的Sentinel建立连接。
+
+MyBatis的SQL映射文件只有以下几个顶级元素:
+1. cache
+2. cache-ref
+3. resultMap:用来描述如何从数据库结果集来加载对象
+4. sql
+5. insert
+6. update
+7. delete
+8. select
+
+PreparedStatement
+parameterType:将要传入语句的参数的完全限定类名或别名。这个属性是可选的，因为MyBatis可以通过类型处理器TypeHandler推断出具体传入语句的参数。
+对于自定义类型处理方式，可以指定一个特殊的类型处理器类(或别名)
+#{age, javaType=int,jdbcType=NUMERIC,typeHandler=myHandler}
+
+GC Root在JVM中指下面几类对象：
+1. 被栈中的本地变量表引用的对象
+2. 被静态变量引用的对象
+3. 被常量引用的对象
+4. 被JNI方法中引用的对象
+
+Redis集群是Redis官方提供的分布式方案，整个集群通过将所有数据分成16384个槽来进行数据共享。可以通过cluster addslots命令将槽指派给对应的节点。当所有的槽都有节点负责时，集群处于上线状态，否则处于下线状态不对外提供服务。
+可以通过redis-trib工具对槽重新分配。
+
+自己实现锁的几种方式:
+1. 自旋
+2. 自旋+Thread.yield()
+3. 自旋+Thread.sleep();
+4. 自旋+park()
+
+对于锁冲突不严重的情况，用自旋锁会更适合，试想每个线程获得锁后很短的一段时间内就释放锁，竞争锁的线程只要经历几次自旋运算后就能获得锁，那就没必要等待该线程了，因为等待线程意味着需要进入到内核态进行上下文切换，而上下文切换是有成本的并且还不低，如果锁很快就释放了，那上下文切换的开销将超过自旋。
+
+目前操作系统中，一般是用自旋+等待结合的形式实现锁：在进入锁时先自旋一定次数，如果还没获得锁再进行等待。
+ReentrantLock是jdk中常用的锁，其实现逻辑主语基于AQS(j.u.c包中的大多数同步类都是基于AQS实现)
+JUC包中的ReentrantLock,CycliBarrier,CountdownLatch都使用AQS，大致原理如下：
+	1.AQS维护一个叫做state的int型变量和一个双向链表，state表示同步状态，双向链表存储的是等待锁的线程；
+	2.加锁时首先调用tryAcquire尝试获得锁，如果获得锁失败，则将线程插入到双向链表中，并调用LockSupport.park()阻塞当前线程；
+	3. 释放锁时，调用LockSupport.unpark()唤起链表中的第一个节点的线程。被唤起的线程重新走一遍竞争锁的流程。
+其他tryAcquire是抽象方法，具体实现取决于实现类，常说的公平锁和非公平锁的区别就在于该方法的实现。
+
+虽然table变量被volatile修饰了，但里面的元素并没有被volatile修饰，无法保证元素的可见性。
+在ConcurrentHashMap中，内部使用一个volatile数组table(transient volatile Node<K, V>[] table;)保存数据，每次在获取数组的元素时，采用Unsafe类的getObjectVolatile方法；在设置数组元素时，采用CompareAndSwapObject方法，而不是直接通过下标去操作。原因是Java数组在元素层面的元数据设计上的缺失，无法表达元素是final,volatile等语义，所以开了后门，使用getObjectVolatile用来补上无法表达元素是volatile的坑，@Stable用来补上final的坑，数组元素就跟没有标volatile的成员字段一样，无法保证线程之间的可见性。
+只有触发happens before关系的操作，才能保证线程之前的可见性，比如使用table[0]=new Object()直接赋值，这个赋值不会触发任何happens before关系的操作，相当于对一个无volatile变量进行赋值一样。
+
+public class SoftReference<T> extends Reference<T> {}
+public class WeakReference<T> extends Reference<T> {}
+public class PhantomReference<T> extends Reference<T> {}
+
+Java中的对象都是在JVM堆中分配的，其好处是开发者不用关心对象的回收。堆内内存有两个缺点：1. GC是有成本的，堆中的对象数量越多，GC的开销也会越大。2. 使用堆内内存进行文件，网络的IO时，JVM会使用堆外内存做一次额外的中转，也就是会多一次内存拷贝。
+Java内分配堆外内存有两种方式：1. 通过ByteBuffer.allocateDirect(int capacity),得到一个DirectByteBuffer对象；2. 直接调用Unsafe.allocateMemory分配内存，但Unsafe只能在JDK的代码中调用，一般不会直接使用该方法分配内存。
+其中DirectByteBuffer也是用Unsafe去实现内存分配的，对堆内存的分配，读写，回收都做了封装。
+Thread.interrupt():
+1. 没有任何语言方面的需求一个被中断的线程应该终止。中断一个线程只是为了引起该线程的注意，被中断线程可以决定如何应对中断。
+2. 对于处于join, sleep等操作的线程，如果被调用interrupt()后，会抛出InterruptedException，然后线程的中断标志位会由true重置为false，因为线程为了处理异常已经重新处于就绪状态
+3. 不可中断的操作，包括syhchronized以及Lock.lock(),inputStream.read()等，调用interrupt对于这几个无效，因为它们都不抛出异常。如果拿不到资源，它们会无限期阻塞下去。对于Lock.lock()，可以改用Lock.lockInterruptibly()，可被中断的加锁操作，它可以抛出中断异常。等同于等待时间无限长的Lock.tryLock(long time, TimeUnit unit)。对于InputStream等资源，有些(实现了interruptibleChannel接口)可以通过close()方法将资源关闭，对应的阻塞也会放开。
+javap -v
+
+对于synchronized关键字，javac在编译时，会生成对应的monitorenter和monitorexit指令分别对应synchronized同步块的进入和退出，有两个monitorexit指令的原因是:为了保证抛出异常的情况下也能释放锁，所以javac为同步代码块添加了一个隐式的try-finally，在finally中调用monitorexit命令释放锁。
+而对于synchronized方法而言，javac为其生成了一个ACC_SYNCHRONIZED关键字，在JVM进行方法调用时，发现调用的方法被ACC_SYNCHRONIZED修饰，则会先尝试获得锁。
+在JVM底层，对于这两种synchronized语义的实现大致相同。
+
+传统的锁(即重量级锁)依赖于系统的同步函数，在Linux中使用mutex互斥锁，最底层依赖于futex, 这些同步函数都涉及用户态和内核态的切换，进程的上下文切换，成本较高。对于加了synchronized关键字但运行时并没有多线程竞争，或两个线程接近于交替执行的情况，使用传统锁机制无疑是很低的。
+在JDK1.6之前，synchronized只有传统的锁机制，所以相对于其他同步机制效率低。
+在JDK1.6引入了两种类型锁机制：偏向锁和轻量级锁，它们的引入是为了解决在没有多线程竞争或基本没有竞争的场景下因使用传统锁机制带来的性能开销问题。
+
+总结了几点Synchronized和ReentrantLock的区别：
+1 Synchronized是JVM层次的锁实现，ReentrantLock是JDK层次的锁实现；
+2 Synchronized的锁状态是无法在代码中直接判断的，但是ReentrantLock可以通过ReentrantLock#isLocked判断；
+3 Synchronized是非公平锁，ReentrantLock是可以是公平也可以是非公平的；
+4 Synchronized是不可以被中断的，而ReentrantLock#lockInterruptibly方法是可以被中断的；
+ 5 在发生异常时Synchronized会自动释放锁（由javac编译时自动实现），而ReentrantLock需要开发者在finally块中显示释放锁；
+6 ReentrantLock获取锁的形式有多种：如立即返回是否成功的tryLock(),以及等待指定时长的获取，更加灵活；
+7 Synchronized在特定的情况下对于已经在等待的线程是后来的线程先获得锁（上文有说），而ReentrantLock对于已经在等待的线程一定是先来的线程先获得锁；
+
+Guava限流类RateLimiter有两个实现类：SmoothBursty和SmoothWarmingUp，其都是令牌桶算法的变种实现，区别在于SmoothBursty加令牌的速度是恒定的，而SmoothWarmingUp会有个预热期，在预热期内加令牌的速度是慢慢增加的，直到达到固定速度为止。其适用场景是：对于系统而言刚启动时能承受的QPS较小，需要预热一段时间后才能达到最佳状态。
+
+List list = Collections.synchronizedList(new LinkedList(...));
+
+Note that the fail-fast behavior of an iterator cannot be guaranteed as it is, generally speaking, impossible to make any hard guarantees in the presence of unsynchronized concurrent modification. Fail-fast iterators throw ConcurrentModificationException on a best-effort basis.
+Therefore, it would be wrong to write a program that depended on this exception for its correctness: the fail-fast behavior of iterators should be used only to detect bugs.
+
+public boolean add(E e) {
+	ensureCapacity(size + 1);
+	elementData[size ++] = e;
+	return true;
+}
+modCount ++;
+
+public E remove(int index) {
+	return remove(entry(index));
+}
+private Entry<E> entry(int index) {
+	if (index < 0 || index >= size)
+		throw new IndexOfBoundException("Index:" + index + ", size:" + size);
+	Entry<E> e = header;
+	if (index < (size >> 1) {	//要删除的元素位于前半段
+		for (int i = 0;i <= index;i ++)
+			e = e.next;
+	} else {
+		for (int i = size;i > index;i -- )
+			e = e.previous;
+	}
+	return e;
+}
+
+Raft共识算法
+拜占庭将军问题的简化:假设将军中没有叛军，信使的信息可靠但有可能被暗杀的情况下，将军们如何达成一致性决定?
+对于简化后的问题，有很多解决方案，被证明的共识算法是Paxos，由拜占庭问题的作者Leslie Lamport在90年提出，最初论文难懂，后来2001年重新发表了简单版论文:Paxos Made Simple，然后依然难懂。
+斯坦福教授在2014年发表了新的分布式协议Raft。与Paxos相比，Raft有着基本相同的运行效率，但是更容易理解，也更容易用在系统开发上。
+每个将军相当于一个分布式网络节点，每个节点有三种状态: Follower, Candidate, Leader，状态之间是互相转换的
+每个节点都有一个倒计时器(Election Timeout)，时间在150ms到300ms之间。
+几种情况下会重设置Timeout,
+1. 收到选举的请求；
+2. 收到Leader的Heartbeat。
+在Raft运行过程中，最主要进行两个活动:
+1. 选主Leader Election;
+2. 复制日志Log Replication;
+在选出一个新的Leader后，原来的Leader恢复了又重新加入了，这个时候怎么处理呢?在Raft里，第几轮选举是由记录的，重新加入的Leader是第一轮选举(Term 1)选出来的，而限制的Leader则是Term 2，所有原来的Leader会自觉降级为Follower。
+两个Follower已经投完票，拒绝了这个Candidate的投票请求。
+Leader进行Heartbeat，Candidate收到后状态自动转为Foller，完成选主。
+
+复制日志 Log Replication:
+1. 正常情况下复制日志:
+2. Network Partition情况下进行复制日志
+
+Raft是能够实现分布式系统强一致性的算法，每个系统节点有三种状态Follower,Candidate, Leader。实现Raft算法两个最重要的事是：选主和复制日志。
+
+结果映射: resultMap。ResultMap的设计思想是，对简单的语句根本不需要配置显式的结果映射，而对于复杂一点的语句只需要描述它们的关系就可以了。
+HashMap不是一个很好的领域模型。
+<typeAlias type = "com.x.y.z" alias = "User"/>
+高级结果映射:
+<resultMap id = "detailedBlogResultMap" type = "Blog">
+	<constructor>
+		<idArg column = "blog_id" javaType = "int"/>
+	</constructor>
+	<result property = "title" column = "blog_title"/>
+	<association property = "author" javaType = "Author">
+		<id property = "id" column = "author_id"/>
+		<result property = "username" column = "author_username"/>
+		<result property = "password" column = "author_password"/>
+		...
+	</association>
+	<collection property = "posts" ofType = "Post">
+		<id property = "id" column = "post_id"/>
+		<result property = "subject" column = "post_subject"/>
+		<association property = "author" javaType = "Author"/>
+		<collection property = "comments" ofType = "Comment">
+			<id property = "id" column = "comment_id"/>
+		</collection>
+		<discriminator javaType = "int" column = "draft">
+			<case value = "1" resultType = "DraftPost"/>
+		</discriminator>
+	</collection>
+</resultMap>
+id和result元素都将一个列的值映射到一个简单数据类型的属性或字段。两者之间的唯一不同是, id元素表示的结果将是对象的标识属性，这会在比较对象实例时用到。这样可以提高整体的性能，尤其是进行缓存和嵌套结果映射(也就是连接映射)的时候。
+为了将结果注入构造方法，MyBatis需要通过某种方式定位相应的构造方法。
+MyBatis从3.4.3开始，可以在指定参数名称的前提下，以任意顺序编写arg元素。为了通过名称来引用构造方法参数，可以添加@Param注解，或者使用-parameters编译选项并启用useActualParamName选项(默认开启)来编译项目。
+关联的不同之处是，需要告诉MyBatis如何加载关联。MyBatis有两种不同的方式加载关联:
+1. 嵌套Select查询: 通过执行另外一个SQL映射语句来加载期望的复杂类型;
+2. 嵌套结果映射: 使用嵌套的结果映射来处理连接结果的重复子集；
+关联的多结果集(ResultSet):
+集合元素和关联元素
+鉴别器(discriminator)
+
+MyBatis内置了一个强大的事务性查询缓存机制，可以非常方便地配置和定制。为了使它更加强大而且易于配置。
+默认情况下，只启用了本地的会话缓存，它仅仅对一个会话中的数据进行缓存。要启用全局的二级缓存，只需要在SQL映射文件中添加一行<cache/>。
+这个简单语句(<cache/>)的效果如下:
+	- 映射语句文件中的所有 select 语句的结果将会被缓存。
+	- 映射语句文件中的所有 insert、update 和 delete 语句会刷新缓存。
+	- 缓存会使用最近最少使用算法（LRU）算法来清除不需要的缓存。
+	- 缓存不会定时进行刷新（也就是说，没有刷新间隔）。
+	- 缓存会保存列表或对象（无论查询方法返回哪种）的 1024 个引用。
+	- 缓存会被视为读/写缓存，这意味着获取到的对象并不是共享的，可以安全地被调用者修改，而不干扰其他调用者或线程所做的潜在修改。
+
+缓存只作用于cache标签所在的映射文件中的语句。如果混用Java API和XML映射文件，在共用接口中的语句将不会被默认缓存。需要使用@CacheNamespaceRef注解指定缓存作用域。
+<cache
+	eviction = "FIFO"
+	flushInterval = "60000"
+	size = "512"
+	readOnly = "true"/>
+可用的清除策略有：
+	- LRU: 
+	- FIFO 
+	- SOFT: 软引用，基于垃圾回收器和软引用规则移除对象
+	- WEAK: 弱引用，更积极地基于垃圾收集器状态和弱引用规则移除对象
+
+二级缓存是事务性的。当SqlSesssion完成并提交时，或者完成并回滚，但没有执行flushCache=true的insert/update/delete语句时缓存会获得更新。
+除了自定义缓存的方式，可以通过实现自己的缓存，或其他第三方缓存方案创建适配器，来完全覆盖缓存行为。
+<cache type="com.x.yz.MyCustomCache"/>
+type属性指定的类必须实现org.mybatis.cache.Cache接口，且提高一个接收String参数作为id的构造器。
+public interface Cache {
+  String getId();
+  int getSize();
+  void putObject(Object key, Object value);
+  Object getObject(Object key);
+  boolean hasKey(Object key);
+  Object removeObject(Object key);
+  void clear();
+}
+从3.4.2开始，MyBatis支持在所有属性设置完毕后，调用一个初始化方法。如果想使用，需要在自定义缓存类里实现org.apache.ibatis.builder.InitializingObject接口。
+public interface InitializingObject {
+	void initialize() throws Exception;
+}
+MyBatis3精简了元素种类，采用功能强大的基于OGNL的表达式，来实现动态SQL。
+if/choose(when, otherwise)/trim(where, set)/foreach
+
+:可以将任何可迭代对象(List, Set)，Map对象或者数组对象传递给foreach作为集合参数。当使用可迭代对象或者数组时，index是当前迭代的次数，item的值是本次迭代获取的元素。当使用Map对象(或者Map.Entry对象的集合)时，index是键，item是值。
+
+bind元素可以从OGNL表达式中创建一个变量并将其绑定到上下文。
+<select id = "selectBlogsLike" resultType = "Blog">
+	<bind name = "pattern" value = "'%' + _parameter.getTitle() + '%'"/>
+	select * from blog where title like #{pattern}
+</select>
+
+一个配置了_databaseId变量的databaseIdProvider可用于动态代码中，这样可以根据不同的数据库厂商构建特定的语句。
+动态SQL中的可插拔脚本语言
+
+1. 通过hashCode()找到数组中的某一个元素
+2. 通过key的equals方法在链表/红黑树中找到key对应的value
+JDK8,HashMap 
+/**
+ * The table, initialized on first use, and resized as
+ * necessary. When allocated, length is always a power of two.
+ * (We also tolerate length zero in some operations to allow
+ * bootstrapping mechanics that are currently not needed.)
+ */
+transient Node<K, V>[] table;
+JDK7里的hashCode:
+static int indexFor(int h, int length) {
+	return h & (length - 1);
+}
+JDK8里的hashCode:
+static final int hash(Object key) {
+	int h;
+	return (key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);
+}
+tab[hash & (n - 1)];
+//Returns a power of two size for the given target capacity
+static final int tableSizeFor(int cap) {
+	int n = cap - 1;
+	n |= n >>> 1;
+	n |= n >>> 2;
+	n |= n >>> 4;
+	n |= n >>> 8;
+	n |= n >>> 16;
+	return (n < 0) ? 1 : (n >= MAXIMUM_CAPACITY) ? MAXIMUM_CAPACITY : n + 1;
+}
+
+HashMap数组扩容后，最消耗性能的点就是: 原数组中的数据必须重新计算其在新数组中的位置，并放进去，这就是resize。
+
+HashMap的resize()
+/*
+Initializes or doubles table size. If null, allocates in accord with initial capacity target held in field threshold. Otherwise, because we are using power-of-two expansion, the elements from each bin must either stay at same index, or move with a power of two effset in the new table.
+*/
+final Node<K, V>[] resize() {...}
+在重写equals方法时，需要满足三点：自反性，传递性，对称性；
+在将普通的域模型对象作为key需要重写hashCode()和equals。
+
+LinkedHashMap: Hash table and linked list implementation of the Map interface, with predictable iteration order.  differs from HashMap in that it maintains a doubly-linked list running through all of its entries.
+A special LinkedHashMap(int initialCapacity, float loadFactor, boolean accessOrder) constructor is provided to create a linked hash map whose order of iteration is the order in which its entries where last accessed, from least-recently accessed to most-recently(access-order). This kind of map is well-suited to building LRU caches.
+The removeEldestEntry(Map.Entry) method may be overridden to impose a policy for removing stale mappings automatically when new mappings are added to the map.
+Map map = Collections.synchronizedMap(new LinkedHashMap(...));
+In insertion-ordered linked hash maps, merely(仅仅，只不过) changing the value associated with a key that is already contained in the map is not a structural modification. In access-ordered linked hash maps, merely querying the map with get is a structural modification.
+
+LinkedHashMap虽然增加了时间和空间的开销，但通过维护运行于所有条目的双向链表，保证了元素迭代的顺序，该迭代顺序可以是插入顺序或者访问顺序。
+public class LinkedHashMap<K, V> extends HashMap<K, V> implements Map<K, V> {...}
+//The iteration ordering method for this linked hash map; true:access-order, false:insertion-order
+final boolean accessOrder;
+从构造方法可以看出，默认都采用插入顺序来维持取出键值对的次序。所有的构造方法都是通过调用父类的构造方法来创建对象。
+//The head(eldest) of the doubly linked list.
+transient LinkedHashMap.Entry<K, V> head;
+//The tail(youngest) of the doubly linked list.
+transient LinkedHashMap.Entry<K, V> tail;
+//Callbacks to allow LinkedHashMap post-actions
+void afterNodeAccess(Node<K, V> p) {}
+void afterNodeInsertion(boolean evict) {}
+void afterNodeRemoval(Node<K, V> p) {}
+LinkedHashMap的实现就是HashMap+LinkedList，以HashMap维护数据结构，以LinkedList的方式维护数据插入顺序。
+LinkedHashMap重写了父类HashMap的get方法，实际在调用父类getEntry()方法取得查找的元素后，再判断当排序模式accessOrder为true时(即按访问顺序排序),先将当前节点移除，然后再将当前节点插入到链表尾部。由于链表的增加/删除操作是常量级，故不会带来性能的损失。
+使用LinkedHashMap实现一个LRUCache
+public class LRUCache<K, V> extends LinkedHashMap<K, V> {
+	private static final long serialVersionUID = 1L;
+	protected int maxSize;
+	public LRUCache(int maxSize) {
+		super(maxSize, 0.75F, true);
+		this.maxSize = maxSize;
+	}
+	protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+		return size() > maxSize;
+	}
+}
+
+TreeMap:
+public class TreeMap<K, V> 
+	extends AbstractMap<K, V>
+	implements NavigableMap<K, V>, Cloneable, java.io.Serializable {}
+TreeMap: A Red-Black tree based NavigableMap implementation. The map is sorted according to the Comparable natural ordering of its keys, or by a Comparator provided at map creation time, depending on which constructor is used.
+SortedMap sortedMap = Collections.synchronizedSortedMap(new TreeMap(...));
+TreeMap继承于AbstractMap,所以它是一个Map,即key-value集合，实现了NavigableMap接口，意味着支持一系列的导航方法，比如返回有序的key集合，实现了Cloneable接口，意味着它能被克隆，实现了java.io.Serializable接口，意味着它支持序列化。
+TreeMap的本质是红黑树，它包含几个重要成员变量: root, size, comparator。
+root是红黑树的根节点，它是Entry类型，Entry是红黑树的节点，包含红黑树的6个基本组成部分:key, value, left,right,parent,color.
+Hash算法的单调性：单调性是指如果已经有一些内容通过哈希分派到了相应的缓冲中，又有新的缓冲加入到系统中。哈希的结果应能够保证原有已分配的内容可以被映射到新的缓冲中去，而不会被映射到旧的缓冲集合中的其他缓冲区。
+Hash的平衡性：平衡性是指哈希的结果能够尽可能分布到所有的缓冲中去，这样可以使得所有的缓冲空间都得到利用。
+一致性Hash:单调性，平衡性
+为了解决平衡性，一致性Hash引入了虚拟节点的概念。
+SqlSessionFactoryBuilder
+如果一个属性在多个位置，MyBatis将会按照下面的顺序来加载:
+1. 首先读取在properties元素体中指定的属性;
+2. 其次，读取从properties元素的类路径resouce或url指定的属性，且会覆盖已经指定了的重复属性;
+3. 最后，读取作为方法参数传递的属性，且会覆盖已经从properties元素体和resource或url属性中加载了的重复属性。
+因此，通过方法参数传递的属性的优先级最高，resource或url指定的属性优先级中等，在properties元素体中指定的属性优先级最低。
+
+String resource = "org/mybatis/builder/mybatis-config.xml";
+InputStream inputStream = Resources.getResourceAsStream(resource);
+SqlSessionFactoryBuilder builder = new SqlSessionFactoryBuilder();
+SqlSessionFactory factory = builder.build(inputStream);
+
+Configuration configuration = new Configuration(environment);
+configuration.setLazyLoadingEnabled(true);
+configuration.setEnhancementEnabled(true);
+configuration.getTypeAliasRegistry().registerAlias(Blog.class);
+...
+configuration.addMapper(BoundBlogMapper.class);
+SqlSessionFactoryBuilder builder = new SqlSessionFactoryBuilder();
+SqlSessionFactory factory = builder.build(configuration);
+SqlSessionFactory有6个方法创建SqlSession实例，需要考虑以下几点:事务处理，连接，执行语句。
+
+public enum TransactionIsolationLevel {
+	NONE(Connection.TRANSACTION_NONE),
+	READ_COMMITTED(Connection.TRANSACTION_READ_COMMITTED),
+	READ_UNCOMMITTED(Connection.TRANSACTION_READ_UNCOMMITTED),
+	REPEATABLE_READ(Connection.TRANSACTION_REPEATABLE_READ),
+	SERIALIZABLE(Connection.TRANSACTION_SERIALIZABLE);
+	
+	private final int level;
+	private TransactionIsolationLevel(int level) {
+		this.level = level;
+	}
+	
+	public int getLevel() {
+		return level;
+	}
+}
+
+ExecutorType.SIMPLE:这个执行器类型不做特殊的事情，它为每个语句的执行创建一个新的预处理语句。
+ExecutorType.REUSE:这个执行器类型会复用预处理语句。
+ExecutorType.BATCH:这个执行器会批量执行所有更新语句，如果select在它们中间执行，必要时请把它们区分开来以保证行为的易读性。
+The value returned by the insert, update and delete methods indicate the number of rows affected by the statement.
+
+package org.apache.ibatis.session;
+public interface ResultHandler<T> {
+	void handleResult(ResultContext<? extends T> context);
+}
+ResultContext参数允许访问结果对象本身，被创建的对象数目，以及返回值为Boolean的stop方法，可以使用此stop方法来停止MyBatis加载更多的结果。
+使用ResultHandler需要注意两个限制：
+1. 从被ResultHandler调用的方法返回的数据不会被缓存
+2. 当使用结果集(resultMap)时，MyBatis大多数情况下需要数行结果来构造外键对象。如果使用ResultHandler,可以给出外键(association)或者集合(collection)尚未赋值的对象。
+批量立即更新方法，可以刷新存储在JDBC驱动类中的批量更新语句，当将ExecutorType.BATCH作为ExecutorType时，可以用List<BatchResult> flushStatements();
+MyBatis使用到了两种缓存:本地缓存(local cache)和二级缓存(second level cache)。
+默认情况下，本地缓存数据可在整个session的周期内使用，这一缓存需要被用来解决循环引用错误和加快重复嵌套查询的速度，所以它可以不被禁用掉，但可以设置localCacheScope=STATEMENT表示缓存仅在语句执行时有效。
+注意，如果localCacheScope被设置为SESSION，那么MyBatis所返回的引用被传递给保存在本地缓存里的相同对象。对返回的对象(例如List)做出任何更新将会影响本地缓存的内容，进而影响存活在session生命周期中的缓存多返回的值。因为，不要对MyBatis所返回的对象作出更改，以防后患。
+可以随时清空本地缓存：void clearCache();
+
+<T> T getMapper(Class<T> type);
+可以给方法传递一个RowBounds实例来限制查询结果
+SQL语句构建器：
+
+
+Arthas里的Trace命令：trace命令的原理是对匹配到的method的子method做统计。
+trace实际上是在每一个invokevirtual前后插入代码，然后统计调用的时间。trace本身只能拿到当前method的字节码，所以只能trace当前method里的invokevirtual，再深层次的invokevirtual,它并不能知道。
+$trace Demo hello
+$trace Demo$ClassD hello
+
+正如大多数持久层框架一样，MyBatis同样提供了一级缓存和二级缓存的支持：
+	1. 一级缓存：基于PerpetualCache的HashMap本地缓存，其存储作用域为Session,当session flush或者close之后，该Session中的所有Cache就将清空。
+	2. 二级缓存：与一级缓存机制相同，默认也是采用PerpetualCache,HashMap存储，不同在于存储作用域为Mapper(Namespace)，并且可自定义存储源，如Ehcache。
+	3. 对于存储数据更新机制，当某一个作用域(一级缓存Session/二级缓存Namespace)的进行了C/U/D操作后，默认该作用域下所有select中的缓存将被clear。
+
+通过开启DEBUG日志，可以查看是否开启了缓存，以及是否命中缓存(Cache Hit Ratio)？
+二级缓存可能存储不同介质，本地远程redis等，所以必须序列化对象。
+一级缓存在SqlSession中，不提交也能访问到。
+二级缓存只要同一个Mapper就可以共享和线程，SqlSession无关。
+数据不提交，跨SqlSession访问不了，必须提交，然后才能mapper级别共享。
+
+防止用户修改返回的Entry
+
+public abstract class AbstractMap<K, V> implements Map<K, V> {
+...
+/*
+An Entry maintaining an immutable key and value. This class does not support method setValue. This class may be 
+convenient in methods that return thread-safe snapshots of key-value mappings.
+*/
+	public static class SimpleImmutableEntry<K, V> implements Entry<K, V>, java.io.Serializable {
+		...
+	}
+...
+}

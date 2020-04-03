@@ -1,0 +1,409 @@
+桥接模式将继承关系转换为关联关系，从而降低了类与类之间的耦合，减少了代码编写量。
+将两个角色之间的继承关系改为聚合关系，就是将它们之间的强关联改换成为弱关联。因此，桥梁模式中的所谓脱耦，就是指在一个软件系统的抽象化和实现化之间使用组合/聚合关系而不是继承关系，从而使两者可以相对独立地变化。这就是桥梁模式的用意。
+
+桥梁模式所涉及的角色有：
+抽象化(Abstraction)角色：抽象化给出的定义，并保存一个对实现化对象的引用。修正抽象化(Refined Abstraction)角色：扩展抽象化角色，改变和修正父类对抽象化的定义。实现化(Implementor)角色：这个角色给出实现化角色的接口，但不给出具体的实现。必须指出的是，这个接口不一定和抽象化角色的接口定义相同，实际上，这两个接口可以非常不一样。实现化角色应当只给出底层操作，而抽象化角色应当只给出基于底层操作的更高一层的操作。具体实现化(Concrete Implementor)角色：这个角色给出实现化角色接口的具体实现。
+---------------------
+在以下情况下可以使用桥接模式：
+- 如果一个系统需要在构件的抽象化角色和具体化角色之间增加更多的灵活性，避免在两个层次之间建立静态的继承联系，通过桥接模式可以使它们在抽象层建立一个关联关系。
+- 抽象化角色和实现化角色可以以继承的方式独立扩展而互不影响，在程序运行时可以动态将一个抽象化子类的对象和一个实现化子类的对象进行组合，即系统需要对抽象化角色和实现化角色进行动态耦合。
+- 一个类存在两个独立变化的维度，且这两个维度都需要进行扩展。虽然在系统中使用继承是没有问题的，但是由于抽象化角色和具体化角色需要独立变化，设计要求需要独立管理这两者。
+- 对于那些不希望使用继承或因为多层次继承导致系统类的个数急剧增加的系统，桥接模式尤为适用。
+---------------------
+组合模式（Composite Pattern），又叫部分整体模式，是用于把一组相似的对象当作一个单一的对象。组合模式依据树形结构来组合对象，用来表示部分以及整体层次。这种类型的设计模式属于结构型模式，它创建了对象组的树形结构。这种模式创建了一个包含自己对象组的类。该类提供了修改相同对象组的方式。
+组合模式(Composite Pattern)：组合多个对象形成树形结构以表示具有“整体—部分”关系的层次结构。组合模式对单个对象（即叶子对象）和组合对象（即容器对象）的使用具有一致性，组合模式又可以称为“整体—部分”(Part-Whole)模式，它是一种对象结构型模式。
+---------------------
+装饰器模式:
+（1）在不影响其他对象的情况下，以动态、透明的方式给单个对象添加职责。
+（2）处理那些可以撤消的职责。
+（3）当不能采用生成子类的方法进行扩充时。一种情况是，可能有大量独立的扩展，为支持每一种组合将产生大量的 子类，使得子类数目呈爆炸性增长。另一种情况可能是因为类定义被隐藏，或类定义不能用于生成子类。
+以下这种模式叫做双重检查: Double Check:
+if(null == xx) {
+	sychronized(xx.class) {
+		if(null == xx){
+			xx = new XX();
+			return xx;
+		}
+		return xx;
+	}
+}
+
+IdentityHashMap: 通过 == 比较是否相等
+HashMap: 通过equals比较是否相等
+
+transient: 如果用transient声明一个实例变量，当对象存储时，它的值不需要维持。换句话来说就是，用transient关键字标记的成员变量不参与序列化过程。
+
+HashMap和IdentityHashMap为什么modCount使用transient来修饰, 因为这个类本身实现了Serializable,表示可以序列化，如果反序列化后需要将其初始化为0。在clone和readObject里都通过reinitialize，将modCount初始化为0
+
+new xxMap(length); 如果可以预知，必须写大小，如果不可以就设置为16。不然就会几次扩展。
+
+AtomicLong
+
+
+动态代理类使用字节码动态生成加载技术，在运行时生成加载类。生成动态代理类的方法很多，如，JDK 自带的动态处理、CGLIB、Javassist 或者 ASM 库。JDK 的动态代理使用简单，它内置在JDK中，因此不需要引入第三方Jar包，但相对功能比较弱。CGLIB和Javassist都是高级的字节码生成库，总体性能比JDK 自带的动态代理好，而且功能十分强大。ASM是低级的字节码生成工具，使用ASM已经近乎于在使用Java bytecode 编程，对开发人员要求最高，当然，也是性能最好的一种动态代理生成工具。但ASM的使用很繁琐，而且性能也没有数量级的提升，与CGLIB 等高级字节码生成工具相比，ASM 程序的维护性较差，如果不是在对性能有苛刻要求的场合，还是推荐 CGLIB 或者 Javassist。
+
+以 CGLIB 为例，使用 CGLIB 生成动态代理，首先需要生成 Enhancer 类实例，并指定用于处理代理业务的回调类。在 Enhancer.create() 方法中，会使用 DefaultGeneratorStrategy.Generate() 方法生成动态代理类的字节码，并保存在 byte 数组中。接着使用 ReflectUtils.defineClass() 方法，通过反射，调用 ClassLoader.defineClass() 方法，将字节码装载到 ClassLoader 中，完成类的加载。最后使用 ReflectUtils.newInstance() 方法，通过反射，生成动态类的实例，并返回该实例。基本流程是根据指定的回调类生成 Class 字节码—通过 defineClass() 将字节码定义为类—使用反射机制生成该类的实例。
+
+
+------------------------------------------------------------------------------------------------------
+ParameterizedType
+HashMap:
+Thus, it's very important not to set the initial capacity too high (or the load factor too low) if iteration performance is important.
+When the number of entries in the hash table exceeds the product of the load factor and the current capacity, the hash table is rehashed (that is, internal data structures are rebuilt) so that the hash table has approximately twice the number of buckets.
+If the initial capacity is greater than the maximum number of entries divided by the load factor, no rehash operations will ever occur.
+Note that using many keys with the same hashCode() is a sure way to slow down performance of any hash table. To ameliorate impact, when keys are Comparable, this class may use comparison order among keys to help break ties.
+Map m = Collections.synchronizedMap(new HashMap(...)); fast-fail机制
+------------------------------------------------------------------------------------------------------
+^异或运算,相等取0，不等取1
+
+>>：带符号右移。正数右移高位补0，负数右移高位补1。比如：
+4 >> 1，结果是2；-4 >> 1，结果是-2。-2 >> 1，结果是-1。
+>>>：无符号右移。无论是正数还是负数，高位通通补0。
+对于正数而言，>>和>>>没区别。
+
+transient
+
+threshold: The next size value at which to resize(capacity * load factor);
+
+红黑树:
+（1）每个节点或者是黑色，或者是红色。
+（2）根节点是黑色。
+（3）每个叶子节点（NIL）是黑色。 [注意：这里叶子节点，是指为空(NIL或NULL)的叶子节点！]
+（4）如果一个节点是红色的，则它的子节点必须是黑色的。
+（5）从一个节点到该节点的子孙节点的所有路径上包含相同数目的黑节点。
+
+
+SortedMap sm = Collections.sychronizedSortedMap(new TreeMap(...));
+
+被final修饰的方法不能被重写，但是:重写的前提是子类可以从父类中继承此方法，所以当父类中被final修饰的方法的访问权限为private时，子类中就可以重写该方法了。
+此处的例外，是由类的访问权限控制的。
+
+
+			本类	本包	子类	外部包
+public		OK		OK		OK		OK
+protected	OK		OK		OK		NULL
+default		OK		OK		NULL	NULL
+private 	OK		NULL	NULL	NULL
+
+
+final String: 安全性、String里面有很多native方法。
+
+ParameterzedType.getRawType()方法返回声明了这个类型的类或接口，也就是去掉了泛型参数部分的类型对象。
+
+XX:+UseGCLogFileRotation
+
+stop-the-world pause
+
+GCViewer
+jps
+jinfo <pid>
+
+查看GC的次数和时间间隔
+
+opentracing
+
+熟悉http协议的同学应该知道，如果浏览器发送的数据包头含有Accept-Encoding: gzip，即告诉服务器：“我可以接受gzip压缩过的数据包”。这时后端就会将返回包压缩后发送，并包含返回头Content-Encoding: gzip，浏览器根据是否含有这个头对返回数据包进行解压显示。
+
+sampling.priority:如果大于0，Tracer实现应该尽可能捕捉这个调用链。如果等于0，则表示不需要捕捉此调用链。如果不存在，Tracer使用默认的采样机制。
+
+OpenTracing中的Trace（调用链）通过归属于此调用链的Span来隐性的定义。 
+特别说明，一条Trace（调用链）可以被认为是一个由多个Span组成的有向无环图（DAG图）， 
+Span与Span的关系被命名为References。
+
+
+jaeger
+
+application
+opentracing
+jaeger-client
+
+jaeger-agent: udp监听，守护进程，批量将数据发送到jaeger-collector，屏蔽了jaeger-client和jaeger-collector的，解耦，路由发现。
+
+udp通信协议 Thrift报文协议
+
+jaeger-collector -> DB
+
+Adaptive Sampling
+
+jaeger-query 展示层
+
+解释器模式-Interpreter,给定一个语言，定义它的文法的一种表示，并定义一个解释器，这个解释器使用该表示来解释语言中的句子。
+AbstractExpression
+TerminalExpression
+NonTerminalExpression
+Context
+Client
+
+创建HashMap设置充足的初始容量:预计大小/负载因子 + 1
+
+kubectl get pods -n kube-system |grep -v Running
+
+
+启动Java时，加入下面打开JMX remote连接:
+-Dcom.sun.management.jmxremote.port=7199
+-Dcom.sun.management.jmxremote.authenticate=false
+-Dcom.sun.management.jmxremote.ssl=false
+
+JConsole
+
+-XX:+UseCompressedClassPointers -XX:+UseCompressedOops -XX:+UseFastUnorderedTimeStamps -XX:-UseLargePagesIndividualAllocation -XX:+UseParallelGC
+
+-XX:+UseParallelGC:设置并行收集器；选择垃圾收集器为并行收集器，此配置仅对年轻代有效。即年轻代使用并发收集，而年老代仍旧使用串行收集。
+
+MetaSpace:
+Compressed Class Space:
+
+java -javaagent:***.jar
+
+OGNL: Object-Graph Navigation Language，对象图导航语言。
+ognl.Ognl类：这个类主要用来解析和解释执行Ognl表达式
+ognl.OgnlContext类：这个类为Ognl表达式提供了一个执行环境，这个类实现了Map接口，所以允许通过put(key,obj)方法向OgnlContext环境中方式各种类型的对象，需要注意的是在OgnlContext中对象分为两种，第一种是叫做root对象（根对象），在整个OgnlContext中有且最多只能有一个根对象，可以通过调用OgnlContext.setRoot(obj)设置为根对象，另外一种就是OgnlContext中的普通对象，这种个数类型不受限制，那么既然分为两种方式，肯定在获取对象属性的方式上是有所不同的
+--------------------- 
+
+几种代理：1. jdk;2. CGLIB;3. ASM;4. Javassist.
+
+Spliterator（splitable iterator可分割迭代器）接口是Java为了并行遍历数据源中的元素而设计的迭代器，这个可以类比最早Java提供的顺序遍历迭代器Iterator，但一个是顺序遍历，一个是并行遍历。
+Spliterator既可以实现多线程操作提供效率，又可以避免普通迭代器的fast-fail机制所带来的异常。Spliterator可以配合jdk8新加的Stream进行并行流的实现。
+
+boolean tryAdvance(Consumer<? super T> action);
+
+Happen-Before
+volatile满足Happen-Before规则
+
+
+ForkJoinPool
+
+
+-XX:+HeapDumpOnOutOfMemoryError
+JVM 就会在发生内存泄露时抓拍下当时的内存状态，也就是我们想要的堆转储文件。
+-XX:+HeapDumpOnCtrlBreak
+
+-XX:+UseConcMarkSweepGC
+
+======================================================================================================
+jmap,获取堆转储文件:
+Usage:
+    jmap [option] <pid>
+        (to connect to running process)
+    jmap [option] <executable <core>
+        (to connect to a core file)
+    jmap [option] [server_id@]<remote server IP or hostname>
+        (to connect to remote debug server)
+where <option> is one of:
+    <none>               to print same info as Solaris pmap
+    -heap                to print java heap summary
+    -histo[:live]        to print histogram of java object heap; if the "live"
+                         suboption is specified, only count live objects
+    -clstats             to print class loader statistics
+    -finalizerinfo       to print information on objects awaiting finalization
+    -dump:<dump-options> to dump java heap in hprof binary format
+                         dump-options:
+                           live         dump only live objects; if not specified,
+                                        all objects in the heap are dumped.
+                           format=b     binary format
+                           file=<file>  dump heap to <file>
+                         Example: jmap -dump:live,format=b,file=heap.bin <pid>
+    -F                   force. Use with -dump:<dump-options> <pid> or -histo
+                         to force a heap dump or histogram when <pid> does not
+                         respond. The "live" suboption is not supported
+                         in this mode.
+    -h | -help           to print this help message
+    -J<flag>             to pass <flag> directly to the runtime system
+======================================================================================================
+
+docker stats/docker status --no-stream/docker stats --no-stream <containerId>/<containerName> 
+
+where OffHeap consists of thread stacks, direct buffers, mapped files (libraries and jars) and JVM code itself;
+
+-XX:NativeMemoryTracking=summary
+
+
+------------------------------------------------------------------------------------------------------
+-XX：NativeMemoryTracking = mode
+指定跟踪JVM本地内存使用情况的模式。此选项的可能模式参数包括以下内容：
+off 　　
+不跟踪JVM本地内存使用情况。如果不指定该-XX:NativeMemoryTracking选项，则这是默认行为。
+summary　　
+仅跟踪JVM子系统的内存使用情况，如Java堆，类，代码和线程。
+detail　　
+除跟踪JVM子系统的内存使用情况外，还可以跟踪个别CallSite，个别虚拟内存区域及其承诺区域的内存使用情况。 -XX：ObjectAlignmentInBytes = 对齐
+设置Java对象的内存对齐方式（以字节为单位）。默认情况下，该值设置为8个字节。指定值应为2的幂，并且必须在8和256（含）范围内。此选项使得可以使用具有大Java堆大小的压缩指针。
+堆大小限制（以字节为单位）计算为：
+4GB * ObjectAlignmentInBytes
+注意：随着对齐值的增加，对象之间的未使用空间也将增加。因此，您可能无法从使用具有大型Java堆大小的压缩指针获得任何好处。
+------------------------------------------------------------------------------------------------------
+Java语言中有一个“先行发生”（happen—before）的规则，它是Java内存模型中定义的两项操作之间的偏序关系，如果操作A先行发生于操作B，其意思就是说，在发生操作B之前，操作A产生的影响都能被操作B观察到，“影响”包括修改了内存中共享变量的值、发送了消息、调用了方法等，它与时间上的先后发生基本没有太大关系。这个原则特别重要，它是判断数据是否存在竞争、线程是否安全的主要依据。
+下面是Java内存模型中的八条可保证happen—before的规则，它们无需任何同步器协助就已经存在，可以在编码中直接使用。如果两个操作之间的关系不在此列，并且无法从下列规则推导出来的话，它们就没有顺序性保障，虚拟机可以对它们进行随机地重排序。
+	1、程序次序规则：在一个单独的线程中，按照程序代码的执行流顺序，（时间上）先执行的操作happen—before（时间上）后执行的操作。
+    2、管理锁定规则：一个unlock操作happen—before后面（时间上的先后顺序，下同）对同一个锁的lock操作。
+    3、volatile变量规则：对一个volatile变量的写操作happen—before后面对该变量的读操作。
+    4、线程启动规则：Thread对象的start()方法happen—before此线程的每一个动作。
+	5、线程终止规则：线程的所有操作都happen—before对此线程的终止检测，可以通过Thread.join()方法结束、Thread.isAlive()的返回值等手段检测到线程已经终止执行。
+    6、线程中断规则：对线程interrupt()方法的调用happen—before发生于被中断线程的代码检测到中断时事件的发生。
+    7、对象终结规则：一个对象的初始化完成（构造函数执行结束）happen—before它的finalize()方法的开始。
+    8、传递性：如果操作A happen—before操作B，操作B happen—before操作C，那么可以得出A happen—before操作C。
+--------------------- 
+双重检查加锁DCL, 特别是对于单例Singleton
+对DCL的分析也告诉我们一条经验原则：对引用（包括对象引用和数组引用）的非同步访问，即使得到该引用的最新值，却并不能保证也能得到其成员变量（对数组而言就是每个数组元素）的最新值。
+----------------------------------------------
+JDK8之前：持久代用完后，会抛出OutOfMemoryError "PermGen space"异常。解决方案：应用程序清理引用来触发类卸载；增加MaxPermSize的大小。
+为什么移除持久代：
+ - 它的大小在启动时固定好的，很难进行调优。-XX:MaxPermSize，设置成多少好呢
+ - HotSpot的内部类型也是Java对象: 它可能会在Full GC中被移动，同时它对应用不透明，且是费非强类型的，难以跟踪调试，还需要存储元数据的元数据信息(meta-metadata)
+ - 简化Full GC: 每一个回收器有专门的元数据迭代器
+ - 可以在GC不进行暂停的情况下并发地释放类数据。
+
+ JDK 8的HotSpot JVM现在使用的是本地内存来表示类的元数据，这个区域就叫做元空间
+ 元空间(meta-space)的特点：
+ - 充分利用了Java语言规范中的好处：类及相关的元数据的生命周期与类加载器的一致。
+ - 每个加载器有专门的存储空间
+ - 只进行线性分配
+ - 不会单独回收某个类
+ - 省掉了GC扫描及压缩的时间
+ - 元空间里的对象的位置是固定的
+ - 如果GC发现某个类加载器不再存活了，会把相关的空间整个回收掉
+
+  使用-XX:MaxMetaspaceSize参数可以设置元空间的最大值，默认是没有上限的，也就是说你的系统内存上限是多少它就是多少。-XX:MetaspaceSize选项指定的是元空间的初始大小，如果没有指定的话，元空间会根据应用程序运行时的需要动态地调整大小。
+
+Bitronix
+
+@FunctionalInterface
+
+对象的大小有两种统计方式：
+ - 本身大小(Shallow Size)：对象本来的大小。
+ - 保留大小(Retained Size)： 当前对象大小 + 当前对象直接或间接引用到的对象的大小总和。
+
+对于“堆 dump”来说，在远程监控jvm的时候，Java VisualVM是没有这个功能的，只有本地监控的时候才有。另外，就算是本地监控，它在dump和得到实例的 速度那是相当的慢的。所以鉴于这几个原因，不建议用Java VisualVM，而是用jmap加上Mat来分析内存情况。
+
+
+动态双重分派，双亲分派:访问者模式
+数据结构的每一个节点都可以接受一个访问者的调用，此节点向访问者对象传入节点对象，而访问者对象则反过来执行节点对象的操作。这样的过程叫做“双重分派”。节点调用访问者，将它自己传入，访问者则将某算法针对此节点执行。
+
+
+
+jconsole.exe
+jmc.exe
+jvisualvm.exe
+
+Java -verbose:gc 中参数-verbose:gc 表示输出虚拟机中GC的详细情况.
+使用后输出如下:
+[Full GC 168K->97K(1984K)， 0.0253873 secs]
+
+jconsole.exe在"内存"标签可以"执行GC"，直接进行GC。
+jconsole.exe在"线程"标签可以"检测死锁"，查看当前是否有死锁。
+
+GC时间: PS MarkSweep:
+        PS Scavenge:
+从Jconsole.exe来看: 堆空间包括：PS Old Gen, PS Eden Space, PS Survivor Space;非堆空间包括:Metaspace, Code Cache, Compressed Class Space.
+
+分布式事务（Distributed Transaction）包括事务管理器（Transaction Manager）和一个或多个支持 XA 协议的资源管理器 ( Resource Manager )。我们可以将资源管理器看做任意类型的持久化数据存储；事务管理器承担着所有事务参与单元的协调与控制。JTA 事务有效的屏蔽了底层事务资源，使应用可以以透明的方式参入到事务处理中；但是与本地事务相比，XA 协议的系统开销大，在系统开发过程中应慎重考虑是否确实需要分布式事务。若确实需要分布式事务以协调多个事务资源，则应实现和配置所支持 XA 协议的事务资源，如 JMS、JDBC 数据库连接池等。
+
+
+通过使用Unsafe.compareAndSwap()可以用来实现高效的无锁数据结构。
+
+Bloom filter
+
+年轻代的几种GC算法:
+ - Serial(复制)是一种stop-the-world(导致应用全部暂停，僵死一会儿)，使用单个GC线程进行复制收集。将幸存对象从Eden复制到幸存Survivor空间，并且在幸存Survivor空间之间复制，直到它决定这些对象已经足够长，在某个点一次性将它们复制到旧生代old generation.
+ - Parallel Scavenge(PS Scavenge)是一种stop-the-world,使用多个GC线程进行复制收集，如同Serial复制收集一样，但是它是并行使用多个线程.
+ - ParNew是一种stop-the-world,使用多个GC线程实现的复制收集，区别于"Parallel Scavenge"在于它与CMS可搭配使用，它也是并行使用多个线程，内部有一个回调功能允许旧生代Old Generation操作它收集的对象.
+ 
+ 旧生代的几种GC算法:
+ - Serial Old(MarkSweepCompact)是一种stop-the-world,使用单个线程进行mark-sweep-compact(标记-清扫-压缩)收集;
+ - Parallel Old(PS MarkSweep)是一种使用多个GC线程压缩收集.
+ - ConcurrentMarkSweep(CMS)是最并行，低暂停的收集器。GC算法在后台不会暂停应用线程情况下实现大部分垃圾回收工作
+ - G1 使用Garbage First算法将堆空间划分为许多小空间。是一种跨New Generation和Old Generation的回收算法。
+
+在JVM中是+XX配置实现的搭配组合：
+UseSerialGC 表示 "Serial" + "Serial Old"组合
+UseParNewGC 表示 "ParNew" + "Serial Old"
+UseConcMarkSweepGC 表示 "ParNew" + "CMS" + "Serial Old". 组合，"CMS" 是针对旧生代使用最多的，而"Serial Old"是在并行模式失败情况下使用。注意不推荐使用XX:+CMSIncrementalMode，理由见这里
+UseParallelGC 表示 "Parallel Scavenge" + "Serial Old"组合
+UseParallelOldGC 表示 "Parallel Scavenge" + "Parallel Old"组合
+-----------------------
+Atomikos/Bitronix
+使用Curator管理Zookeeper
+---------------------
+G1内存的分配
+1.TLAB（TLAB占用年轻代内存）. 默认使用TLAB加速内存分配,之前文章已经讲过，不赘述。 
+2.Eden.如果TLAB不够用，则在Eden中分配内存生成对象。 
+3.Humongous.如果对象需要的内存超过一个region的50%以上，会忽略前两个步骤直接在老年代的humongous中分配（连续的Region）。
+调优参数： 
+-XX:MaxGCPauseMillis=200 
+用户设定的最大gc 停顿时间，默认是200ms. 
+-XX:InitiatingHeapOccupancyPercent=45 
+默认是45，也就是heap中45%的容量被使用，则会触发concurrent gc。
+--------------------- 
+SafePoint:可以设置JVM参数 -XX:+PrintSafepointStatistics –XX:PrintSafepointStatisticsCount=1 来输出safepoint的统计信息
+
+对数据库分布式事务有了解的同学一定知道数据库支持的2PC，又叫做 XA Transactions。
+
+CAP: Consistency, Availability, Partition tolerance;
+BASE: Basically Available, Soft state, Eventually consistent;
+Sagas事务模型:又叫长时间运行的事务(long-running-transaction),将长事务拆分为多个本地事务，如果某个本地事务失败，按照逆序进行挨个回滚。
+-----------------------------------------------
+as-if-serial语义
+内存访问重排序和内存可见性。
+
+根据Java内存模型(JMM)中的规定，可以总结出以下几条happens-before规则。Happens-before的前后两个操作不会被重排序且后者对前者的内存可见。
+程序次序法则：线程中的每个动作A都happens-before于该线程中的每一个动作B，其中，在程序中，所有的动作B都能出现在A之后。
+监视器锁法则：对一个监视器锁的解锁 happens-before于每一个后续对同一监视器锁的加锁。
+volatile变量法则：对volatile域的写入操作happens-before于每一个后续对同一个域的读写操作。
+线程启动法则：在一个线程里，对Thread.start的调用会happens-before于每个启动线程的动作。
+线程终结法则：线程中的任何动作都happens-before于其他线程检测到这个线程已经终结、或者从Thread.join调用中成功返回，或Thread.isAlive返回false。
+中断法则：一个线程调用另一个线程的interrupt happens-before于被中断的线程发现中断。
+终结法则：一个对象的构造函数的结束happens-before于这个对象finalizer的开始。
+传递性：如果A happens-before于B，且B happens-before于C，则A happens-before于C
+-----------------------------------------------
+强引用:只要某个对象有强引用与之关联，JVM必定不会回收这个对象，即使在内存不足的情况下，JVM宁愿抛出OutOfMemory错误也不会回收这种对象。
+软引用: 软引用是用来描述一些有用但并不是必需的对象，在Java中用java.lang.ref.SoftReference类来表示。对于软引用关联着的对象，只有在内存不足的时候JVM才会回收该对象
+弱引用:弱引用也是用来描述非必需对象的，当JVM进行垃圾回收时，无论内存是否充足，都会回收被弱引用关联的对象。在java中，用java.lang.ref.WeakReference类来表示
+虚引用:虚引用和前面的软引用、弱引用不同，它并不影响对象的生命周期。在java中用java.lang.ref.PhantomReference类表示。如果一个对象与虚引用关联，则跟没有引用与之关联一样，在任何时候都可能被垃圾回收器回收。
+　　要注意的是，虚引用必须和引用队列关联使用，当垃圾回收器准备回收一个对象时，如果发现它还有虚引用，就会把这个虚引用加入到与之 关联的引用队列中。程序可以通过判断引用队列中是否已经加入了虚引用，来了解被引用的对象是否将要被垃圾回收。如果程序发现某个虚引用已经被加入到引用队列，那么就可以在所引用的对象的内存被回收之前采取必要的行动。
+虚引用也称为幽灵引用或者幻影引用，它是最弱的一种引用关系。一个对象是否有虚引用的存在，完全不会对其生存时间构成影响，也无法通过虚引用来取得一个对象实例。为一个对象设置虚引用关联的唯一目的就是希望能在这个对象被收集器回收时收到一个系统通知。在JDK 1.2之后，提供了PhantomReference类来实现虚引用。
+
+
+JDK中的bin/jmc.exe里面的飞行器是商业组件，可以查看热点方法/热点线程/GC时间/GC频率/STW的时间等指标。
+
+JFR: Java Flight Record:java飞行器
+
+RandomAccess接口,随机访问接口;
+
+CopyOnWriteArrayList
+
+System.arraycopy();
+Arrays.copyOf();
+
+Isolation:Default, read_uncommitted, read_committed, repeatable_read, serializable
+TransactionDefinition
+
+ISOLATION_DEFAULT, ISOLATION_READ_UNCOMMITTED, ISOLATION_READ_COMMITTED, ISOLATION_REPEATABLE_READ, ISOLATION_SERIALIZABLE
+
+propagation_required, propagation_supports, propagation_mandatory, propagation_requires_new, 
+propagation_not_supported, propagation_never, popagation_nested
+
+-XX:+UseCMSCompactAtFullCollection：允许在 Full GC 时，启用压缩式 GC
+-XX:CMSFullGCBeforeCompaction=n     在进行 n 次，CMS 后，进行一次压缩的 Full GC，用以减少 CMS 产生的碎片
+
+Swap/IO, Kafka支持gzip/snappy等多种压缩方式。
+
+----------------------------------------------------------------
+MyBatis:
+localCacheScope: MyBatis利用本地缓存机制(Local Cache)防止循环引用(circular references)和加速重复嵌套查询。默认值为SESSION，这种情况下会缓存一个会话中执行的所有查询。若设置为STATEMENT，本地会话仅用作语句执行上，堆相同SqlSession的不同调用将不会共享数据。
+proxyFactory: 指定MyBatis创建具有延迟加载能力的对象所用到的代理工具。CGLIB/Javassist
+useActualParamName:允许使用方法签名中的名称作为语句参数名称。为了使用该特性，必须使用Java8编译，并且加上-parameters选项
+typeAliases:
+typeHandlers: 在MyBatis预处理语句(PreparedStatement)中设置一个参数，还是结果集中获取数据，都会用类型处理器将获取的值转换成Java类型。
+若想映射枚举类型 Enum，则需要从 EnumTypeHandler 或者 EnumOrdinalTypeHandler 中选一个来使用。
+<!-- mybatis-config.xml -->
+<typeHandlers>
+  <typeHandler handler="org.apache.ibatis.type.EnumOrdinalTypeHandler" javaType="java.math.RoundingMode"/>
+</typeHandlers>
+
+#{roundingMode, typeHandler=org.apache.ibatis.type.EnumTypeHandler}
+
+MyBatis 允许你在已映射语句执行过程中的某一点进行拦截调用。默认情况下，MyBatis 允许使用插件来拦截的方法调用包括：
+Executor (update, query, flushStatements, commit, rollback, getTransaction, close, isClosed)
+ParameterHandler (getParameterObject, setParameters)
+ResultSetHandler (handleResultSets, handleOutputParameters)
+StatementHandler (prepare, parameterize, batch, update, query)

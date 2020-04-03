@@ -1,0 +1,501 @@
+-Xloggc:logs/gc.log 
+ -XX:+PrintGCApplicationStoppedTime 
+ -XX:+PrintGCApplicationConcurrentTime 
+ -XX:+PrintGCDateStamps 
+ -XX:+PrintGCDetails 
+ -XX:ErrorFile=logs/hs_err.log 
+ -XX:+HeapDumpOnOutOfMemoryError 
+ -XX:HeapDumpPath=logs/
+
+ 
+ 
+ java -Xloggc:logs/gc.log  -XX:+PrintGCApplicationStoppedTime  -XX:+PrintGCApplicationConcurrentTime  -XX:+PrintGCDateStamps  -XX:+PrintGCDetails  -XX:ErrorFile=logs/hs_err.log  -XX:+HeapDumpOnOutOfMemoryError  -XX:HeapDumpPath=logs/ -jar eureka-server-0.0.1-SNAPSHOT.jar 
+ 
+ 
+ 
+ 
+ 
+ Java HotSpot(TM) 64-Bit Server VM (25.131-b11) for windows-amd64 JRE (1.8.0_131-b11), built on Mar 15 2017 01:23:53 by "java_re" with MS VC++ 10.0 (VS2010)
+Memory: 4k page, physical 16637980k(10199036k free), swap 19259420k(10089608k free)
+CommandLine flags: -XX:ErrorFile=logs/hs_err.log -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=logs/ 
+-XX:InitialHeapSize=266207680 -XX:MaxHeapSize=4259322880 
+
+-XX:+PrintGC -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCDateStamps -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseCompressedClassPointers -XX:+UseCompressedOops -XX:-UseLargePagesIndividualAllocation -XX:+UseParallelGC 
+
+
+4G
+254M
+
+
+
+#!/bin/bash
+docker history --no-trunc "$1" | \
+sed -n -e 's,.*/bin/sh -c #(nop) \(MAINTAINER .*[^ ]\) *0 B,\1,p' | \
+head -1
+docker inspect --format='{{range $e := .Config.Env}}
+ENV {{$e}}
+{{end}}{{range $e,$v := .Config.ExposedPorts}}
+EXPOSE {{$e}}
+{{end}}{{range $e,$v := .Config.Volumes}}
+VOLUME {{$e}}
+{{end}}{{with .Config.User}}USER {{.}}{{end}}
+{{with .Config.WorkingDir}}WORKDIR {{.}}{{end}}
+{{with .Config.Entrypoint}}ENTRYPOINT {{json .}}{{end}}
+{{with .Config.Cmd}}CMD {{json .}}{{end}}
+{{with .Config.OnBuild}}ONBUILD {{json .}}{{end}}' "$1"
+
+
+-XX:MaxHeapSize
+-XX:InitialHeapSize
+
+MinHeapFreeRatio
+
+
+MinHeapFreeRatio 小于40%
+大于70%
+
+3/8
+
+-XX:PermSize
+-XX:MaxPermSize
+-XX:NewSize
+-XX:MaxNewSize
+64/1->4/1
+
+
+
+JDK5.0以后每个线程堆栈大小为1M,以前每个线程堆栈大小为256K.更具应用的线程所需内存大小进行 调整.在相同物理内存下,减小这个值能生成更多的线程.但是操作系统对一个进程内的线程数还是有限制的,不能无限生成,经验值在3000~5000左右
+一般小的应用， 如果栈不是很深， 应该是128k够用的 大的应用建议使用256k。这个选项对性能影响比较大，需要严格的测试。（校长）
+和threadstacksize选项解释很类似,官方文档似乎没有解释,在论坛中有这样一句话:"”
+-Xss is translated in a VM flag named ThreadStackSize”
+一般设置这个值就可以了。
+
+
+-XX:NewRatio 年轻代与年老代的比值，去除持久代
+-XX:SurvivorRatio
+
+
+
+
+sqlsessionfactorybuilder
+数据源和事务管理器 
+transactionManager
+
+
+environment 元素体中包含了事务管理和连接池的配置。mappers 元素则是包含一组 mapper 映射器（这些 mapper 的 XML 文件包含了 SQL 代码和映射定义信息）。
+
+
+映射器类： mapper class
+
+
+Heap
+ def new generation   total 36288K, used 29103K [0x00000000e3400000, 0x00000000e5b60000, 0x00000000ecd50000)
+  eden space 32256K,  87% used [0x00000000e3400000, 0x00000000e4f770f0, 0x00000000e5380000)
+  from space 4032K,  24% used [0x00000000e5770000, 0x00000000e5864b40, 0x00000000e5b60000)
+  to   space 4032K,   0% used [0x00000000e5380000, 0x00000000e5380000, 0x00000000e5770000)
+ tenured generation   total 80464K, used 51281K [0x00000000ecd50000, 0x00000000f1be4000, 0x0000000100000000)
+   the space 80464K,  63% used [0x00000000ecd50000, 0x00000000eff644b8, 0x00000000eff64600, 0x00000000f1be4000)
+ Metaspace       used 76765K, capacity 77610K, committed 78464K, reserved 1118208K
+  class space    used 9004K, capacity 9184K, committed 9344K, reserved 1048576K
+2018-06-25T15:05:30.257+0800: 252981.757: Application time: 0.0006881 seconds
+
+
+
+新生代: 
+eden: 32M 1/64
+from: 4M  
+to: 4M
+
+年老代: 78M
+
+元空间
+
+
+2G
+
+-XX:InitialHeapSize=30135936   ~28M
+-XX:MaxHeapSize=482174976      ~460M
+
+
+
+jinfo –flag UseSerialGC 进程 的方式可以定位其使用的gc策略
+
+jinfo -flags 进程号
+
+Attaching to process ID 17619, please wait...
+Debugger attached successfully.
+Server compiler detected.
+JVM version is 25.161-b12
+Non-default VM flags: -XX:CICompilerCount=2 -XX:ErrorFile=null -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=null -XX:InitialHeapSize=31457280 -XX:MaxHeapSize=482344960 -XX:MaxNewSize=160759808 -XX:MinHeapDeltaBytes=196608 -XX:NewSize=10485760 -XX:OldSize=20971520 -XX:+PrintGC -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCDateStamps -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+UseCompressedClassPointers -XX:+UseCompressedOops 
+Command line:  -Xloggc:logs/gc.log -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCDateStamps -XX:+PrintGCDetails -XX:ErrorFile=logs/hs_err.log -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=logs/
+
+
+XX:+UseGCLogFileRotation
+
+2018-06-22T16:49:08.758+0800: 0.258: [GC (Allocation Failure) 2018-06-22T16:49:08.758+0800: 0.258: [DefNew: 8192K->1023K(9216K), 0.0026099 secs] 8192K->1298K(29696K), 0.0026670 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] 
+2018-06-22T16:49:13.232+0800: 4.732: [Full GC (Metadata GC Threshold) 2018-06-22T16:49:13.232+0800: 4.732: [Tenured: 6043K->6711K(20480K), 0.0280720 secs] 12818K->6711K(29696K), [Metaspace: 20886K->20886K(1069056K)], 0.0281855 secs] [Times: user=0.03 sys=0.00, real=0.03 secs] 
+
+Yellow line that shows the heap usage at "initial-mark" event (only available when the gc algorithm uses concurrent collections, which is the case for CMS and G1)
+
+2018-06-22T16:49:13.291+0800: 4.791: [GC (GCLocker Initiated GC) 2018-06-22T16:49:13.291+0800: 4.791: [DefNew: 8525K->167K(9280K), 0.0015559 secs] 15237K->6878K(29760K), 0.0016051 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] 
+
+
+可以设置JVM参数 -XX:+PrintSafepointStatistics –XX:PrintSafepointStatisticsCount=1 来输出safepoint的统计信息
+
+
+
+虚拟机中使用reference类型来表示对某个对象的引用。
+
+
+Safepoints in HotSpot JVM
+
+Promotion means the size of objects that are promoted from young to tenured generation during a young generation collection. Avg promotion shows the average amount of memory that is promoted from young to tenured with each young collection (only available with PrintGCDetails)
+
+CMS GC kicks in before tenured generation is filled. InitiatingOccupancyFraction tells you the avg / max usage in % of the tenured generation, when CMS GC started (initial mark). This value can be set manually using -XX:CMSInitiatingOccupancyFraction=.
+
+
+OGNL表达式: object graph navigation language
+
+
+
+org.apache.ibatis.scripting.xmltags.XMLLanguageDriver
+
+
+
+FROM registry-vpc.cn-shanghai.aliyuncs.com/hzph/java:base
+RUN apk add --update bash curl tar wget ca-certificates unzip \
+        openjdk8=${JAVA_ALPINE_VERSION} font-adobe-100dpi ttf-dejavu fontconfig
+		
+	
+
+查看镜像的构造信息：	
+docker history registry-vpc.cn-shanghai.aliyuncs.com/hzph/java:base
+
+docker rmi -f registry-vpc.cn-shanghai.aliyuncs.com/hzph/saturn-executor:test-01
+
+Stop-the-world会在任何一种GC算法中发生。Stop-the-world意味着 JVM 因为要执行GC而停止了应用程序的执行。当Stop-the-world发生时，除了GC所需的线程以外，所有线程都处于等待状态，直到GC任务完成。GC优化很多时候就是指减少Stop-the-world发生的时间。
+
+
+
+垃圾回收器会在下面两种假设（hypotheses）成立的情况下被创建（称之为假设不如改为推测（suppositions）或者前提（preconditions））。
+	- 大多数对象会很快变得不可达
+	- 只有很少的由老对象（创建时间较长的对象）指向新生对象的引用
+
+需要注意的是HotSpot虚拟机使用了两种技术来加快内存分配。他们分别是是”bump-the-pointer“和“TLABs（Thread-Local Allocation Buffers）”。
+
+
+JDK7一共有5种GC类型：
+
+Serial GC
+Parallel GC
+Parallel Old GC (Parallel Compacting GC)
+Concurrent Mark & Sweep GC  (or “CMS”)
+Garbage First (G1) GC
+
+
+在使用CMS之前你需要慎重考虑。如果因为内存碎片过多而导致压缩任务不得不执行，那么stop-the-world的时间要比其他任何GC类型都长，你需要考虑压缩任务的发生频率以及执行时间。
+
+
+-Xms：初始堆大小，默认为物理内存的1/64(<1GB)；默认(MinHeapFreeRatio参数可以调整)空余堆内存小于40%时，JVM就会增大堆直到-Xmx的最大限制
+
+-Xmx：最大堆大小，默认(MaxHeapFreeRatio参数可以调整)空余堆内存大于70%时，JVM会减少堆直到 -Xms的最小限制
+
+-Xmn：新生代的内存空间大小，注意：此处的大小是（eden+ 2 survivor space)。与jmap -heap中显示的New gen是不同的。整个堆大小=新生代大小 + 老生代大小 + 永久代大小。 
+在保证堆大小不变的情况下，增大新生代后,将会减小老生代大小。此值对系统性能影响较大,Sun官方推荐配置为整个堆的3/8。
+
+-XX:SurvivorRatio：新生代中Eden区域与Survivor区域的容量比值，默认值为8。两个Survivor区与一个Eden区的比值为2:8,一个Survivor区占整个年轻代的1/10。
+
+-Xss：每个线程的堆栈大小。JDK5.0以后每个线程堆栈大小为1M,以前每个线程堆栈大小为256K。应根据应用的线程所需内存大小进行适当调整。在相同物理内存下,减小这个值能生成更多的线程。但是操作系统对一个进程内的线程数还是有限制的，不能无限生成，经验值在3000~5000左右。一般小的应用， 如果栈不是很深， 应该是128k够用的，大的应用建议使用256k。这个选项对性能影响比较大，需要严格的测试。和threadstacksize选项解释很类似,官方文档似乎没有解释,在论坛中有这样一句话:"-Xss is translated in a VM flag named ThreadStackSize”一般设置这个值就可以了。
+
+-XX:PermSize：设置永久代(perm gen)初始值。默认值为物理内存的1/64。
+
+-XX:MaxPermSize：设置持久代最大值。物理内存的1/4。
+
+
+
+
+MinHeapFreeRatio
+MaxHeapFreeRatio 
+-Xmn:
+jmap -heap
+-XX:SurvivorRatio 
+-Xss:
+-XX:PermSize 1/64
+-XX:MaxPermSize 1/4
+
+
+Permanent
+
+-verbose:gc
+-Xloggc:xxx.log
+-XX:+PrintGCTimeStamps 
+-XX:+PrintGCDetails 
+
+-Xmx默认为物理内存的1/4
+
+-Xms30m -Xmx100m -XX:PermSize=300m -XX:MaxPermSize=600m
+
+jconsole jvisualvm
+
+JAVA_OPTS
+
+直接调用System.gc，可以DisableExplicitGC来禁止
+
+XX:+PrintHeapAtGC 在进行GC的前后打印出堆的信息
+
+
+-XX:+PrintHeapAtGC
+
+-XX:-UseAdaptiveSizePolicy
+-XX:SurvivorRatio=8
+
+
+jmap -histo pid可以观测对象的个数和占用空间
+jmap -heap pid可以观测jvm配置参数，堆内存各区使用情况
+
+
+
+三个收集器的指标：
+1、吞吐量：花费在GC上的时间占整个应用程序工作的比例。通过‑XX:GCTimeRatio=99设置目标吞吐量，99表示1%的时间用于GC。
+2、延迟：因为垃圾回收，而引起的响应暂停的时间。通过‑XX:MaxGCPauseMillis=<n>设置目标GC暂停的延迟。
+3、内存：我们的系统使用内存来存储状态，在管理的时候它们常常需要复制和移动。在任意一个时间点系统中剩余的存活对象称之为存活集（ Live Set）。通过–Xmx<n> 设置最大堆的大小，从而调节在应用程序中可用堆的大小。
+
+
+-XX:GCTimeRatio=99
+-XX:MaxGCPauseMillis=
+
+
+垃圾回收算法的优化通常都是期望大部分对象只有很短的生命周期，只有少部分对象有较长的生命周期。在大部分应用中，大部分对象的生命周期限制在一个明确的时间段里，小部分对象的生命周期贯穿整个JVM生命周期。在垃圾收集理论中，这种现象通常被称为“infant mortality（婴儿死亡率，大量对象生存时间很短）” 或则  “weak generational hypothesis（弱年代假设）”。例如：循环迭代内的变量大多生命周期短暂，而静态字符串则在JVM整个生命周期中都有效。
+
+除了其他的GC标志之外，启用‑XX:+PrintGCApplicationStoppedTime 标志可以输出这个时间(Stop-The-world Events)。
+
+
+研究java/bin下的所有命令:
+
+
+本地监控和远程监控，远程监控需要打开jmx！！！
+-Djava.rmi.server.hostname=192.168.122.128  
+-Dcom.sun.management.jmxremote.port=18999  
+-Dcom.sun.management.jmxremote.ssl=false  
+-Dcom.sun.management.jmxremote.authenticate=false
+
+
+-XX:-UseGCOverheadLimit
+
+GC overhead limt exceed检查是Hotspot VM 1.6定义的一个策略，通过统计GC时间来预测是否要OOM了，提前抛出异常，防止OOM发生。Sun 官方对此的定义是：“并行/并发回收器在GC回收时间过长时会抛出OutOfMemroyError。过长的定义是，超过98%的时间用来做GC并且回收了不到2%的堆内存。用来避免内存过小造成应用不能正常工作。“
+
+分析内存泄露还有一个方法-XX:+HeapDumpOnOutOfMemoryError，这样OOM时会自动做Heap Dump，可以拿MAT来排查了。还要留意young区，如果有过多短暂对象分配，可能也会抛这个异常。
+
+
+jvm优化建议
+本质上是减少GC的次数。
+如果是频繁创建对象的应用，可以适当增加新生代大小。
+常量较多可以增加持久代大小。
+对于单例较多的对象可以增加老生代大小。比如spring应用中。
+
+
+-XX:+UseConcMarkSweepGC  #并发收集年老代  
+-XX:CMSInitiatingOccupancyFraction=80 # 表示年老代空间到80%时就开始执行CMS  
+-XX:+UseCMSCompactAtFullCollection # 打开对年老代的压缩。可能会影响性能，但是可以消除内存碎片。   
+-XX:CMSFullGCsBeforeCompaction=10 # 由于并发收集器不对内存空间进行压缩、整理，所以运行一段时间以后会产生“碎片”，使得运行效率降低。此参数设置运行次
+
+
+jmc, jconsole, jvisualvm:
+
+java内带的所有辅助工具
+
+=============================
+-Djava.rmi.server.hostname=‘192.168.99.100’
+-Dcom.sun.management.jmxremote.port=9010
+-Dcom.sun.management.jmxremote.rmi.port=9110
+-Dcom.sun.management.jmxremote=
+-Dcom.sun.management.jmxremote.ssl=false
+-Dcom.sun.management.jmxremote.authenticate=false
+-Dcom.sun.management.jmxremote.local.only=false
+=====================================
+
+STW时间
+
+JMC里面的代码分析，可以分析出热点包、热点类、热点方法、锁的占用、线程等
+
+
+I think this issue could be close. Since UnlockCommercialFeatures is only available on OracleJDK. OpenJDK doesn't support this flag.
+未启用飞行记录器功能。要启用此功能, 必须使用通过 -XX:+UnlockCommercialFeatures -XX:+FlightRecorder 启动的 Java 7u4 或更高版本的 JVM。
+
+
+java -XX:+UnlockCommercialFeatures -XX:+FlightRecorder -jar operation-api-gateway-0.0.1-SNAPSHOT.jar
+
+
+
+name 构造方法形参的名字。从3.4.3版本开始，通过指定具体的名字，你可以以任意顺序写入arg元素。
+
+typeHandler
+
+
+
+jinfo <PID> 输出以下内容：
+===========================================================================================================================================================
+bash-4.4# jinfo 1
+Attaching to process ID 1, please wait...
+Debugger attached successfully.
+Server compiler detected.
+JVM version is 25.171-b11
+Java System Properties:
+
+com.sun.management.jmxremote.authenticate = false
+java.runtime.name = Java(TM) SE Runtime Environment
+java.vm.version = 25.171-b11
+sun.boot.library.path = /usr/lib/jvm/java-8-oracle/jre/lib/amd64
+java.protocol.handler.pkgs = org.springframework.boot.loader
+java.vendor.url = http://java.oracle.com/
+java.vm.vendor = Oracle Corporation
+com.sun.management.jmxremote.local.only = false
+path.separator = :
+java.rmi.server.randomIDs = true
+file.encoding.pkg = sun.io
+java.vm.name = Java HotSpot(TM) 64-Bit Server VM
+sun.os.patch.level = unknown
+sun.java.launcher = SUN_STANDARD
+user.dir = /
+java.vm.specification.name = Java Virtual Machine Specification
+com.sun.management.jmxremote.port = 9010
+PID = 1
+java.runtime.version = 1.8.0_171-b11
+java.awt.graphicsenv = sun.awt.X11GraphicsEnvironment
+os.arch = amd64
+java.endorsed.dirs = /usr/lib/jvm/java-8-oracle/jre/lib/endorsed
+org.jboss.logging.provider = slf4j
+line.separator = 
+
+java.io.tmpdir = /tmp
+com.sun.management.jmxremote.rmi.port = 9110
+java.vm.specification.vendor = Oracle Corporation
+os.name = Linux
+sun.jnu.encoding = UTF-8
+java.library.path = /usr/java/packages/lib/amd64:/usr/lib64:/lib64:/lib:/usr/lib
+spring.beaninfo.ignore = true
+com.netflix.servo.DefaultMonitorRegistry.registryClass = com.netflix.servo.BasicMonitorRegistry
+java.class.version = 52.0
+java.specification.name = Java Platform API Specification
+sun.management.compiler = HotSpot 64-Bit Tiered Compilers
+os.version = 3.10.0-693.2.2.el7.x86_64
+user.home = /root
+user.timezone = Asia/Shanghai
+catalina.useNaming = false
+java.awt.printerjob = sun.print.PSPrinterJob
+file.encoding = UTF-8
+@appId = operation-api-gateway
+java.specification.version = 1.8
+catalina.home = /tmp/tomcat.7765504960297943109.9903
+user.name = root
+java.class.path = app.jar
+com.sun.management.jmxremote = 
+java.vm.specification.version = 1.8
+sun.arch.data.model = 64
+sun.java.command = app.jar
+java.home = /usr/lib/jvm/java-8-oracle/jre
+user.language = en
+java.specification.vendor = Oracle Corporation
+awt.toolkit = sun.awt.X11.XToolkit
+com.sun.management.jmxremote.ssl = false
+java.vm.info = mixed mode
+java.version = 1.8.0_171
+java.ext.dirs = /usr/lib/jvm/java-8-oracle/jre/lib/ext:/usr/java/packages/lib/ext
+sun.boot.class.path = /usr/lib/jvm/java-8-oracle/jre/lib/resources.jar:/usr/lib/jvm/java-8-oracle/jre/lib/rt.jar:/usr/lib/jvm/java-8-oracle/jre/lib/sunrsasign.jar:/usr/lib/jvm/java-8-oracle/jre/lib/jsse.jar:/usr/lib/jvm/java-8-oracle/jre/lib/jce.jar:/usr/lib/jvm/java-8-oracle/jre/lib/charsets.jar:/usr/lib/jvm/java-8-oracle/jre/lib/jfr.jar:/usr/lib/jvm/java-8-oracle/jre/classes
+java.awt.headless = true
+java.vendor = Oracle Corporation
+catalina.base = /tmp/tomcat.7765504960297943109.9903
+file.separator = /
+java.vendor.url.bug = http://bugreport.sun.com/bugreport/
+sun.io.unicode.encoding = UnicodeLittle
+sun.cpu.endian = little
+java.rmi.server.hostname = 10.30.42.200
+sun.cpu.isalist = 
+
+VM Flags:
+Non-default VM flags: -XX:CICompilerCount=2 -XX:InitialHeapSize=262144000 -XX:+ManagementServer -XX:MaxHeapSize=4164943872 -XX:MaxNewSize=1388314624 -XX:MinHeapDeltaBytes=524288 -XX:NewSize=87031808 -XX:OldSize=175112192 -XX:+UseCompressedClassPointers -XX:+UseCompressedOops -XX:+UseParallelGC 
+Command line:  -Djava.rmi.server.hostname=10.30.42.200 -Dcom.sun.management.jmxremote.port=9010 -Dcom.sun.management.jmxremote.rmi.port=9110 -Dcom.sun.management.jmxremote= -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.local.only=false
+bash-4.4# 
+========================================================================================================================================================
+不同的JDK：OpenJDK和Oracle JDK, JVM: HotSpot, JRockit, IBM JVM 
+
+如何指定让kubernetes部署服务时，部署到特定pod上?
+
+grant codebase "file:${java.home}/../lib/tools.jar" { 
+    permission java.security.AllPermission; 
+}
+./jstatd -J-Djava.rmi.server.hostname=192.168.110.227 -J-Djava.security.policy=jstatd.all.policy -p 9999
+
+
+导致Char[] 一直增长，频繁的Minor GC的次数频繁
+
+
+java -XX:+UnlockCommercialFeatures -XX:+FlightRecorder -jar **.jar
+
+
+printf "%x\n" <pid>
+
+
+jstack -help
+Usage:
+    jstack [-l] <pid>
+        (to connect to running process)
+    jstack -F [-m] [-l] <pid>
+        (to connect to a hung process)
+    jstack [-m] [-l] <executable> <core>
+        (to connect to a core file)
+    jstack [-m] [-l] [server_id@]<remote server IP or hostname>
+        (to connect to a remote debug server)
+
+Options:
+    -F  to force a thread dump. Use when jstack <pid> does not respond (process is hung)
+    -m  to print both java and native frames (mixed mode)
+    -l  long listing. Prints additional information about locks
+    -h or -help to print this help message
+
+grep 'java.lang.Thread.State' jstack-9457.log |awk '{print $2$3$4$5}'|sort|uniq -c
+
+---------------------------------------------------------------------------------------------------------------------------------------
+python datax.py --help
+
+DataX (DATAX-OPENSOURCE-3.0), From Alibaba !
+Copyright (C) 2010-2017, Alibaba Group. All Rights Reserved.
+
+
+Usage: datax.py [options] job-url-or-path
+
+Options:
+  -h, --help            show this help message and exit
+
+  Product Env Options:
+    Normal user use these options to set jvm parameters, job runtime mode
+    etc. Make sure these options can be used in Product Env.
+
+    -j <jvm parameters>, --jvm=<jvm parameters>
+                        Set jvm parameters if necessary.
+    --jobid=<job unique id>
+                        Set job unique id when running by Distribute/Local
+                        Mode.
+    -m <job runtime mode>, --mode=<job runtime mode>
+                        Set job runtime mode such as: standalone, local,
+                        distribute. Default mode is standalone.
+    -p <parameter used in job config>, --params=<parameter used in job config>
+                        Set job parameter, eg: the source tableName you want
+                        to set it by command, then you can use like this:
+                        -p"-DtableName=your-table-name", if you have mutiple
+                        parameters: -p"-DtableName=your-table-name
+                        -DcolumnName=your-column-name".Note: you should config
+                        in you job tableName with ${tableName}.
+    -r <parameter used in view job config[reader] template>, --reader=<parameter used in view job config[reader] template>
+                        View job config[reader] template, eg:
+                        mysqlreader,streamreader
+    -w <parameter used in view job config[writer] template>, --writer=<parameter used in view job config[writer] template>
+                        View job config[writer] template, eg:
+                        mysqlwriter,streamwriter
+
+  Develop/Debug Options:
+    Developer use these options to trace more details of DataX.
+
+    -d, --debug         Set to remote debug mode.
+    --loglevel=<log level>
+                        Set log level such as: debug, info, all etc.

@@ -1,0 +1,440 @@
+除了用插件来修改 MyBatis 核心行为之外，还可以通过完全覆盖配置类来达到目的。只需继承后覆盖其中的每个方法，再把它传递到 SqlSessionFactoryBuilder.build(myConfig) 方法即可。再次重申，这可能会严重影响 MyBatis 的行为，务请慎之又慎。
+
+不过要记住：尽管可以配置多个环境，每个 SqlSessionFactory 实例只能选择其一。
+所以，如果你想连接两个数据库，就需要创建两个 SqlSessionFactory 实例，每个数据库对应一个。而如果是三个数据库，就需要三个实例，依此类推，记起来很简单：
+
+CallableStatement: 调用存储过程.
+<cache>元素中的回收策略(eviction属性)如下4种:
+LRU:
+FIFO:
+SOFT – 软引用:移除基于垃圾回收器状态和软引用规则的对象。
+WEAK – 弱引用:更积极地移除基于垃圾收集器状态和弱引用规则的对象。
+----------------------------------------------------------------
+GC Roots:1.虚拟机栈(栈帧中的本地变量表)中引用的对象;2. 方法区中的类静态属性引用的对象;3. 方法区中常量引用的对象;4. 本地方法栈中JNI中引用的对象。
+
+没有GC Root可到达的对象，如果没有必要或者没有覆盖finalize(), 进入F-Queue，由一个低优先级的线程，执行finalize(),此时再次将this赋值给其他对象。
+-----------------------------------------------------------------
+不幸的是，它作为老年代的收集器，却无法与JDK 1.4.0中已经存在的新生代收集器Parallel Scavenge配合工作，所以在JDK 1.5中使用CMS来收集老年代的时候，新生代只能选择ParNew或Serial收集器中的一个。ParNew收集器也是使用 -XX: +UseConcMarkSweepGC选项后的默认新生代收集器，也可以使用 -XX:+UseParNewGC选项来强制指定它。
+三种垃圾收集算法: 标记-清除、复制、标记-整理;
+
+CMS:初始标记->并发标记->重新标记->并发清除
+
+UseSerialGC: 虚拟机运行在Client模式下的默认值，使用Serial + Serial Old组合进行GC
+UseParNewGC: ParNew + Serial组合进行GC
+UseConcMarkSweepGC: 使用ParNew + CMS + Serial Old组合进行GC
+UseParallGC: 虚拟机在Server模式下的默认值，使用Parallel Scavenge + Serial Old组合进行GC
+UseParallOldGC：使用Paralle Scavenge + Paralle Old组合进行GC
+----------------------------------------------------------------
+RxJava Flowable在过载的情况下有三种策略: 缓存，丢弃，错误(抛出MissingBackpressureException)
+Observable不支持负载压力处理,这意味着Observable不会抛出MissingBackpressureExceptin
+
+-XX:+UseCompressedClassPointers
+-XX:OnOutOfMemoryError 用来指定一个可行性程序或者脚本的路径，当发生OOM的时候，去执行这个脚本。
+
+-XX:+PrintTenuringDistribution, 让JVM每次MinorGC后打印Surivivor空间中的对象的年龄分步.
+- -XX:InitialTenuringThreshold 表示对象被移到老年代的年龄阈值的初始值 
+- -XX:MaxTenuringThreshold 表示对象被移到老年代的年龄阈值的最大值 
+- -XX:TargetSurvivorRatio 表示MinorGC结束了Survivor区域中占用空间的期望比例。
+
+-XX:UseAdaptiveSizePolicy 表示是否开启自适应策略，打开这个开关后，JVM自动调节JVM的新生代大小，Eden和Survivor的比例等参数。用户只需要设置期望的吞吐量(-XX:GCTimeRatio)和期望的停顿时间(-XX:MaxGCPauseMillis)。然后，JVM会尽量去向用户期望的方向去优化
+
+- -XX:CMSInitiatingOccupancyFraction 指定在老生代用掉多少内存后开始进行垃圾回收。与吞吐量优先的回收器不同的是，吞吐量优先的回收器在老生代内存用尽了以后才开始进行收集，这对CMS来讲是不行的，因为吞吐量优先的垃圾回收器运行的时候会停止所有用户线程，所以不会产生新的对象，而CMS运行的时候，用户线程还有可能产生新的对象，所以不能等到内存用光后才开始运行。比如-XX:CMSInitiatingOccupancyFraction=75表示老生代用掉75%后开始回收垃圾。默认值是68。
+---------------------------------------------------------------
+AynchronousServerSocketChannel:  CompletionHandler<V, A>
+在AIO编程中，发出一个事件（accept read write等）之后要指定事件处理类（回调函数），AIO中的事件处理类是CompletionHandler<V,A>，这个接口定义了如下两个方法，分别在异步操作成功和失败时被回调。
+   void completed(V result, A attachment);
+   void failed(Throwable exc, A attachment);
+--------------------- 
+每当一个新 session 被创建，MyBatis 就会创建一个与之相关联的本地缓存。任何在 session 执行过的查询语句本身都会被保存在本地缓存中，那么，相同的查询语句和相同的参数所产生的更改就不会二度影响数据库了。本地缓存会被增删改、提交事务、关闭事务以及关闭 session 所清空。
+默认情况下，本地缓存数据可在整个 session 的周期内使用，这一缓存需要被用来解决循环引用错误和加快重复嵌套查询的速度，所以它可以不被禁用掉，但是你可以设置 localCacheScope=STATEMENT 表示缓存仅在语句执行时有效。
+注意，如果 localCacheScope 被设置为 SESSION，那么 MyBatis 所返回的引用将传递给保存在本地缓存里的相同对象。对返回的对象（例如 list）做出任何更新将会影响本地缓存的内容，进而影响存活在 session 生命周期中的缓存所返回的值。因此，不要对 MyBatis 所返回的对象作出更改，以防后患。
+---------------------
+两个破坏类加载的双亲委派模型的例子:
+1. JNDI; 2. Spring.   为了解决这个问题，使用线程上下文类加载器。Thread.setContextClassLoader(); Thread.currentThread().getContextClassLoader();
+
+
+逃逸分析： 如果分配在栈上，随着函数的调用，栈帧直接不可用。
+
+G1使用暂停预测模型(pause prediction model)来达到用户定义的目标暂停时间,并根据目标暂停时间来选择此次进行垃圾回收的heap区域数量.
+CMS垃圾收集器(Concurrent Mark Sweep,并发标记清理)不进行压缩. ParallelOld 垃圾收集只对整个堆执行压缩,从而导致相当长的暂停时间。
+
+-XX:+UseG1GC - 让 JVM 使用 G1 垃圾收集器.
+-XX:MaxGCPauseMillis=200 - 设置最大GC停顿时间(GC pause time)指标(target). 这是一个软性指标(soft goal), JVM 会尽力去达成这个目标. 所以有时候这个目标并不能达成. 默认值为 200 毫秒.
+-XX:InitiatingHeapOccupancyPercent=45 - 启动并发GC时的堆内存占用百分比. G1用它来触发并发GC周期,基于整个堆的使用率,而不只是某一代内存的使用比例。值为 0 则表示“一直执行GC循环)'. 默认值为 45 (例如, 全部的 45% 或者使用了45%).
+-----------------------------------------
+RxJava2的Base Classes:
+RxJava 2 features several base classes you can discover operators on:
+	- io.reactivex.Flowable: 0..N flows, supporting Reactive-Streams and backpressure
+	- io.reactivex.Observable: 0..N flows, no backpressure,
+	- io.reactivex.Single: a flow of exactly 1 item or an error,
+	- io.reactivex.Completable: a flow without items but only a completion or error signal,
+	- io.reactivex.Maybe: a flow with no items, exactly one item or an error.
+--------------------------------------------------------
+Eureka满足AP，Zookeeper满足CP
+
+AnnotationConfigWebApplicationContext
+
+Collections.unmodifiableMap
+
+MultiValueMap<K, V> extends Map<K, List<V>>
+
+java.util.concurrent.CopyOnWriteArrayList;
+private final MultiValueMap<String, String> targetRequestParams = new LinkedMultiValueMap<>(4);
+
+Spring中的@Nullable标识某个实体在某种情况下为NULL。
+
+
+Stream有三个match方法:
+	- allMatch: Stream中全部元素符合传入的predicate, 返回true;
+	- anyMatch: Stream中只要有1个元素符合传入的predicate, 返回true
+	- noneMatch: Stream中没有一个元素符合传入的predicate, 返回true
+
+XsltView All implements Interfaces: Aware, BeanNameAware, InitializingBean, ApplicationContextAware, ServletContextAware, View. 
+
+All model parameters are passed to the XSLT Transformer as parameters. 
+In addition the user can configure output properties to be passed to the Transformer.
+
+ReflectionUtils.accessibleConstructor(Class<T> clazz, Class<?>... parameterTypes).newInstance();
+
+org.sprongframework.beans.factory.InitializingBean; 
+afterPropertiesSet();
+
+思考: 如果Spring Bean初始化后，要保证某个属性必须要设置，可以通过@Override InitializingBean的afterPropertiesSet方法来判断。并且只针对Singleton的Bean.
+
+Collections.unmodifiableMap();
+
+ViewResolver -> InternalResourcreViewResolver -> BeanNameViewResolver -> ContentNegotiatingViewResolver
+
+javax.servlet.ServletContext;
+	
+BeanDefinitionRegistry
+
+Builder：1. 由Client, Builder, Product, Director; 2. 由静态内部类进行无序构造
+
+java.util.ResourceBundle;
+	
+在Spring配置文件中，我们只需要给出字符串类型的path即可，Spring会通过ResourceEditor（java.beans.PropertyEditor的子类）和ResourceLoader把给定的path转换为相应的Resource。
+	
+ApplicationContext接口也继承了ResourceLoader接口，所以它的所有实现类都实现了ResourceLoader接口，都可以用来获取Resource。
+	
+destroy() in DisposableBean
+	
+SpringBoot默认是无法使用矩阵变量绑定参数的，需要覆盖WebMvcConfigurer中的configurePathMatch方法。
+	
+AnnotatedBeanDefinitionReader
+	
+组合模式的优缺点:
+优点:1. 高层模块调用简单; 2. 节点自由增加
+缺点:在使用组合模式时，其叶子和树枝的声明都是实现类，而不是接口，违反了依赖倒置原则。
+使用场景:部分/整体场景，如树形菜单、文件/文件夹的管理。
+	
+RuntimeBeanDefinition: 解析<bean>时，将ref属性解析为RuntimeBeanDefinition，并将这个对象放入BeanDefition的MutablePropertValues中。	
+	
+Returning eagerly cached instance of singleton bean, that is not fully initialized yet - a consequence of a circular reference.	
+	
+设计模式的UML图
+
+private static final proxyClassNamePrefix = "$Proxy";   // Proxy Class的前缀是$Proxy
+// next number to use for generation of unique proxy class names
+private static final AtomicLong nextUniqueNumber = new AtomicLong();
+	
+	
+ServletContext ServletConfig Servlet GenericServlet 	
+	
+HttpServlet里的service方法使用了模板方法(doGet, doPost, doDelete)
+	
+ParameterizableViewController: 参数化视图控制器
+Spring MVC里的ResourceChainRegistration使用了Fluent风格的构造方式。
+	
+
+Tomcat的顶层结构: Server - Service - Connector - Container
+	
+在Spring MVC里有2个ApplicationContext，构成父子上下文。
+java.util.concurrent.CopyOnWriteArraySet;	
+	
+HandlerMethodArgumentResolver;
+HandlerMethodReturnValueHandler;
+	
+CORS是如何绕过Same-origin Policy策略。
+Access-Control-Allow-Origin
+
+CORS将导致跨域访问的请求分为三种: Simple Request, Preflighted Request和Requests with Credential;
+
+BeanNameAware 
+
+在接口InitializingBean中有一个函数 void afterPropertiesSet() throws Exception
+
+RequestMappingHandlerAdapter
+HandlerMethodArgumentResolver
+
+@RequestParam
+ReentrantReadWriteLock;
+
+依赖注入和依赖查找的区别: ApplicationContextAware和@Autowired的区别，主动和被动的区别。
+
+Collections.unmodifiableMap();
+
+String转化为InputStream
+1. InputStream inputStream = new ByteArrayInputStream(string.getBytest());
+2. InputStream inputStream = IOUtils.toInputStream(string, StandardCharsets.UTF_8);
+3. InputStream inputStream = new ReaderInputStream(CharSource.wrap(string).openStream(), StandardCharsets.UTF_8);
+
+EIP : Enterprise Integration Patterns (企业集成模式)
+
+PropertiesPropertySourceLoader
+YamlPropertySourceLoader
+
+HandlerExceptionResolver
+class SimpleMappingExceptionResolver extends AbstractHandlerExceptionResolver
+
+Template Method
+
+
+XmlBeanDefinitionReader
+AnnotatedBeanDefinitionReader
+PropertiesBeanDefinitionReader
+
+XmlBeanDefinitionReader实现了BeanDefinitionReader接口，BeanDefinitionReader的设计用意是加载BeanDefintion对象
+在Spring中直接使用XmlBeanDefinitionReader的容器有XmlWebApplicationContext、ClassPathXmlApplicationContext、FileSystemXmlApplicationContext
+BeanDefinitionRegistry对象是BeanDefinition对象的注册表，并且它是XmlBeanDefinitionReader对象创建时必须提供的
+
+Spring MVC MatrixVariable
+
+ControllerAdviceBean
+
+FSM: Finite-state machine
+
+Spring Statemachine: Event/Action/Status
+
+OGNL : Object-Graph-Navigation-Language
+用于过滤和投影集合，如books.{?#this.price<100};
+
+StateMachine里的Action的execute里最好再次判断一下Event类型，因为有可能是多个Event的Action，如果多个Event有可能会有不同的Action.
+
+
+public static List<ControllerAdviceBean> findAnnotatedBeans(ApplicationContext context) {
+		return Arrays.stream(BeanFactoryUtils.beanNamesForTypeIncludingAncestors(context, Object.class))
+				.filter(name -> context.findAnnotationOnBean(name, ControllerAdvice.class) != null)
+				.map(name -> new ControllerAdviceBean(name, context))
+				.collect(Collectors.toList());
+}
+
+java.io.PushbackInputStream;
+java.util.EnumSet;
+
+Thread States: new, runnable, waiting, time-waiting, blocked, terminated;
+
+RequestParamMethodArgumentResolver
+RequestHeaderMethodArgumentResolver
+若想获取所有的header信息：使用RequestHeaderMapMethodArgumentResolver, 用来获取所有的header信息.
+
+返回只读List: Collections.unmodifiableList(list);
+
+ModelAndViewContainer
+
+java.io.PushbackInputStream;
+org.springframework.web.method.support.HandlerMethodArgumentResolver;
+
+RequestBodyAdvice;
+ResponseBodyAdvice;
+
+AbstractMessageConverterMethodArgumentResolver;
+
+
+ControllerAdvice;
+
+ControllerAdviceBean;
+
+HandlerTypePredicate;
+
+AnnotationAwareOrderComparator;
+
+@ModelAttribute
+@InitBinder: 用于在@Controller中标注于方法上，表示当前控制器注册一个属性编辑器，只对当前的Controller有效. @InitBinder标注的方法必须有一个参数WebDataBinder。
+
+Arrays.stream(BeanFactoryUtils.beanNamesForTypeIncludingAncestors(context, Object.class))
+				.filter(name -> context.findAnnotationOnBean(name, ControllerAdvice.class) != null)
+				.map(name -> new ControllerAdviceBean(name, context))
+				.collect(Collectors.toList());
+
+HandlerMethodArgumentResolver;
+
+WebDataBinder;
+
+PathExtensionContentNegotiationStrategy;
+
+HandlerMethodReturnValueHandler;
+
+SpringMVC方法中的参数是靠HandlerMethodArgumentResolver解析;
+
+java.lang.reflect.Type;
+
+ParameterizedType;
+TypeVariable;
+GenericArrayType;
+WildcardType;
+
+JavaBeans Activation Framework: JAF
+
+NativeWebRequest;
+
+Java8之前的Future功能较弱，仅支持两种用法:要么检查future是否已经完成，要么等待future完成;
+Java8增加了CompletableFuture<T>类，它实现了新的CompletionStage<T>接口，并对Future<T>进行了扩展。
+
+如果不用Future或CompletableFuture, 想要实现等待某个线程完成之后才做后续的事，可以用join或wait等。但是CompletableFuture更好。
+
+CompletableFuture;
+CompletionStage;
+
+static CompletableFuture<Void> allOf(CompletableFuture<?>... cfs) 
+//5. 返回一个新的CompletableFuture，当所有给定的CompletableFutures完成时，完成。
+static CompletableFuture<Object> anyOf(CompletableFuture<?>... cfs) 
+//6. 返回一个新的CompletableFuture，当任何一个给定的CompletableFutures完成时，完成相同的结果。
+
+ServletInvocableHandlerMethod;
+
+
+HandlerExceptionResolver->AbstractHandlerExceptionResolver->AbstractHandlerMethodExceptionResolver->ExceptionHandlerExceptionResolver;
+
+ControllerAdvice;
+HttpMessageConverter;
+WebDataBinderFactory;
+
+SpringMVC处理请求大致是这样的：
+
+首先被DispatcherServlet截获，DispatcherServlet通过handlerMapping获得HandlerExecutionChain，然后获得HandlerAdapter。HandlerAdapter在内部对于每个请求，都会实例化一个ServletInvocableHandlerMethod进行处理，ServletInvocableHandlerMethod在进行处理的时候，会分两部分别对请求跟响应进行处理。之后HandlerAdapter得到ModelAndView，然后做相应的处理。
+
+ServletInvocableHandlerMethod;
+HandlerMethodArgumentResolverComposite;
+
+从名字我们也看的出来， 以Resolver结尾的是实现了HandlerMethodArgumentResolver接口的类，以Processor结尾的是实现了HandlerMethodArgumentResolver和HandlerMethodReturnValueHandler的类。
+
+turbine聚合
+
+DefaultParameterNameDiscoverer;
+PrioritizedParameterNameDiscoverer;
+
+通过spring的LocalVariableTableParameterNameDiscoverer 获取方法的参数，spring也是通过使用ASM通过字节码获取方法中参数的具体的名称
+
+java.util.PriorityQueue;
+org.springframework.web.context.request.async.DeferredResult;
+
+volatile的write为了保证对其他线程的可见性，会追加以下两个Fence(内存屏障)
+1). StoreStore //在intel cup中，不存在[写写]重排序，可以直接省略
+2). StoreLoad  //这个是所有内存屏障里最耗性能的
+
+Atomic*里的lazySet()省去了StoreLoad，只留下了StoreStore，性能必然会提高不少(虽然不能禁止写读的重排序，保证不了可见性，但给其他应用场景提供了更好的选择)
+
+Spring Cloud Hystrix具有服务降级，依赖隔离，服务熔断，监控(Hystrix Dashboard)等功能。
+
+
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Inherited
+@SpringBootApplication
+@EnableDiscoveryClient
+@EnableCircuitBreaker
+public @interface SpringCloudApplication {
+}
+
+Servlet4.0
+
+
+@FunctionalInterface
+public interface StreamingResponseBody {
+	void writeTo(OutputStream outputStream) throws IOException;
+}
+
+HTTP协议中Cache-Control常见的值有: private, public, no-store, no-cache, must-revalidate, max-age等；
+
+Cache-Control的no-cache和must-revalidate的区别:
+	- no-cache：告诉浏览器/缓存服务器，不管本地副本是否过期，使用资源副本前，一定要去源服务器进行副本有效性校验;
+	- must-revalidate: 告诉浏览器/缓存服务器，本地副本过期前，可以使用本地副本；本地副本一旦过期，必须去源服务器进行有效性校验。
+
+InternalResourceViewResolver
+
+自动配置的静态资源
+extends WebMvcConfigurerAdapter;
+
+响应式编程: Spring WebFlux, RxJava
+
+SpringBoot集成自定义HandlerMethodArgumentResolver;
+
+CachingResourceResolver;
+CachingResourceTransformer;
+ContentVersionStrategy;
+CssLinkResourceTransformer;
+public static <T> List<T> Collections.unmodifiableList(List<? extends T> list);
+
+java.util.ListIterator;
+
+For chained method invocation.
+
+WebApplicatioinContext;
+java.util.concurrent.CopyOnWriteArrayList;
+
+Spring WebFlux是基于响应式流的，因此可以用来建立异步的、非阻塞的、事件驱动的服务。它采用Reator作为首选的响应式流的实现库，不过也提供对RxJava的支持。
+
+整个技术栈从命令式的、同步阻塞的【spring-webmvc + servlet + Tomcat】变成了响应式的、异步非阻塞的【spring-webflux + Reactor + Netty】。
+
+JDK8中新特性:CompletableFuture和CompletionStage。
+
+XmlBeanDefinitionReader;
+DefaultListableBeanFactory;
+
+Spring可用通过4种方式配置bean, 其一基于xml的配置，其二基于xml+注解的配置, 其三基于java+注解的配置，其四基于property文件的配置。
+前两种的配置信息使用XmlBeanDefinitionReader对象来解析;第三种的配置信息使用AnnotatedBeanDefinitionReader对象来解析；最后一种的配置
+信息使用PropertiesBeanDefinitionReader对象来解析。
+
+Thread.currentThread().getContextClassLoader();
+java.util.ResourceBundle;
+
+
+Forward和Redirect的区别：
+1.forward
+request.getRequestDispatcher("new.jsp").forward(request, response);   //转发到new.jsp
+2.redirect
+response.sendRedirect("new.jsp");   //重定向到new.jsp
+很明显一个是用request对象调用，一个是用response对象调用，那么，这两者有什么区别呢？
+
+一、数据共享方面
+forward:转发页面和转发到的页面可以共享request里面的数据
+redirect:不能共享数据
+
+二、地址栏显示方面
+forward是服务器请求资源,服务器直接访问目标地址的URL,把那个URL的响应内容读取过来,然后把这些内容再发给浏览器.浏览器根本不知道服务器发送的内容从哪里来的,所以它的地址栏还是原来的地址.
+redirect是服务端根据逻辑,发送一个状态码,告诉浏览器重新去请求那个地址.所以地址栏显示的是新的URL.
+
+三、本质区别
+转发是服务器行为，重定向是客户端行为。为什么这样说呢，这就要看两个动作的工作流程： 
+
+转发过程：客户浏览器发送http请求--->web服务器接受此请求--->调用内部的一个方法在容器内部完成请求处理和转发动作--->将目标资源 发送给客户；在这里，转发的路径必须是同一个web容器下的url，其不能转向到其他的web路径上去，中间传递的是自己的容器内的request。在客 户浏览器路径栏显示的仍然是其第一次访问的路径，也就是说客户是感觉不到服务器做了转发的。转发行为是浏览器只做了一次访问请求。 
+
+重定向过程：客户浏览器发送http请求--->web服务器接受后发送302状态码响应及对应新的location给客户浏览器--->客户浏览器发现 是302响应，则自动再发送一个新的http请求，请求url是新的location地址--->服务器根据此请求寻找资源并发送给客户。在这里 location可以重定向到任意URL，既然是浏览器重新发出了请求，则就没有什么request传递的概念了。在客户浏览器路径栏显示的是其重定向的 路径，客户可以观察到地址的变化的。重定向行为是浏览器做了至少两次的访问请求的。 
+
+
+重定向，其实是两次request:第一次，客户端request A,服务器响应，并response回来，告诉浏览器，你应该去B。这个时候IE可以看到地址变了，而且历史的回退按钮也亮了。重定向可以访问自己web应用以外的资源。在重定向的过程中，传输的信息会被丢失。 
+
+
+ApplicationContextAware.setApplicationContext();
+InitializingBean.afterPropertiesSet();
+
+protected void renderMergedOutputModel(Map<String, Object> model, HttpServletRequest request, HttpServletResponse response) throws Exception;
+
+WebMvcAutoConfiguration就是对Spring MVC进行自动化配置，取代继承WebMvcConfigurerAdapter的方式。
+
+SpringBoot通过spring.factories实现了很好的扩展功能。自定义模块相关一般是通过实现对应的接口，并配置到文件中。
+
+
+BeanFactoryUtils.beanOfTypeIncludingAncestors(ListableBeanFactory lbf, Class<?> type, boolean includeNonSingletons, boolean allowEagerInit) throws BeansException;
+
+
+
+
+
+
+
+
+
+	

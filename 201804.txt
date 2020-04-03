@@ -1,0 +1,653 @@
+在使用Kafka的过程中遇到过什么困难？怎么解决的？
+	1. 在某个场景下，分区数太少，导致一部分的消费者是空闲的；
+	2. 分区数据不均衡，没有指定key，把key放在了value中，导致分区不均衡，消费者消费数据也不均衡；
+	3. 使用Spring Cloud Stream，指定序列化为application-json，但从管理后台发现加了额外信息，不方便跨语言支持和控制台个性化处理。
+	4. 消费端有一个配置，叫fetch.message.max.bytes,默认1M，如果消息大于1M,会发生停止消费的情况；
+	5. 在消费者提交offset时，出现异常: Error UNKNOWN_MEMBER_ID occurred while committing offsets for group 0。原因：消息过大，消费过程过长，在session time-out时间内，没有处理完，导致心跳检测没有发出，这时consumers的协调器coordinator认为消费者宕机，所以消费者的offset提交失败。这时，所有的consumers进行reblance过程(partitioin在consumer中重新分配)，由于之前消费了消息，进行了partition的重新分配，又要再次被消费，进入一个循环。解决方案：1):更改session.timeout.ms值，加大可消费时间;2):增大心跳检测hearbet.interval.ms值;3):如果使用了spring-kafka，则可以更改enable.auto.commit=false，使用spring-kafka提交策略;4):提高partition数目，增加消费水平;
+	6. 不支持延迟队列
+
+ZK的Watcher都是一次性的，当会话失效后，客户端除了重新创建临时节点选举新的Kafka Controller，还需要再次注册会话失效的监听器。
+
+Kafka Controller的作用:
+在Kafka集群中会有一个或者多个broker，其中有一个broker会被选举为控制器（Kafka Controller），它负责管理整个集群中所有分区和副本的状态。当某个分区的leader副本出现故障时，由控制器负责为该分区选举新的leader副本。当检测到某个分区的ISR集合发生变化时，由控制器负责通知所有broker更新其元数据信息。当使用kafka-topics.sh脚本为某个topic增加分区数量时，同样还是由控制器负责分区的重新分配。
+
+Kafka中的控制器选举的工作依赖于Zookeeper，成功竞选为控制器的broker会在Zookeeper中创建/controller这个临时（EPHEMERAL）节点，此临时节点的内容参考如下：{"version":1,"brokerid":0,"timestamp":"1529210278988"}
+
+其中version在目前版本中固定为1，brokerid表示称为控制器的broker的id编号，timestamp表示竞选称为控制器时的时间戳。
+
+在任意时刻，集群中有且仅有一个控制器。每个broker启动的时候会去尝试去读取/controller节点的brokerid的值，如果读取到brokerid的值不为-1，则表示已经有其它broker节点成功竞选为控制器，所以当前broker就会放弃竞选；如果Zookeeper中不存在/controller这个节点，或者这个节点中的数据异常，那么就会尝试去创建/controller这个节点，当前broker去创建节点的时候，也有可能其他broker同时去尝试创建这个节点，只有创建成功的那个broker才会成为控制器，而创建失败的broker则表示竞选失败。每个broker都会在内存中保存当前控制器的brokerid值，这个值可以标识为activeControllerId。
+
+Zookeeper中还有一个与控制器有关的/controller_epoch节点，这个节点是持久（PERSISTENT）节点，节点中存放的是一个整型的controller_epoch值。controller_epoch用于记录控制器发生变更的次数，即记录当前的控制器是第几代控制器，我们也可以称之为“控制器的纪元”。controller_epoch的初始值为1，即集群中第一个控制器的纪元为1，当控制器发生变更时，没选出一个新的控制器就将该字段值加1。每个和控制器交互的请求都会携带上controller_epoch这个字段，如果请求的controller_epoch值小于内存中的controller_epoch值，则认为这个请求是向已经过期的控制器所发送的请求，那么这个请求会被认定为无效的请求。如果请求的controller_epoch值大于内存中的controller_epoch值，那么则说明已经有新的控制器当选了。由此可见，Kafka通过controller_epoch来保证控制器的唯一性，进而保证相关操作的一致性。
+
+具备控制器身份的broker需要比其他普通的broker多一份职责，具体细节如下：
+
+	1. 监听partition相关的变化。为Zookeeper中的/admin/reassign_partitions节点注册PartitionReassignmentListener，用来处理分区重分配的动作。为Zookeeper中的/isr_change_notification节点注册IsrChangeNotificetionListener，用来处理ISR集合变更的动作。为Zookeeper中的/admin/preferred-replica-election节点添加PreferredReplicaElectionListener，用来处理优先副本的选举动作。
+	2. 监听topic相关的变化。为Zookeeper中的/brokers/topics节点添加TopicChangeListener，用来处理topic增减的变化；为Zookeeper中的/admin/delete_topics节点添加TopicDeletionListener，用来处理删除topic的动作。
+	3. 监听broker相关的变化。为Zookeeper中的/brokers/ids/节点添加BrokerChangeListener，用来处理broker增减的变化。
+	4. 从Zookeeper中读取获取当前所有与topic、partition以及broker有关的信息并进行相应的管理。对于所有topic所对应的Zookeeper中的/brokers/topics/[topic]节点添加PartitionModificationsListener，用来监听topic中的分区分配变化。
+	5. 启动并管理分区状态机和副本状态机。
+	6. 更新集群的元数据信息。
+	7. 如果参数auto.leader.rebalance.enable设置为true，则还会开启一个名为“auto-leader-rebalance-task”的定时任务来负责维护分区的优先副本的均衡。
+控制器在选举成功之后会读取Zookeeper中各个节点的数据来初始化上下文信息（ControllerContext），并且也需要管理这些上下文信息，比如为某个topic增加了若干个分区，控制器在负责创建这些分区的同时也要更新上下文信息，并且也需要将这些变更信息同步到其他普通的broker节点中。不管是监听器触发的事件，还是定时任务触发的事件，亦或者是其他事件（比如ControlledShutdown）都会读取或者更新控制器中的上下文信息，那么这样就会涉及到多线程间的同步，如果单纯的使用锁机制来实现，那么整体的性能也会大打折扣。针对这一现象，Kafka的控制器使用单线程基于事件队列的模型，将每个事件都做一层封装，然后按照事件发生的先后顺序暂存到LinkedBlockingQueue中，然后使用一个专用的线程（ControllerEventThread）按照FIFO（First Input First Output, 先入先出）的原则顺序处理各个事件，这样可以不需要锁机制就可以在多线程间维护线程安全。
+在Kafka的早期版本中，并没有采用Kafka Controller这样一个概念来对分区和副本的状态进行管理，而是依赖于Zookeeper，每个broker都会在Zookeeper上为分区和副本注册大量的监听器（Watcher）。当分区或者副本状态变化时，会唤醒很多不必要的监听器，这种严重依赖于Zookeeper的设计会有脑裂、羊群效应以及造成Zookeeper过载的隐患。在目前的新版本的设计中，只有Kafka Controller在Zookeeper上注册相应的监听器，其他的broker极少需要再监听Zookeeper中的数据变化，这样省去了很多不必要的麻烦。不过每个broker还是会对/controller节点添加监听器的，以此来监听此节点的数据变化（参考ZkClient中的IZkDataListener）。
+当/controller节点的数据发生变化时，每个broker都会更新自身内存中保存的activeControllerId。如果broker在数据变更前是控制器，那么如果在数据变更后自身的brokerid值与新的activeControllerId值不一致的话，那么就需要“退位”，关闭相应的资源，比如关闭状态机、注销相应的监听器等。有可能控制器由于异常而下线，造成/controller这个临时节点会被自动删除；也有可能是其他原因将此节点删除了。
+当/controller节点被删除时，每个broker都会进行选举，如果broker在节点被删除前是控制器的话，在选举前还需要有一个“退位”的动作。如果有特殊需要，可以手动删除/controller节点来触发新一轮的选举。当然关闭控制器所对应的broker以及手动向/controller节点写入新的brokerid的所对应的数据同样可以触发新一轮的选举。
+------------------------------------------------------------------------
+Redis的数据淘汰策略:
+定时删除
+	策略 : 在设置键的过期时间的同时，创建一个定时器，让定时器在键的过期时间来临时，立即执行对键的删除操作。
+	优点 : 对内存友好，保证过期键会尽可能快地被删除，并释放过期键所占用的内存。
+	缺点 : 对CPU时间不友好，占用太多CPU时间，影响服务器的响应时间和吞吐量。
+惰性删除
+	策略 : 放任过期键不管，每次从键空间读写操作时，都检查键是否过期，如果过期，删除该键，如果没有过期，返回该键。
+	优点 : 对CPU时间友好，读写操作键时才对键进行过期检查，删除过期键的操作只会在非做不可的情况下进行。
+	缺点 : 对内存不友好，只要键不删除，就不会释放内存，浪费太多内存，有内存泄漏风险。
+定期删除
+	策略 :对定时删除策略和惰性删除策略的一种整合和折中。每隔一段时间执行一次定时删除，并通过限制删除操作执行的总时长和总频率来限制删除操作对CPU占用时间的影响。通过定期删除过期键，有效减少了因为过期键而带来的内存浪费。
+	难点：确定删除操作执行的总时长和总频率。执行太频繁，执行时间过长，就会退化成定时删除策略，影响客户端请求效率；执行得太少，执行时间太短，会演变为惰性删除，存在内存浪费的情况。
+	Redis服务器使用惰性删除和定期删除两种策略，通过配合使用，很好地在合理使用CPU时间和避免浪费内存之间取得平衡。
+
+	举例:
+	1. 从过期键中随机选取 20 个 key
+	2. 遍历这 20 个 key，并对过期的 key进行删除操作
+	3. 如果过期的 key 比率超过25%，则重复步骤 1
+	4. 同时，为了保证过期扫描不会出现循环过度，导致线程卡死现象，增加了扫描时间的上限，默认不会超过 25ms以及频次上线10次。
+主动清理
+	当前已用内存超过maxmemory限定时，触发主动清理策略。清理时会根据用户配置的maxmemory-policy来做适当的清理。
+	主动清理策略主要有六种:
+	1. volatile-lru : 从已设置过期时间的数据集(server.db[i].expires)中挑选最近最少使用的数据淘汰。
+	2. volatile-ttl : 从已设置过期时间的数据集(server.db[i].expires)中挑选将要过期的数据淘汰。
+	3. volatile-random : 从已设置过期时间的数据集(server.db[i].expires)中任意选择数据淘汰。
+	4. allkeys-lru : 从数据集(server.db[i].dict)中挑选最近最少使用的数据淘汰。
+	5. allkeys-random : 从数据集(server.db[i].dict)中任意选择数据淘汰。
+	6. no-enviction : 禁止驱逐数据。
+上述是Redis的6种淘汰策略，关于使用这6种策略，开发者还需要根据自身系统特征，正确选择或修改驱逐。
+	- 在Redis中，数据有一部分访问频率较高，其余部分访问频率较低，或者无法预测数据的使用频率时，设置allkeys-lru是比较合适的。
+	 - 如果所有数据访问概率大致相等时，可以选择allkeys-random。
+	- 如果研发者需要通过设置不同的ttl来判断数据过期的先后顺序，此时可以选择volatile-ttl策略。
+	- 如果希望一些数据能长期被保存，而一些数据可以被淘汰掉时，选择volatile-lru或volatile-random都是比较不错的。
+	- 由于设置expire会消耗额外的内存，如果计划避免Redis内存在此项上的浪费，可以选用allkeys-lru 策略，这样就可以不再设置过期时间，高效利用内存了。
+
+Redis高并发和快速的原因：
+	1. Redis基于内存，内存的读写速度非常快；
+	2. Redis是单线程的，省去了很多上下文切换线程的成本；
+	3. Redis使用多路复用技术，可以处理并发度连接。非阻塞IO内部使用了epoll，采用了epoll+自己实现的简单事件框架，epoll中的读、写、关闭、连接都转化成了事件，然后利用epoll的多路复用特性，绝不在IO上浪费时间。
+Spring使用ThreadLocal解决线程安全问题，只有无状态的Bean才可以在多线程环境下共享，在Spring中，绝大部分Bean是singleton作用域，Spring对某些Bean(RequestContextHolder,TransactionSynchonizationManager, LocaleContextHolder等)中非线程安全状态采用ThreadLocal进行处理，让它们也成为线程安全的状态，这样有状态的Bean也可以在多线程中共享了。
+ThreadLocal instances are typically private static fields in classes that wish to associate state with a thread(e.g., a user ID or Transaction ID).
+
+public class ThreadLocal<T> {
+	/* ThreadLocals rely on per-thread linear-probe hash maps attached to each thread(Thread.threadLoclas and inheritableThreadLocals). The ThreadLocal objects act as keys, searched via threadLocalHashCode. This is a custom hash code(useful only within ThreadLocalMaps) that eliminates collisions in the common case where consecutively constructed ThreadLocals are used by the same threads, while remaining well-behaved in less common cases.
+	*/
+	private final int threadLocalHashCode = nextHashCode();
+	private static AtomicInteger nextHashCode = new AtomicInteger();
+	private static final int HASH_INCREMENT = 0x61c88647;
+	private static int nextHashCode() {
+        return nextHashCode.getAndAdd(HASH_INCREMENT);
+    }
+	/*
+	因为static的原因，在每次new ThreadLocal时因为threadLocalHashCode的初始化，会使threadLocalHashCode值自增一次，增量为0x61c88647。0x61c88647是斐波那契散列乘数，它的优点是通过它散列出来的结果分布会比较均匀，可以很大程度上避免hash冲突。
+	*/
+}
+
+ThreadLocal和synchronized都是为了解决多线程中相同变量的访问冲突问题，不同点是：
+	- synchronized是通过线程等待，牺牲时间来解决访问冲突；
+	- ThreadLocal是通过每个线程单独一份存储空间，牺牲空间来解决冲突，并且相对于synchronized，ThreadLocal具有线程隔离的效果，只有在线程内才能获取对应的值，线程外无法访问。
+
+ThreadLocal为什么会内存泄漏：ThreadLocal在ThreadLocalMap中是以一个弱引用WeakReference被Entry中的key引用的，因此如果ThreadLocal没有外部强引用来引用它，那么ThreadLocal会在下次GC收集时被回收。这个时候就会出现Entry中key已经被回收，出现一个null key的情况，外部读取ThreadLocalMap中的元素是无法通过null key来找到value的。因此如果当前线程的生命周期很长，一直存在，那么其内部的ThreadLocalMap对象也一直生存下来，这些null key就存在一条强引用链一直存在：Thread->ThreadLocalMap->Entry->Value，这条强引用链会导致Entry不会回收，Value也不会回收，但Entry中的Key却已经回收的情况，造成内存泄漏。
+但JVM已经考虑到这种情况，并做了一些措施来保证ThreadLocal尽量不会内存泄漏：在ThreadLocal的get(),set(),remove()方法调用的时候会清理线程ThreadLocalMap中所有Entry中key为null的Value，并将整个Entry设置为null,利于下次内存回收。
+
+ThreadLocalMap为什么使用WeakReference:
+	-key 使用强引用：引用的ThreadLocal的对象被回收了，但是ThreadLocalMap还持有ThreadLocal的强引用，如果没有手动删除，ThreadLocal不会被回收，导致Entry内存泄漏。
+	- key 使用弱引用：引用的ThreadLocal的对象被回收了，由于ThreadLocalMap持有ThreadLocal的弱引用，即使没有手动删除，ThreadLocal也会被回收。value在下一次ThreadLocalMap调用set,get，remove的时候会被清除。
+	比较两种情况，我们可以发现：由于ThreadLocalMap的生命周期跟Thread一样长，如果都没有手动删除对应key，都会导致内存泄漏，但是使用弱引用可以多一层保障：弱引用ThreadLocal不会内存泄漏，对应的value在下一次ThreadLocalMap调用set,get,remove的时候会被清除。
+	因此，ThreadLocal内存泄漏的根源是：由于ThreadLocalMap的生命周期跟Thread一样长，如果没有手动删除对应key的value就会导致内存泄漏，而不是因为弱引用。
+综合上面的分析，我们可以理解ThreadLocal内存泄漏的前因后果，那么怎么避免内存泄漏呢？
+每次使用完ThreadLocal，都调用它的remove()方法，清除数据。
+在使用线程池的情况下，没有及时清理ThreadLocal，不仅是内存泄漏的问题，更严重的是可能导致业务逻辑出现问题。所以，使用ThreadLocal就跟加锁完要解锁一样，用完就清理。
+ThreadLocalMap的Hash冲突怎么解决：
+和HashMap的最大的不同在于，ThreadLocalMap结构非常简单，没有next引用，也就是说ThreadLocalMap中解决Hash冲突的方式并非链表的方式，而是采用线性探测的方式，所谓线性探测，就是根据初始key的hashcode值确定元素在table数组中的位置，如果发现这个位置上已经有其他key值的元素被占用，则利用固定的算法寻找一定步长的下个位置，依次判断，直至找到能够存放的位置。
+ThreadLocalMap解决Hash冲突的方式就是简单的步长加1或减1，寻找下一个相邻的位置。
+private static int nextIndex(int i, int len) {
+	return ((i + 1 < len) ? i + 1 : 0);
+}
+private static int prevIndex(int i, int len) {
+	return ((i - 1 >= 0) ? i - 1 : len - 1);
+}
+显然ThreadLocalMap采用线性探测的方式解决Hash冲突的效率很低，如果有大量不同的ThreadLocal对象放入map中时发送冲突，或者发生二次冲突，则效率很低。所以这里引出的良好建议是：每个线程只存一个变量，这样的话所有的线程存放到map中的Key都是相同的ThreadLocal，如果一个线程要保存多个变量，就需要创建多个ThreadLocal，多个ThreadLocal放入Map中时会极大的增加Hash冲突的可能。
+
+/* Abstract class for defining different behavior or implementations for concurrency related aspects of the system with default implementations.
+For example, every Callable executed by HystrixCommand will call wrapCallable(Callable) to give a chance for custom implementations to decorate the Callabe with additional behavior.
+When you implement a concrete HystrixConcurrencyStrategy, you should make the strategy idempotent w.r.t ThreadLocals.
+Since the usage of threads by Hystrix is internal, Hystrix does not attempt to apply the strategy in an idempotent ways.
+Instead, you should write your strategy to work idempotently.
+*/
+public abstract class HystrixConcurrenyStrategy {
+	...
+}
+Hystrix信号量和线程池隔离策略的对比：
+		是否有线程切换	是否支持异步	是否支持超时	是否支持熔断	开销大小	是否支持限流
+信号量	否				否				否				是				小			是
+线程池	是				是				是				是				大			是
+
+/*This class extends ThreadLocal to provide inheritance of values from parent thread to child thread:
+when a child thread is created, the child receives initial values for all inheritable thread-local variables for 
+which the parent has values. Normally the child's values will be identical to the parent's; however, the child's value can be made an arbitrary function of parent's by overriding the childValue method in this class.
+Inheritable thread-local variables are used in preference to ordinary thread-local variables when the per-thread-attribute being maintained in the variable(e.g., UserID, TransactionID) must be automatically transmitted to any child threads that are created.
+*/
+public class InheritableThreadLocal<T> extends ThreadLocal<T> {
+	protected T childValue(T parentValue) {
+		return parentValue;
+	}
+	
+	ThreadLocaMap getMap(Thread t) {
+		return t.inheritableThreadLocals;
+	}
+	void createMap(Thread t, T firstValue) {
+		t.inheritableThreadLocals = new ThreadLocalMap(this, firstValue);
+	}
+}
+
+public class Thread implements Runnable {
+	...
+	ThreadLocal.ThreadLocalMap threadLocals = null;
+	//InheritableThreadLocal values pertaining to this thread. This map is maintained by the InheritableThreadLocal class.
+	ThreadLocal.ThreadLocalMap inheritableThreadLocals = null;
+	private void init(ThreadGroup g, Runnable target, String name,
+                      long stackSize, AccessControlContext acc,
+                      boolean inheritThreadLocals) {
+		...
+		if (inheritThreadLocals && parent.inheritableThreadLocals != null)
+			this.inheritableThreadLocals = ThreadLocal.createInheritedMap(parent.inheritableThreadLocals);
+		...
+	}
+	...
+}
+
+通过inheritableThreadLocals我们可以在父线程创建子线程的时候将Local中的值传递给子线程，这个特性已经能够满足大部分的需求了，但是还有一个很严重的问题是如果是在线程复用的情况下就会出问题，比如线程池中去使用inheritableThreadLocals 进行传值，因为inheritableThreadLocals 只是会再新创建线程的时候进行传值，线程复用并不会做这个操作，那么要解决这个问题就得自己去扩展线程类，实现这个功能。
+阿里开源的transmittable-thread-local主要功能就是解决在使用线程池等缓存线程的情况下，提供ThreadLocal值的传递功能，解决异步执行时上下文传递的问题。
+JDK的InheritableThreadLocal类可以完成父线程到子线程的值传递。但对于使用线程池等会缓存线程的组件的情况，线程由线程池创建好，并且线程是缓存起来反复使用的；这时父子线程关系的ThreadLocal值传递已经没有意义，应用需要的实际上是把 任务提交给线程池时的ThreadLocal值传递到任务执行时。
+transmittable-thread-local使用方式分为三种：修饰Runnable和Callable, 修饰线程池，Java Agent来修饰JDK线程池实现类。
+
+在之前的旧版本中，kafka只能支持两种语义：At most once和At lease once。At most once保证消息不会重复，但是可能会丢失。在实践中，很少有业务选择这种方式。At least once保证消息不会丢失，但是有可能重复，业务在处理消息时要进行去重。
+Kafka在0.11.0版本支持增加了对幂等的支持。幂等是针对生产者角度的特性，幂等可以保证生产者发送的消息，不会丢失，而且不会重复。
+Kafka幂等性实现原理：
+为了实现Producer的幂等性，Kafka引入了ProducerID(即PID)和Sequence Number。
+	- PID:每个新的Producer在初始化的时候会被分配一个唯一的PID，这个PID对用户是不可见的；
+	- Sequence Number：对于每个PID，该Producer发送的数据的每个<Topic, Partition>都对应一个从0开始单调递增的Sequence Number。
+Kafka可能存在多个生产者，会同时生产消息，但对Kafka来说，只需要每个生产者内部的消息幂等就可以了，所以引入PID来标识不同的生产者。
+对于Kafka来说，要解决的是生产者发送消息的幂等性问题。也即需要区分每条消息是否重复。Kafka通过为每条消息增加一个Sequence Number，通过Sequence Number来区分每条消息。每条消息对应一个分区，不同的分区产生的消息不可能重复。所有Sequence Number对应每个分区Broker端在缓存中保存了这个Sequence Number，对于接收的每条消息，如果其序号比Broker缓存中序号大于1则接受它，否则将其丢弃。这样就可以实现消息重复提交了。但是，只能保证单个Producer对于同一个<Topic, Partition>的Exactly Once语义。不能保证同一个Producer一个Topic不同的Partion的幂等。
+生产者实现幂等性很简单，只需要增加配置：enable.idempotence=true;
+首先KafkaProducer启动时，会初始化一个TransactionManager实例，它的作用有下面几个部分：
+	- 记录本地的事务状态(事务性时必须)
+	- 记录一些状态信息以保证幂等性，比如：每个topic-partition对应的下一个sequence numbers和last acked batch(最近一个已经确认的batch)的最大的sequence number等
+	- 记录ProducerIdAndEpoch信息(PID信息)
+幂等性时，Producer的发送流程如下：
+	1. 调用KafakaProducer的send方法将数据添加到RecordAccumulator中，添加时会判断是否需要新建一个ProducerBatch,这时这个ProducerBatch还没有PID和Sequence Number。
+	2. Producer后台发送线程Sender,在run()中，会先根据TransactionManager的shouldResetProducerStateAfterResolvingSequence()判断当前的PID是否需要重置，重置的原因为：如果topic-partition的batch已经超时还没有处理完毕，此时可能会造成sequence Number不连续。因为Sequence Number有部分已经分配出去了，而Kafka服务端没有收到这部分sequence Number的序号，Kafka服务端为了保证幂等性，只会接受同一个PID的Sequence Number等于服务端缓存Sequence Number+1的消息，所以这个时候需要重置PID来保证幂等性；
+	3. Sender线程调用maybeWaitForProducerId()方法判断是否要申请PID，如果需要，会阻塞直到成功申请到PID。
+	4. 最后调用sendProduceRequest方法将消息发送出去。
+
+使用Kafka时,需要保证exactly-once语义。要知道在分布式系统中，出现网络分区是不可避免的，如果kafka broker 在回复ack时，出现网络故障或者是full gc导致ack timeout，producer将会重发，如何保证producer重试时不造成重复or乱序？又或者producer 挂了，新的producer并没有old producer的状态数据，这个时候如何保证幂等？即使Kafka 发送消息满足了幂等，consumer拉取到消息后，把消息交给线程池workers，workers线程对message的处理可能包含异步操作，又会出现以下情况：
+	- 先commit，再执行业务逻辑：提交成功，处理失败 。造成丢失
+	- 先执行业务逻辑，再commit：提交失败，执行成功。造成重复执行
+	- 先执行业务逻辑，再commit：提交成功，异步执行fail。造成丢失
+针对以上的问题，Kafka-0.11版新增了幂等性Producer和事务性Producer，前者解决了单会话幂等性等问题，后者解决了多会话幂等性问题。
+假设有5个请求，batch1,batch2,batch3,batch4,batch5:如果只有batch2 ack failed, 3,4,5都保存了，那么2将会随下次batch重发而造成重复。可以设置max.in.flight.requests.per.connection=1(客户端在单个连接上能够发送的未响应请求的个数)来解决乱序，但降低了系统吞吐率。
+新版本Kafka设置enable.idempotence=true后能够动态调整max-in-flight-request。正常情况下max.in.flight.requests.per.connection大于1。当重试请求到来时，batch会根据sequence number重新添加到队列的合适位置，并把max.in.flight.requests.per.connection设为1，这样它前面的batch序号都比它小，只有前面的都发完了，它才能发。
+在单会话幂等性介绍中，Kafka通过引入PID和SequenceNumber来实现单会话幂等性，但正是引入了PID，当应用重启后，新的Producer并没有Old Producer的状态信息，可能重复保存。Kafka事务引入TransactionId和Epoch，设置transactional.id后，一个transactionID只对应一个PID,且Server端会记录最新的Epoch值。这样有新的Producer初始化时，会向TransactionCoordinator发送InitPIDRequest请求，TransactionCoordinator已经有了这个transactionID对应的metadata,会返回之前分配的PID，并把Epoch自增1返回，这样当Old Producer恢复过来请求操作时，将被认为是无效的Producer抛出异常。如果没有开启事务，TransactionCoordinator会为新的Producer返回New PID，这样就起不到隔离效果，因此无法实现多会话幂等。
+对于Consumer端的幂等性，则需要业务方面进行幂等控制。
+
+Kafka使用场景：
+	1. 消息系统(但Kafka并没有提供JMS中的事务性，消息确认机制，消息分组等企业级特性)
+	2. bin log数据订阅，进行实时数据统计分析，预警/监控
+	3. 日志归集，日志在线/离线分析、，预警/监控
+	4. 网站活动追踪
+	5. 流式处理：Kafka Streams
+	6. 各种事件处理
+
+public class ForkJoinWorkerThread extends Thread {
+	final ForkJoinPool pool;
+	final ForkJoinPool.WorkQueue workQueue;
+	protected void onStart() {}
+	protected void onTermination(Throwable exception) {}
+	
+	public void run() {
+		if (workQueue.array == null) { // only run once
+			Throwable exception = null;
+			try {
+				onStart();
+				pool.runWorker(workQueu);
+			} catch (Throwable ex) {
+				exception = ex;
+			} finally {
+				try {
+					onTermination(exception);
+				} catch (Throwable ex) {
+					if (exception == null)
+						exception = ex;
+				} finally {
+					pool.deregisterWorker(this, exception);
+				}
+			}
+		}
+	}
+	...
+}
+
+线程池的优点：
+	1. 重用线程池中的线程，减少因对象/线程创建、销毁所带来的性能开销；
+	2. 能有效的控制线程的最大并发数，提高系统资源利用率，同时避免过多的资源竞争，避免堵塞；
+	3. 能够多线程进行简单的管理，使线程的使用简单、高效；
+
+/* The Executor implements provided in this package implement ExecutorService, which is a more extensive interface. The ThreadPoolExecutor class provides an extensible thread pool implementation. The Executors class provides convenient factory methods for these Executors.
+*/
+public interface Executor {
+	/* Executes the given command at some time in the future. The command may execute in a new thread, in a pooled thread, or in the calling thread, at the discretion of the Executor implementation.
+	*/
+	void execute(Runnable command);
+}
+
+类图如下：
+ExecutorService extends Executor;
+AbstractExecutorService implements ExecutorService;
+ScheduledExecutorService extends ExecutorService;
+ThreadPoolExecutor extends AbstractExecutorService;
+ScheduledThreadPoolExecutor implments ScheduledExecutorService extends ThreadPoolExecutor;
+Executors是Executor的工厂类；
+
+public interface ExecutorService extends Executor {
+	void shutdown();
+	/*Attempts to stop all actively executing tasks, halts the processing of waiting tasks, and returns a list of the tasks that were awaiting execution.
+	This method does not wait for actively executing tasks to terminate. Use awaitTermination to do that.
+	There are no guarantees beyond best-effort attempts to stop processing actively executing tasks. For example, typical implementations will cancel via Thread.interrupt, so any task that fails to respond to interrupts may never terminate.
+	*/
+	List<Runnable> shutdownNow();
+	boolean isShutdown();
+	boolean isTerminated();
+	boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException;
+	<T> Future<T> submit(Callable<T> task);
+	<T> Future<T> submit(Runnable task, T result);
+	Future<?> submit(Runnable task);
+	<T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks) throws InterruptedException;
+	<T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit) throws InterruptedException;
+	<T> invokeAny(Collection<? extends Callable<T>> tasks) throws InterruptedException, ExecutionException;
+	<T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException;
+}
+
+ExecutorService中isShutdown(), isTerminated()区别：
+	1. isShutdown():当调用shutdown()或shutdownNow()方法后返回true;
+	2. isTerminated():当调用shudown()后，并且所有提交的任务完成后返回true;当调用shutdownNow()方法后，成功停止后返回true;
+/* Factory and utility methods for Executor, ExecutorService, ScheduledExecutorService, ThreadFactory, and Callable classes defined in this package. 
+*/
+public class Executors {
+	...
+	/*Creates an Executor that uses a single worker thread operating off an unbounded queue. (Note however that if this single thread terminates due to a failure during execution prior to shutdown, a new one will take its place if needed to execute sequentially, and no more than one task will be active at any given time. Unlike the otherwise equivalent (newFixedThreadPool(1)) the returned executor is guaranteed not to be reconfigurable to use additional threads. 
+	*/
+	public static ExecutorService newSingleThreadExecutor() {
+		return new FinalizableDelegatedExecutorService(
+			new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+									new LinkedBlockingQueue<Runnable>())
+		);
+	}
+	...
+}
+
+/* A Future that is Runnable. Successful execution of the run() method causes completion of the Future and allows access to its results.
+*/
+public interface RunnableFuture<V> extends Runnable, Future<V> {
+	/* Sets this Future to the result of its computation unless it has been cancelled. 
+	*/
+	void run();
+}
+
+/* A cancellable asynchronous computation. This class provides a base implementation of Future, with methods to start and cancel a computation, query to see if the computation is complete, and retrieve the result of the computation. The result can only be retrieved when the computation has completed; the get() will block if the computation has not yet completed. Once the computation has completed, the computation cannot be restarted or cancelled(unless the computation is invoked using runAndReset()); 
+A FutureTask can be used to wrap a Callable or Runnable object. Because FutureTask implements Runnable, a FutureTask can be submitted to an Executor for execution. 
+In addition to serving as a standalone class, this class provides protected functionality that may be useful when creating customized task classes. 
+*/
+public class FutureTask<V> implements RunnableFuture<V> {
+	...
+	...
+}
+/*
+Most typically, core and maximum pool sizes are set only upon construction, but they may also be changed dynamically using setCorePoolSize() and setMaximumPoolSize(). 
+By default, even core threads are initially created and started only when new tasks arrive, but this can be overridden dynamically using method prestartCoreThrea() or prestartAllCoreThreads(). You probably want to prestart threads if you construct the pool with a non-empty queue. 
+By supplying a different ThreadFactory, you can alter the thread's name, thread group, priority, daemon status, etc. If a ThreadFactory fails to create when asked by returning null from newThread(), the executor will continue, but might not be able to execute any tasks. Threads should possess the "modifyThread" RuntimePermission. If worker threads or other threads using the pool do not possess this permission, service may be degraded: configuration changes may not take effect in a timely manner, and a shutdown pool may remain in a state in which termination is possible but not completed. 
+By default, the keep-alive policy applies only when there are more than corePoolSize threads. But allowCoreThreadTimeOut(boolean) can be used to apply this time-out policy to core threads as well, so long as the KeepAliveTime value is non-zero.
+Hook methods: This class provides protected overridable beforeExecute(Thread, Runnable) and afterExecute(Runnable, Throwable) methods that are called before and after execution of each task. These can be used to manipulate the execution environment; for example, reinitializing ThreadLocals, gathering statistics, or adding log entries. Additionally, method terminated() can be overridden to perform any special processing that needs to be done once the Executor has fully terminated. If hook or callback methods throw exceptions, internal worker threads may in turn fail and abruptly terminate. 
+
+*/
+public class ThreadPoolExecutor extends AbstractExecutorService {
+	/**
+     * The main pool control state, ctl, is an atomic integer packing
+     * two conceptual fields
+     *   workerCount, indicating the effective number of threads
+     *   runState,    indicating whether running, shutting down etc
+     *
+     * In order to pack them into one int, we limit workerCount to
+     * (2^29)-1 (about 500 million) threads rather than (2^31)-1 (2
+     * billion) otherwise representable. If this is ever an issue in
+     * the future, the variable can be changed to be an AtomicLong,
+     * and the shift/mask constants below adjusted. But until the need
+     * arises, this code is a bit faster and simpler using an int.
+     *
+     * The workerCount is the number of workers that have been
+     * permitted to start and not permitted to stop.  The value may be
+     * transiently different from the actual number of live threads,
+     * for example when a ThreadFactory fails to create a thread when
+     * asked, and when exiting threads are still performing
+     * bookkeeping before terminating. The user-visible pool size is
+     * reported as the current size of the workers set.
+     *
+     * The runState provides the main lifecycle control, taking on values:
+     *
+     *   RUNNING:  Accept new tasks and process queued tasks
+     *   SHUTDOWN: Don't accept new tasks, but process queued tasks
+     *   STOP:     Don't accept new tasks, don't process queued tasks,
+     *             and interrupt in-progress tasks
+     *   TIDYING:  All tasks have terminated, workerCount is zero,
+     *             the thread transitioning to state TIDYING
+     *             will run the terminated() hook method
+     *   TERMINATED: terminated() has completed
+     *
+     * The numerical order among these values matters, to allow
+     * ordered comparisons. The runState monotonically increases over
+     * time, but need not hit each state. The transitions are:
+     *
+     * RUNNING -> SHUTDOWN
+     *    On invocation of shutdown(), perhaps implicitly in finalize()
+     * (RUNNING or SHUTDOWN) -> STOP
+     *    On invocation of shutdownNow()
+     * SHUTDOWN -> TIDYING
+     *    When both queue and pool are empty
+     * STOP -> TIDYING
+     *    When pool is empty
+     * TIDYING -> TERMINATED
+     *    When the terminated() hook method has completed
+     *
+     * Threads waiting in awaitTermination() will return when the
+     * state reaches TERMINATED.
+     *
+     * Detecting the transition from SHUTDOWN to TIDYING is less
+     * straightforward than you'd like because the queue may become
+     * empty after non-empty and vice versa during SHUTDOWN state, but
+     * we can only terminate if, after seeing that it is empty, we see
+     * that workerCount is 0 (which sometimes entails a recheck -- see
+     * below).
+     */
+	private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0);
+	private static final int COUNT_BITS = Integer.SIZE - 3;
+	private static final int CAPACITY = (1 << COUNT_BITS) - 1;
+	
+	// runState is stored in the high-order bits
+	private static final int RUNNING     = -1 << COUNT_BITS;
+	private static final int SHUTDOWN    =  0 << COUNT_BITS;
+	private static final int STOP        =  1 << COUNT_BITS;
+	private static final int TIDYING     =  2 << COUNT_BITS;
+	private static final int TERMINATED  =  3 << COUNT_BITS;
+	
+	// Packing and unpacking ctl
+	private static int runStateOf(int c) { return c & ~CAPACITY; }
+	private static int workerCountOf(int c) { return c & CAPACITY; }
+	private static int ctlOf(int rs, int wc) { return rs | wc; }
+	
+	
+	/*Class Worker mainly maintains interrupt control state for threads running tasks, along with other minor bookkeeping. This class opportunistically extends AbstractQueuedSynchronizer to simplify acquiring and releasing a lock surrounding each task execution. This protects against interrupts that are intended to wake up a worker thread waiting for a task from instead interrupting a task beging run. We implement a simple non-reentrant mutual exclusion lock rather than use ReentrantLock because we do not want worker tasks to be able to reacquire the lock when invoke pool control methods like setCorePoolSize. Additionally, to suppress interrupts until the thread actually starts running tasks, we initialize lock state to a negative value, and clear it upon start(in runWorker)
+	*/
+	private final class Worker extends AbstractQueuedSynchronizer implements Runnable {
+		private static final long serialVersionUID = 6138294804551838833L;
+		final Thread thread;
+		Runnable firstTask;
+		volatile long completedTasks;
+		
+		Worker(Runnable firstTask) {
+			setState(-1);
+			this.firstTask = firstTask;
+			this.thread = getThreadFactory().newThread(this);
+		}
+		
+		public void run() {
+			runWorker(this);
+		}
+		
+		protected boolean isHeldExclusively() {
+			return getState() != 0;
+		}
+		
+		protected boolean tryAcquire(int unused) {
+			if (compareAndSetState(0, 1)) {
+				setExclusiveOwnerThread(Thread.currentThread());
+				return true;
+			}
+			return false;
+		}
+		
+		protected boolean tryRelease(int unused) {
+			setExclusiveOwnerThread(null);
+			setState(0);
+			return true;
+		}
+		
+		public void lock() {acquire(1);}
+		public boolean tryLock() {return tryAcquire(1);}
+		public void unlock() {release(1);}
+		public boolean isLocked() {return isHeldExclusively();}
+		
+		void interruptIfStarted() {
+			Thread t;
+			if (getState() >= 0 (t = thread) != null && !t.isInterrupted()) {
+				try {
+					t.interrupt();
+				} catch (SecurityException ignore) { }
+			}
+		}
+	}
+	
+	/* Perform blocking or timed wait for a task, depending on current configuration settings,
+	or returns null if this worker must exit because of any of:
+		1. There are more than maximumPoolSize workers (due to a call to setMaximumPoolSize).
+		2. The pool is stopped.
+		3. The pool is shutdown and the queue is empty.
+		4. This worker timed out waiting for a task, and timed-out workers are subject to termination (that is allowCoreThreadTimeOut || workerCount > corePoolSize both before and after the timed wait and if the queue is non-empty, this worker is not the last thread in the pool.
+	
+	*/
+	private Runnable getTask() {
+		boolean timedOut = false;   //Did the last poll() time out?
+		
+		for (;;) {
+			int c = ctl.get();
+			int rs = runStateOf(c);
+			
+			// Check if queue empty only if necessary
+			if (rs >= SHUTDOWN && (rs >= STOP || workQueue.isEmpty())) {
+				decrementWorkerCount();
+				return null;
+			}
+			
+			int wc = workerCountOf(c);
+			
+			//Are workers subject to culling?
+			boolean timed = allowCoreThreadTimeOut || wc > corePoolSize;
+			
+			if ((wc > maximumPoolSize || (timed && timedOut))
+					&& (wc > 1 || workQueu.isEmpty())) {
+				if (compareAndDecrementWorkerCount(c))
+					return null;
+				continue;
+			}
+			try {
+				Runnable r = timed ?
+							workQueue.poll(keepAliveTime, TimeUnit.NANOSECONDS) : 
+							workQueue.take();
+				if (r != null)
+					return r;
+				timedOut = true;
+			} catch (InterruptedException retry) {
+				timedOut = false;
+			}
+		}
+	}
+	/* Main worker run loop. Repeatedly gets tasks from queue and executes them, while coping with a number of issues:
+		1. We may start out with an initial task, in which case we don't need to get the first one. Otherwise, as long as pool is running, we get tasks from getTask(). If it returns null then the worker exits due to changed pool state or configuration parameters. Other exits result from exception throw in external code, in which case completedAbruptly holds, which usually leads processWorkerExit() to replace this thread.
+		2. Before running any task, the lock is acquired to prevent other pool interrupts while the task is executing, and then we ensure that unless pool is stopping, this thread does not have its interrupt set.
+		3. Each task run is preceded by call to beforeExecute, which might throw an exception, in which case we cause thread to die(breaking loop with completedAbruptly true) without processing the task.
+		4. Assuming beforeExecute() completes normally, we run the task, gathering any of its thrown exceptions to afterExecute(). We separately handles RuntimeException, Error(both of which the specs guarantee that we trap) and arbitrary Throwables. Because we cannot rethrow Throwables within Runnable.run, we wrap them within Errors on the way out (to the thread's UncaughtExceptionHandler). Any thrown exception also conservatively causes thread to die.
+		5. After task.run completes, we call afterExecute(), which may also throw an exception, which will also cause thread to die. According to JLS Sec 14.20, this exception is the one that will be in effect even if task.run throws.
+		
+		The net effect of the exception mechanics is that afterExecute() and the thread's UncaughtExceptionHandler have as accurate information as we can provide about any problems encountered by user code. 
+	*/
+	final void runWorker(Worker w) {
+		Thread wt = Thread.currentThread();
+		Runnable task = w.firstTask;
+		w.firstTask = null;
+		w.unlock();   //allow interrupts
+		boolean completedAbruptly = true;
+		try {
+			while (task != null || (task = getTask()) != null) {
+				w.lock();
+				//If pool is stopping, ensure thread is interrupted; if not, ensure thread is not interrupted. 
+				//This requires a recheck in second case to deal with shutdownNow race while clearing interrupt
+				
+				if ((runStateAtLeast(ctl.get(), STOP) || 
+						(Thread.interrupted() && 
+							runStateAtLeast(ctl.get(), STOP))) && 
+					!wt.isInterrupted())
+					wt.interrupt();
+				try {
+					beforeExecute(wt, task);
+					Throwable thrown = null;
+					try {
+						task.run();
+					} catch (RuntimeException x) {
+						thrown = x; throw x;
+					} catch (Error x) {
+						thrown = x; throw x;
+					} catch (Throwable x) {
+						thrown = x; throw new Error(x);
+					} finally {
+						afterExecute(task, thrown);
+					}
+				} finally {
+					task = null;
+					w.completedTasks ++;
+					w.unlock();
+				}
+			}
+		} finally {
+			processWorkerExit(w, completedAbruptly);
+		}
+	}
+	
+	public void execute(Runnable command) {
+		if (command == null)
+			throw new NullPointerException();
+		
+		int c = ctl.get();
+		if (workerCountOf(c) < corePoolSize) {
+			if (addWorker(command, true))
+				return;
+			c = ctl.get();
+		}
+		
+		if (ifRunning(c) && workQueue.offer(command)) {
+			int recheck = ctl.get();
+			if (! isRunning(recheck) && remove(command))
+				reject(command);
+			else if (workerCountOf(recheck) == 0)
+				addWorker(null, false);
+		} else if (!addWorker(command, false))
+			reject(command);
+	}
+	
+	private boolean addWorker(Runnable firstTask, boolean core) {
+		retry:
+		for (;;) {
+			int c = ctl.get();
+			int rs = runStateOf(c);
+			
+			// Check if queue empty only if necessary
+			if (rs >= SHUTDOWN && 
+				!(rs == SHUTDOWN &&
+					firstTask == null && 
+					!workQueue.isEmpty()))
+				return false;
+			
+			for (;;) {
+				int wc = workerCountOf(c);
+				if (wc >= CAPACITY || 
+					wc >= (core ? corePoolSize : maximumPoolSize))
+					return false;
+				if (compareAndIncrementWorkerCount(c))
+					break retry;
+				c = ctl.get();   // Re-read ctl
+				if (runStateOf(c) != rs)
+					continue retry;
+				// else CAS failed due to workerCount change; retry inner loop
+			}
+		}
+		
+		boolean workerStarted = false;
+		boolean workerAdded = false;
+		Worker w = null;
+		try {
+			w = new Worker(firstTask);
+			final Thread t = w.thread;
+			if (t != null) {
+				final ReentrantLock mainLock = this.mainLock;
+				mainLock.lock();
+				try {
+					//Recheck while holding lock.
+					//Back out on ThreadFactory failure or if shut down before lock acquired.
+					int rs = runStateOf(ctl.get());
+					
+					if (rs < SHUTDOWN || 
+						(rs == SHUTDOWN && firstTask == null)) {
+						if (t.isAlive))   //precheck that t is startable
+							throw new IllegalThreadStateException();
+						workers.add(w);
+						int s = workers.size();
+						if (s > largestPoolSize)
+							largestPoolSize = s;
+						workerAdded = true;
+					}
+				} finally {
+					mainLock.unlock();
+				}
+				if (workerAdded) {
+					t.start();
+					workerStarted = true;
+				}
+			}
+		} finally {
+			if (!workerStarted) {
+				addWorkerFailed(w);
+			}
+		}
+		return workerStarted;
+	}
+	
+	private void processWorkerExit(Worker w, boolean completeAbruptly) {
+		if (completedAbruptly)   // If abrupt, then workerCount wasn't adjusted
+			decrementWorkerCount();
+		
+		final ReentrantLock mainLock = this.mainLock;
+		mainLock.lock();
+		try {
+			completedTaskCount += w.completedTasks;
+			workers.remove(w);
+		} finally {
+			mainLock.unlock();
+		}
+		
+		int c = ctl.get();
+		if (runStateLessThan(c, STOP)) {
+			if (!completedAbruptly) {
+				int min = allowCoreThreadTimeOut ? 0 : corePoolSize;
+				if (min == 0 && ! workQueue.isEmpty())
+					min = 1;
+				if (workerCountOf(c) >= min)
+					return;   // replacement not needed
+			}
+			addWorker(null, false);
+		}
+	}
+}

@@ -1,0 +1,431 @@
+ThreadLocal是一个本地线程副本变量工具类，主要用于将私有线程和该线程存放的副本对象做一个映射，各个线程之间的变量互不干扰，在高并发场景下，可以实现无状态的调用，特别适用于各个线程依赖不同的变量值完成操作的场景。
+
+Each thread holds an implicit reference to its copy of a thread-local variable as long as the thread is alive and the ThreadLocal instance is accessible;after a thread goes away, all of its copies of thread-local instances are subject to garbage collection(unless other reference to these copies exist);
+
+ThreadLocalMap是ThreadLocal的内部类，没有实现Map接口，用独立的方式实现了Map功能，其内部的Entry也独立实现。
+static class ThreadLocalMap {
+	static class Entry extends WeakReference<ThreadLocal<?>> {
+		Object value;
+		Entry(ThreadLocal<?> k, Object v) {
+			super(k);
+			value = v;
+		}
+	}
+	private static int nextIndex(int i, int len) {
+		return ((i + 1 < len) ? i + 1 : len - 1);
+	}
+	private static int prevIndex(int i, int len) {
+		return ((i - 1 >= 0) ? i - 1 : len - 1);
+	}
+}
+
+和HashMap的最大的不同在于，ThreadLocalMap结构非常简单，没有next引用，也就是说ThreadLocalMap中解决Hash冲突的方式并非链表的方式，而是采用线性探测的方式，所谓线性探测，就是根据初始key的hashcode值确定元素在table数组中的位置，如果发现这个位置上已经有其他key值的元素被占用，则利用固定的算法寻找一定步长的下个位置，依次判断，直至找到能够存放的位置。
+ThreadLocalMap解决Hash冲突的方式就是简单的步长加1或减1，寻找下一个相邻的位置。
+显然ThreadLocalMap采用线性探测的方式解决Hash冲突的效率很低，如果有大量不同的ThreadLocal对象放入map中时，发生冲突的可能性增加，效率很低。
+ThreadLocalMap的问题：由于ThreadLocalMap的key是弱引用，而value是强引用。当ThreadLocal没有外部对象强引用时，发生GC时弱引用key就会被回收，而value不会回收。如果创建ThreadLocal的线程一直持续运行，那么Entry中的value就有可能一直得不到回收，发生内存泄露。
+如何避免ThreadLocalMap的内存泄露：既然key是弱引用，在调用ThreadLocal的get,set方法时，再调用remove方法，将Entry节点和Map的引用关系移除，这样整个Entry对象在GC Roots分析后就变成不可达了，下次GC的时候就可以被回收。
+如果使用ThreadLocal的set方法之后，没有显示的调用remove方法，就有可能发生内存泄露，所以养成良好的编程习惯十分重要，使用完ThreadLocal之后，记得调用remove方法。
+
+分布式锁，得益于Zookeeper保证了数据的强一致性。锁分为两类：保持独占和控制时序。
+1. 保持独占，就是所有试图来获取这个锁的客户端，最终只有一个成功获取。把zk上的一个znode看作一把锁，通过create znode的方式来实现。所有客户端都去创建/distribute_lock节点，只有成功创建的客户端持有独占锁。
+2. 控制时序，就是所有试图来获取锁的客户端，最终都会被安排执行，只是有个全局时序。只是/distribute_lock已经预先存在，客户端在下面创建临时有序节点(可以通过节点的属性控制: CreateMode.ephemeralsequential)。zk的父节点(/distribute_lock)维持一份sequence，保证子节点创建的时序性，从而形成每个客户端的全局时序。
+
+全局订单号：在redis提前预先存储100W, 等小于10W时，进行补充，因为Redis是单线程的，是安全的。
+几种实现全局锁的方案：
+1. 数据库:效率低下，并发低，容易出现死锁
+2. redis/redisson:需要考虑死锁，释放问题，不可重入，较为复杂
+3. zookeeper：使用临时节点，效率高，失效时间可以控制
+4. spring cloud
+
+Raft/Paxos:
+Paxos有三类角色：Proposer,Acceptor和Learner,主要交互过程在Proposer和Acceptor之间
+
+Hmily: 
+- 无缝集成spring, spring boot starter
+- 无缝集成Dubbo, spring cloud,Motan等rpc框架
+- 多种事务日志的存储方式(redis, monogdb, mysql)
+- 事务自动恢复
+- 支持内嵌事务的依赖传递
+- 代码零侵入，配置简单灵活
+为什么Hmily高性能?
+1. 采用disruptor进行事务日志的异步读写(disruptor是一个无锁，无GC的并发编程框架);
+2. 
+
+public ThreadPoolExecutor(int corePoolSize,
+							int maximumPoolSize,
+							long keepAliveTime,
+							TimeUnit unit,
+							BlockingQueue<Runnable> workQueue,
+							ThreadFactory threadFactory,
+							RejectedExecutionHandler handler) {
+	if (corePoolSize < 0 || maximumPoolSize <= 0 || maximumPoolSize < corePoolSize ||
+		keepAliveTime < 0)
+		throw new IllegalArgumentException();
+	if (workQueue == null || threadFactory == null || handler == null)
+		throw new NullPointerException();
+	this.corePoolSize = corePoolSize;
+	this.maximumPoolSize = maximumPoolSize;
+	this.workQueue = workQueue;
+	this.keepAliveTime = unit.toNanos(keepAliveTime);
+	this.threadFactory = threadFactory;
+	this.handler = handler;
+}
+
+每次在Redis中创建键值对时，至少会创建两个对象，一个是键，一个是值对象。而Redis中的每个对象都是由redisObject结构来表示:
+typedef struct redisObject {
+	unsigned type;
+	unsigned encoding;
+	void *ptr;
+	int refcount;
+	unsigned lru;
+}robj;
+
+CMS:以获取最短回收停顿时间为目标的收集器，基于并发"标记清理"实现。
+	-过程：初始标记->并发标记->重新标记->并发清理。
+	-优点：并发，低停顿
+	-缺点：	1. 对CPU非常敏感：在并发阶段虽然不会导致用户线程停顿，但是会因为占用了一部分线程使应用程序变慢
+			2. 无法处理浮动垃圾：在最后一步并发清理过程中，用户线程执行也会产生垃圾，但这部分垃圾是在标记之后，所以只有等下一次GC的时候清理，这部分垃圾叫浮动垃圾
+			3. CMS使用标记-清理会产生大量的空间碎片，当碎片过多，将会对大对象的分配带来麻烦，往往出现老年代还有很多空间但无法找到足够大的连续空间来分配，不得不提前进行FullGC，为了解决这个问题CMS提供了一个开关参数，要进行FullGC时开启内存碎片的合并整理过程(-XX:UseCMSCompactAtFullCollection),但是内存整理过程是无法并发的，空间碎片没有了但停顿时间变长了。
+			
+G1:是一款面向服务端的GC
+特点：
+1. 并行与并发: 使用多CPU来缩短STW停顿时间
+2. 分代收集：G1不需要其他收集器配合就能独立管理整个堆
+3. 空间整合: G1使用Region区域，G1从整理来看是标记-整理算法收集，从局部(两个Region)来看是基于复制算法，但无论如何，这两种算法意味着G1运行期间不会产生内存碎片
+4. 可预测的停顿：G1除了追求低停顿外，还建立可预测的停顿时间模型，明确指定一个长度为M毫秒，消耗在GC上的时间不得超过M毫秒。
+同时，为了避免全堆扫描，G1使用了Remebered Set来管理相关的对象引用信息。当进行内存回收时，在GC根节点的枚举范围中加入Remebered Set即可保证不对全堆扫描。
+如果不计算维护Remembered Set的操作，G1的运作大致可以分为以下几个步骤
+1. 初始标记-Initial Marking
+2. 并发标记-Concurrent Marking
+3. 最终标记-Final Marking
+4. 筛选回收-Live Data Counting and Evacuation
+
+MySQL用B+树做索引而不用B-数或红黑树
+MySQL的共享锁(shared locks, S锁)
+select ... lock in share mode;
+排他锁(exclusive locks, X锁)
+select ... for update;
+发生死锁后，InnoDB会产生错误信息，并且释放锁。
+意向锁(Intention Locks)：意向锁是表锁，多用在InnoDB中，是数据库自身的行为，不需要人工干预，在事务结束后会自行解除。
+意向锁分为意向共享锁(IS锁)和意向排他锁(IX锁)
+-IS锁：表示事务中将要对某些行加S锁
+-IX锁：表示事务中将要对某些行加X锁
+意向锁的主要作用是提升存储引擎性能，InnoDB中的S锁和X锁是行锁，每当事务到来时，存储引擎需要遍历所有行的锁持有情况，性能很低，因此引入意向锁，检查行锁前先检查意向锁是否存在，如果存在则阻塞线程。
+意向锁协议：
+	- 事务要获取表A某些行的S锁必须要获取表A的IS锁
+	- 事务要获取表A某些行的X锁必须要获取表A的IX锁
+间隙锁(Gap Lock)：
+A gap lock is a lock on a gap between index records, or a lock on the gap before the first or after the last index record. For example, select c1 from t where c1 between 10 and 20 for update; prevents other transactions from inserting a value of 15 into column t.c1, whether or not there was already any such value in the column, because the gaps between all existing values in the range are locked. 
+
+当我们用范围条件条件检索数据（非聚簇索引、非唯一索引），并请求共享或排他锁时，InnoDB会给符合条件的数据记录的索引项加锁；对于键值在条件范围内但并不存在的记录，称为间隙，InnoDB也会为这些间隙加锁，即间隙锁。
+Next-Key锁是符合条件的行锁加上间隙锁
+在InnoDB下，间隙锁的产生需要满足三个条件：
+	- 隔离级别为RR
+	- 当前读
+	- 查询条件能够走到索引
+间隙锁的目的是为了让其他事务无法在间隙中新增数据。
+在RR模式的InnoDB中，间隙锁起到了两个作用：
+1. 保障数据的恢复和复制
+2. 防止幻读；1）防止在间隙中执行insert语句；2）防止将已有数据update到间隙中。
+
+TCP使用一发一答的ACK网络包确认机制，尽力降低网络上的包传递量，避免网络拥堵。
+TCP控制网络拥堵的方式：
+1. 慢启动
+2. Nagle算法
+3. Cork算法
+4. 延迟ACK
+TCP的重传机制：超时重传和快速重传
+
+TCP阻塞控制的四种算法：
+1. 慢开始
+2. 拥塞避免
+3. 快重传
+4. 快恢复
+TCP阻塞的判断：
+1. 重传定时器超时
+2. 收到三个相同的ACK
+
+AIMD算法：
+1. 在拥塞避免阶段，拥塞窗口是按照线性规律增大的，这常称为"加法增大"AI(Additive Increase)
+2. 当出现超时或者3个重复的确认时，就要把门限值设置为当前拥塞窗口值的一半，并大大减小拥塞窗口的数值。这常称为"乘法减小"MD(Multiplicative Decrease)
+3. 两者合在一起就是所谓的AIMD算法。
+
+MySQL的MVCC: Multi-Version Concurrency Control 多版本并发控制，MVCC是一种并发控制方法，一般在数据库管理系统中，实现对数据库的并发访问。
+MVCC除了在MySQL中使用，在Oracle,PostgreSQL,以及其他数据库也同样使用。
+可以将MVCC看出行级别锁的一种妥协，它在很多情况下避免了使用锁，同时可以提供更小的开销。根据实现的不同，可以允许非阻塞式读，在写操作进行时只锁定必要的记录。
+
+InnoDB：通过为每一行记录添加两个额外的隐藏的值来实现MVCC，这两个值一个记录这行数据何时被创建，另外一个记录这行数据何时过期（或者被删除）。但是InnoDB并不存储这些事件发生时的实际时间，相反它只存储这些事件发生时的系统版本号。这是一个随着事务的创建而不断增长的数字。每个事务在事务开始时会记录它自己的系统版本号。每个查询必须去检查每行数据的版本号与事务的版本号是否相同。
+让我们来看看当隔离级别是REPEATABLE READ时这种策略是如何应用到特定的操作的：
+Select InnoDB必须每行数据来保证它符合两个条件：
+1. InnoDB必须找到一个行的版本，它至少要和事务的版本一样老(即它的版本号不大于事务的版本号)。这保证了不管是事务开始之前，或者事务创建时，或者修改了这行数据的时候，这行数据是存在的。
+2. 这行数据的删除版本必须是未定义或者比事务版本要大。这可以保证事务开始之前这行数据没有被删除。这里的删除不是真正的删除，而是标记出来的删除。真正的删除是commit的时候。
+符合两个条件的行可能会被当做查询结果而返回。
+
+INSERT：InnoDB为这个新行记录当前的系统版本号。
+DELETE：InnoDB将当前的系统版本号设置为这一行的删除ID。
+UPDATE：InnoDB会写一个这行数据的新拷贝，这个拷贝的版本为当前的系统版本号。它同时也会将这个版本号写到旧行的删除版本里。
+这种额外的记录所带来的结果对于大多数查询来说根本就不需要获得一个锁。只是简单地以最快速度来读取数据，确保只选择符合条件的行。这个方案的缺点在于存储引擎必须为每一行存储更多的数据，做更多的检查工作，处理更多的善后操作。
+MVCC只工作在repeatable read和read commited隔离级别下。read uncommited不是MVCC兼容的，因为查询不能找到适合它们事务版本的行版本，它们每次都只能读到最新的版本。seriablable也与MVCC不兼容，因为读操作会锁定它们返回的每一行数据。
+使用MVCC多版本并发控制比锁定模型的主要优点是在MVCC里， 对检索（读）数据的锁要求与写数据的锁要求不冲突， 所以读不会阻塞写，而写也从不阻塞读。
+
+public class CountDownLatch {
+	//Synchronization control For CountDownLatch
+	//Uses AQS state to represent count.
+	private static final class Sync extends AbstractQueuedSynchronizer {
+		private static final long serialVersionUDI = 666L;
+		Sync(int count) {
+			setState(count);
+		}
+		int getCount() {
+			return getState();
+		}
+		protected int tryAcquireShared(int acquires) {
+			return (getState() == 0) ? 1 : -1;
+		}
+		protected boolean tryReleaseShared(int releases) {
+			// Decrement count; signal when transition to zero
+			for (;;) {
+				int c = getState();
+				if (c == 0)
+					return false;
+				int nextc = c - 1;
+				if (compareAndSetState(c, nextc))
+					return nextc == 0;
+			}
+		}
+	}
+	
+	private final Sync sync;
+	public CountDownLatch(int count) {
+		if (count < 0) throw new IllegalArgumentException("count < 0");
+		this.sync = new Sync(count);
+	}
+	
+	public void await() throws InterruptedException {
+		sync.acquireSharedInterruptibly(1);
+	}
+	
+	public boolean await(long timeout, TimeUnit unit) throws InterruptedException {
+		return sync.tryAcquireSharedNanos(1, unit.toNanos(timeout));
+	}
+	
+	public void countDown() {
+		sync.releaseShared(1);
+	}
+	
+	public long getCount() {
+		return sync.getCount();
+	}
+	
+	public String toString() {
+		return super.toString() + "[Count = " + sync.getCount() + "]";
+	}
+}
+
+CountDownLatch/CyclicBarrier的应用场景:
+1. 大量并发
+2. 在没有使用RxJava前，在请求多个后台请求时，等所有都返回后，在main线程组装应答报文。
+
+public class CyclicBarrier {
+	private static class Generation {
+		boolean broken = false;
+	}
+	//The lock for guarding barrier entry
+	private final ReentrantLock lock = new ReentrantLock();
+	//Condition to wait on until tripped
+	private final Condition trip = lock.newCondition();
+	//The number of parties
+	private final int parties;
+	//The command to run with tripped
+	private final Runnable barrierCommand;
+	//The current generation
+	private Generation generation = new Generation();
+	//Number of parties still waiting. Counts down from parties to 0
+	//on each generation. It is reset to parties on each new generation or when broken
+	private int count;
+	...
+}
+
+Zuul is a JVM-based router and server-side load balancer from Netflix
+Spring Cloud Gateway requires the Netty runtime provided by Spring Boot and Spring Webflux. It does not work in a traditional
+Servlet Container or built as a WAR.
+
+在默认设置下，CMS收集器在老年代使用了68%的空间时就会被激活，也可以通过参数-XX:CMSInitiatingOccupancyFraction的值来提供触发百分比，以降低内存回收次数提高性能。要是CMS运行期间预留的内存无法满足程序其他线程需要，就会出现“Concurrent Mode Failure”失败，这时候虚拟机将启动后备预案：临时启用Serial Old收集器来重新进行老年代的垃圾收集，这样停顿时间就很长了。所以说参数-XX:CMSInitiatingOccupancyFraction设置的过高将会很容易导致“Concurrent Mode Failure”失败，性能反而降低。
+最后一个缺点，CMS是基于“标记-清除”算法实现的收集器，使用“标记-清除”算法收集后，会产生大量碎片。空间碎片太多时，将会给对象分配带来很多麻烦，比如说大对象，内存空间找不到连续的空间来分配不得不提前触发一次Full  GC。为了解决这个问题，CMS收集器提供了一个-XX:UseCMSCompactAtFullCollection开关参数，用于在Full  GC之后增加一个碎片整理过程，还可通过-XX:CMSFullGCBeforeCompaction参数设置执行多少次不压缩的Full GC之后，跟着来一次碎片整理过程。
+
+-XX:+UseConcMarkSweepGC:使用ParNew + CMS +  Serial Old的收集器组合进行内存回收，Serial Old作为CMS出现“Concurrent Mode Failure”失败后的后备收集器使用。
+
+SYN攻击：在三次握手过程中，服务器发送SYN-ACK之后，收到客户端的ACK之前的TCP连接称为半连接(half-open connect).此时服务器处于Syn_RECV状态.当收到ACK后，服务器转入ESTABLISHED状态.
+Syn攻击就是 攻击客户端 在短时间内伪造大量不存在的IP地址，向服务器不断地发送syn包，服务器回复确认包，并等待客户的确认，由于源地址是不存在的，服务器需要不断的重发直 至超时，这些伪造的SYN包将长时间占用未连接队列，正常的SYN请求被丢弃，目标系统运行缓慢，严重者引起网络堵塞甚至系统瘫痪。
+Syn攻击是一个典型的DDOS攻击。检测SYN攻击非常的方便，当你在服务器上看到大量的半连接状态时，特别是源IP地址是随机的，基本上可以断定这是一次SYN攻击.在Linux下可以如下命令检测是否被Syn攻击
+netstat -n -p TCP | grep SYN_RECV
+一般较新的TCP/IP协议栈都对这一过程进行修正来防范Syn攻击，修改tcp协议实现。主要方法有SynAttackProtect保护机制、SYN cookies技术、增加最大半连接和缩短超时时间等.
+但是不能完全防范syn攻击。
+
+为什么建立连接协议是三次握手，而关闭连接缺失四次握手?
+因为服务端的listen状态下的socket当收到syn报文的连接请求后，它可以把ack和syn(ack起应答作用，syn起同步作用)放在一个报文里来发送。但关闭连接时，当收到对方的fin报文通知时，它仅仅表示对方没有数据发送给你了。但未必你所有的数据都全部发送给对方了，所以你可能未必会马上关闭socket，也可能发送一些数据给对方后，再发送fin报文给对方表示你同意关闭连接，所以它这里的ACK报文和FIN报文多数情况下是分开发送的。
+
+为什么time_wait状态还需要2MSL后才能返回到closed状态?
+1. 可靠的实现TCP全双工链接的终止
+2. 允许老的重复的分节在网络中消逝
+
+-XX:newRatio 
+	1. 新生代(Eden + 2 * Survivor)和老年代(不包含永久区)的比值
+	2. 4表示新生代:老年代=1:4, 即年轻代占堆的1/5
+-XX:SurvivorRate
+	1. 设置两个Survivor区和Eden的比例
+	2. 8表示两个Survivor:Eden=2:8，即一个Survivor占年轻代的1/10
+-Xmn2048M: 年轻代分配大小
+-XX:PermSize=512M：持久代初始大小
+-XX:+UseParNewGC 设置年轻代并行收集
+-XX:+UseConcMarkSweepGC：设置老年代并发收集
+MaxTenuringThreshold=3:控制对象能经历多少次MinorGC才晋升到老年代
+ParallelGCTreads=8:设置并行垃圾回收的线程数
+CMSInitiatingOccupancyFraction=80: 使用CMS作为垃圾回收使用80%后开始CMS收集
+
+Semaphore可以控制同时访问的线程个数，通过acquire()获取一个许可，如果没有就等待，而release()释放一个许可。
+
+java实例化对象的方式:
+1. new 语句
+2. 通过工厂方法返回对象
+3. 运用反射对象，java.lang.Class或者java.lang.reflect.Constructor类的newInstance()实例方法，Object object = Class.forName("java.lang.Object").newInstance();
+4. 调用对象的clone()方法
+5. 通过I/O流(包括反序列化),如利用反序列化，调用java.io.ObjectInputStream对象的readObject();
+
+虚拟机把描述类的数据从Class文件加载到内存，并对数据进行校验，转换解析和初始化，最终形成可以被虚拟机直接使用的Java类型的过程就是虚拟机的类加载机制。
+JVM类加载机制主要包括两个问题：类加载的时机与步骤和类加载的方式。
+一个Java对象的创建包括两个阶段：类初始化阶段和类实例化阶段。
+类的实例化：指创建一个类的实例(对象)的过程;
+类的初始化: 为类中各个类成员(被static修饰的成员变量)赋初始值的过程，是类生命周期中的一个阶段.
+被动引用的几种经典场景:
+1. 通过子类引用父类的静态字段，不会导致子类初始化. 对于静态字段，只有直接定义这个字段的类才会被初始化，因此通过其子类来引用父类中定义的静态字段，只会触发父类的初始化而不会触发子类的初始化。
+2. 通过数组定义来引用类，不会触发此类的初始化
+3. 常量在编译阶段会存入调用类的常量池中，本质上并没有直接引用到定义常量的类，因此不会触发定义常量类的初始化。
+
+类的生命周期：加载(Loading)->验证(Verification)->准备(Preparation)->解析(Resolution)->初始化(Initialization)->使用(Using)->卸载(Unloading);
+
+在Java中， 创建一个对象常常需要经历如下几个过程：父类的类构造器<clinit>()->子类的类构造器<clinit>() ->父类的成员变量和实例代码块->父类的构造函数 >子类的成员变量和实例代码块->子类的构造函数。
+实例初始化不一定要在类初始化结束之后才开始初始化。 
+此外，在类的初始化阶段需要做的是执行类构造器<clinit>()，需要指出的是，类构造器本质上是编译器收集所有静态语句块和类变量的赋值语句按语句在源码中的顺序合并生成类构造器<clinit>()。
+在Java对象初始化过程中，主要涉及三种执行对象初始化的结构：实例变量初始化，实例代码块初始化以及构造函数初始化。
+1、一个实例变量在对象初始化的过程中会被赋值几次？
+我们知道，JVM在为一个对象分配完内存之后，会给每一个实例变量赋予默认值，这个时候实例变量被第一次赋值，这个赋值过程是没有办法避免的。如果我们在声明实例变量x的同时对其进行了赋值操作，那么这个时候，这个实例变量就被第二次赋值了。如果我们在实例代码块中，又对变量x做了初始化操作，那么这个时候，这个实例变量就被第三次赋值了。如果我们在构造函数中，也对变量x做了初始化操作，那么这个时候，变量x就被第四次赋值。也就是说，在Java的对象初始化过程中，一个实例变量最多可以被初始化4次。
+
+利用Arthas获取Spring Context上下文
+
+1. Bootstrap类加载器:sun.boot.class.path
+2. ExtClassLoader:java.ext.dirs
+3. AppClassLoader:java.class.path 
+方法loadClass()抛出的是java.lang.ClassNotFoundException异常；
+方法defineClass()抛出的是java.lang.NoClassDefFoundError异常；
+
+Zuul2.0引入了Netty和RxJava
+使用Selector的好处：使用更少的线程就可以来处理通道，相比使用多个线程，避免了线程上下文切换带来的开销。
+
+Spring Cloud Moss:
+
+public interface Lock {
+	void lock();
+	void lockInterruptibly() throws InterruptedException;
+	boolean tryLock();
+	boolean tryLock(long time, TimeUnit unit) throws InterruptedException;
+	void unlock();
+	Condition newCondition();
+}
+注意: 当一个线程获取了锁之后，是不会被interrput()方法中断的。因为单独调用interrupt()方法不能中断正在运行过程中的线程，只能中断阻塞过程中的线程。
+因此当通过lockInterruptibly()方法获取某个锁时，如果不能获取到，只有进行等待的情况下，是可以响应中断的。
+而用synchronized修饰的话，当一个线程处于等待某个锁的状态，是无法被中断的，只有一直等待下去。
+ReentrantLock:
+	-isFair()        //判断锁是否是公平锁
+　　-isLocked()    //判断锁是否被任何线程获取了
+　　-isHeldByCurrentThread()   //判断锁是否被当前线程获取了
+　　-hasQueuedThreads()   //判断是否有线程在等待该锁
+
+ProceedingJoinPort pjp;
+
+SPI: Serivce Provider Interface
+SPI的接口是Java核心库的一部分，是由BootstrapClassLoader来加载的；而SPI的实现类是由AppClassLoader来加载的。BootstrapClassLoader无法找到SPI的实现类(因为它只加载Java的核心库),按照双亲委派模型，BootstrapClassLoader无法委派AppClassLoader去加载类。也就是说，类加载器的双亲委派模式无法解决这个问题。
+线程上下文类加载器正好解决了这个问题。线程上下文类加载器破坏了双亲委派模型，可以执行线程中抛弃双亲委派加载链模式，使程序可以逆向使用类加载器。
+线程上下文类加载器从根本解决了一般应用不能违背双亲委派模式的问题，使得java类加载体系显得更灵活。 
+
+-XX:+UseG1GC -Xmx=32g -XX:MaxGcPauseMillis=200
+-XX:G1HeapRegionSize=n
+-XX:ParallelGCThreads=n 
+-XX:ConcGCThreads=n
+-XX:InitiatingHeapOccupancyPercent=45
+避免使用-Xmn选项或-XX:NewRatio等其他相关选项显示设置年轻代大小。固定年轻代的大小会覆盖暂停时间目标。
+
+Redis单线程模型的高性能:
+	1. 数据都存储在内存，访问速度快
+	2. IO是异步非阻塞IO
+	3. 避免了多线程的频繁上下文切换
+
+Redis同样会为每个客户端套接字关联一个响应队列，Redis服务器通过响应队列来将指令的返回结果回复给客户端。如果队列为空，那么连接暂时处于空闲状态，不需要去获取写事件，也就是可以将当前的客户端描述符从write_fds里面移出来。等到队列有数据了，再将描述符放进去。避免select系统调用立即返回写事件，结果发现没什么数据可以写，出现这种情况会飙高CPU。
+
+Redis的线程模型：
+1. Redis基于reactor模式开发了网络事件处理器，这个处理器叫做文件事件处理器，file event handler。这个文件事件处理器是单线程的，redis才叫做单线程模型，采用IO多路复用机制同时监听多个socket，根据socket上的事件来选择对应的事件处理器来处理这个事件。
+2. 文件事件处理器的结构包括4个部分：多个socket，IO多路复用程序，文件事件分派器，事件处理器(命令请求处理器，命令回复处理器，连接应答处理器等等)
+3. 如果被监听的socket准备好执行accept,read,write,close等操作的时候，跟操作对应的文件事件就会产生，这个时候文件事件处理器就会调用之前关联好的事件处理器来处理这个事件。
+4. 多个socket可能并发的产生不同的操作，每个操作对应不同的文件事件，但是IO多路复用程序会监听多个socket，但是会将socket放入一个队列中排队，每次从队列中取出一个socket给事件分派器，事件分派器把socket给对应的事件处理器。
+5. 然后一个socket的事件处理完之后，IO多路复用程序才会将队列中的下一个socket给事件分派器。文件事件分派器会根据每个socket当前产生的事件，来选择对应的事件处理器来处理。
+6. 当socket变得可读时(比如客户端对redis执行write操作，或close操作)，或者有新的可以应答的socket出现时(客户端对redis执行connect操作)，socket就会产生一个AE_READABLE事件。
+7. 当socket变得可写的时候(客户端对redis执行read操作)，socket会产生一个AE_WRITABLE事件。
+8. IO多路复用程序可以同时监听AE_READABLE和AE_WRITABLE两种事件。如果一个socket同时产生AE_READABLE和AE_WRITABLE两种事件，那么文件事件分派器优先处理AE_READABLE事件，然后才是AE_WRITABLE事件。
+
+MySQL InnoDB存储引擎，实现的是基于多版本的并发控制协议——MVCC(Multi-Version Concurrency Control)(注：与MVCC相对的，是基于锁的并发控制，Lock-Based Concurrency Control)。MVCC最大的好处：读不加锁，读写不冲突。在读多写少的OLTP应用中，读写不冲突是非常重要的，极大的增加了系统的并发性能，这也是为什么现阶段，几乎所有的RDBMS，都支持了MVCC。
+在MVCC并发控制中，读操作可以分为两类：快照读(snapshot read)与当前读(current read)。快照读，读取的是记录的可见版本(有可能是历史版本)，不用加锁。当前读，读取的是记录的最新版本，并且，当前读返回的记录，都会加上锁，保证其他事务不会再并发修改这条记录。
+select * from tb where ? lock in share mode;
+select * from tb where ? for update;
+
+MySQL的事务隔离级别:RU->RC->RR->S 
+Linux的taskset命令，可以使指定进程在指定CPU上运行
+Redis如何利用多核的性能：
+	1. 在单台服务器上运行多个Redis实例(主从/集群)，并将每个Redis实例和CPU进行绑定(使用taskset命令)
+	2. 利用集群化部署，对Redis进行数据分片。
+
+Select有一个缺点，当有IO事件时，线程在被唤醒后轮询所有的stream，存在无效操作。epoll会根据哪个流发生了怎么样的IO事件通知处理线程，因此对流的操作都是有意义的，复杂度降低到了O(1)。
+Nginx:多进程单线程模型
+Memcached:单进程多线程模型
+
+Redis的value最大可以达到1GB,而Memcached只有1M。
+Redis数据分片的技术方案：
+	1. Client side partitioning;
+	2. Proxy assisted partitioning;
+	3. Query routing(Redis Cluster)
+
+Redis Cluster supports mostly transparent rebalancing of data with the ability to add and remove nodes at runtime, but other systems like client side partitioning and proxies don't this feature. However a technique called Pre-sharding helps in this regard.
+redis性能为什么高?
+	1. 完全基于内存
+	2. 数据结构简单，对数据操作简单
+	3. 采用单线程，避免了上下文切换和锁竞争
+	4. 使用多路IO复用模型，非阻塞IO
+	5. 使用底层模型不同，底层实现方式以及客户端之间的通信应用协议不一样，Redis直接构建了VM机制，因为一般的系统调用系统函数的话，会浪费一定的时间去移动和请求
+
+When a new task is submitted in method(execute(Runnable)), and fewer than corePoolSize threads are running, a new thread is created to handle the request, even if other worker threads are idle. If there are more than corePoolSize but less than maximumPoolSize threads running, a new threa will be created only the queueu is full.
+HashMap的主要成员变量: 
+transient Node<K, V>[] table;
+transient int size;
+transient int modCount;
+int threshold;
+final float loadFactor;
+static final int DEFAULT_INITIAL_CAPACITY = 1 << 4;
+static final float DEFAULT_LOAD_FACTOR = 0.75f;
+默认初始容量16和默认负载系数0.75
+static int final int hash(Object key) {
+	int h;
+	return (key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);
+}
+
+public class ThreadPoolExecutor extends AbstractExecutorService {
+	//Starts a core thread, causing it to idly wait for work. This overrides the 
+	//default policy of starting core threads only when new tasks are executed.
+	//This method will return false if all core threads have already been started
+	public boolean prestartCoreThread() {
+		return workerCountOf(ctl.get(0)) < corePoolSize &&
+		addWorker(null, worker);
+	}
+}
+MySQL实现回滚操作完全依赖于undo log, undo log除了用来实现原子性保证之外，还用来实现MVCC。
+Read Uncommitted只实现了写写并发控制，并没有有效的读写并发控制，导致当前事务可能读到其他事务还没有提交的修改数据。
+写写并发控制使用两阶段锁协议对应相应记录加行锁实现。不过MySQL中行锁机制比较复杂，根据行记录释放是主键索引，唯一索引，非唯一索引或者无索引等分为多种加锁情况。
+RC(Read Committed)和RR(Repeatable Read)都使用MVCC机制实现事务之间的读写并发。

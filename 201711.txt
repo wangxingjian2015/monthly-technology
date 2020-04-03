@@ -1,0 +1,449 @@
+在JDK8之前，分层编译默认是关闭的，可以添加-server -XX:+TieredCompilation参数进行开启。
+逃逸分析并不是直接的优化手段，而是一个代码分析，通过动态分析对象的作用域，为其他优化手段如栈上分配，标量替换和同步消除等提供依据，发生逃逸行为的情况有两种：
+1. 方法逃逸:当一个对象在方法中定义之后，作为参数传递到其他方法中。
+2. 线程逃逸：如类变量或实例变量，可能被其他线程访问到；
+如果不存在逃逸行为，则可以对该对象进行如下优化：同步消除，标量替换和栈上分配。
+1. 同步消除 
+	线程同步本身比较耗时，如果确定一个对象不会逃逸出线程，无法被其他线程访问到，那该对象的读写就不会存在竞争，则可以消除对该对象的同步锁，通过-XX:+EliminateLocks可以开启同步消除
+2. 标量替换 
+	1. 标量是指不可分割的量，如java中基本数据类型和reference类型，相对的一个数据可以继续分解，称聚合量
+	2. 如果把一个对象拆散，将其成员变量恢复到基本类型来访问就叫做标量替换；
+	3. 如果逃逸分析发现一个对象不会被外部访问，并且该对象可以被拆散，那么经过优化之后，并不直接生成该对象，而是在栈上创建若干成员变量；
+	通过-XX:+EliminateAllocations可以开启标量替换，-XX:+PrintEliminateAllocations查看标量替换情况。
+3. 栈上分配
+	目前HotSpot并没有真正意义上的栈上分配，实际上是标量替换。
+
+分层编译和逃逸分析在JDK8中是默认开启的。可以使用-XX:-DOEscapAnalysis关闭逃逸分析。
+-XX:CompileThreshold 
+cglib: Code Generation Library,底层采用asm字节码生成框架生成代理类的字节码。
+
+jdk和cglib动态代理实现的区别:
+1. jdk动态代理生成的代理类和委托类实现了相同的接口；
+2. cglib动态代理中生成的字节码更加复杂，生成的代理类是委托类的子类，且不能处理被final修饰的方法；
+3. jdk采用反射机制调用委托类的方法，cglib采用类似索引的方式直接调用委托类方法。
+
+在JDK7、8中，可以通过-XX:StringTableSize参数StringTable大小
+
+Java源代码被编译成class字节码，最终需要加载到虚拟机中才能运行，整个生命周期包括：加载，验证，准备，解析，初始化，使用，卸载。
+
+垃圾收集算法主要有三种：标记-清除，复制和标记-整理。
+1. 标记-清除：对待回收的对象进行标记。
+	算法缺点：效率问题，标记和清除过程效率很低；空间问题，收集之后会产生大量的内存碎片，不利于大对象的分配。
+2. 复制算法：将可用内存分成大小相等的两块，每次只使用其中一块，互相复制，并清除即将使用的那块。不仅提高了标记的效率，因为只需要标记存活的对象，同时也避免了内存碎片的问题，代价是可用内存缩小为原来的一半。
+3. 标记-整理：在老年代中，对象存活率较高，复制算法的效率很低。在标记-整理算法中，标记出所有存活的对象，并移动到一端，然后直接清理边界以外的内存。
+
+总过有7中垃圾收集器的组合:
+1. 新生代: Serial + 老年代: Serial Old 
+2. 新生代: Serial + 老年代: CMS 
+3. 新生代: ParNew + 老年代: Serial Old 
+4. 新生代: ParNew + 老年代: CMS 
+5. 新生代: Parallel Scavenage + 老年代: Serial Old 
+6. 新生代: Parallel Scavenage + 老年代: Parallel Old 
+7. 新生代和老年代: G1 
+
+吞吐量 = 用户代码运行时间/(用户代码运行时间 + 垃圾收集时间)
+Paralle Scavenge提供了两个参数用于精确控制吞吐量:
+1. -XX:MaxGCPauseMillis 设置垃圾收集的最大停顿时间
+2. -XX:GCTimeRatio 设置吞吐量大小 
+
+AbstractQueuedSynchronizer 
+
+Unsafe.getAndAddInt
+public final int getAndAddInt(Object var1, long var2, int var4) {
+	int var5;
+	do {
+		var5 = this.getIntVolatile(var1, var2);
+	} while (!this.compareAndSwapInt(var1, var2, var5, var5 + var4));
+	return var5;
+}
+
+BlockingQueue<Runnable> workQueue; 
+1. ArrayBlockingQueue
+2. PriorityBlockingQueue
+3. SynchronousQueue
+4. LinkedBlockingQueue
+
+public class ThreadPoolExecutor extends AbstractExecutorService {
+	private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
+	private static final int COUNT_BITS = Integer.SIZE - 3;
+	private static final int CAPACITY = (1 << COUNT_BITS) - 1;
+	
+	// runState is stored in the high-order bits 
+	private static final int RUNNING = -1 << COUNT_BITS;
+	private static final int SHUTDOWN = 0 << COUNT_BITS;
+	private static final int STOP = 1 << COUNT_BITS;
+	private static final int TIDYING = 2 << COUNT_BITS;
+	private static final int TERMINATED = 3 << COUNT_BITS;
+	
+	// Packing and unpacking ctl 
+	private static int runStateOf(int c) { return c & ~CAPACITY; }
+	private static int workerCountOf(int c) { return c & CAPACITY; }
+	private static int ctlOf(int rs, int wc) { return rs | wc; }
+}
+
+在ThreadPoolExecutor中的TIDYING状态: All tasks have terminated, workerCount is zero, the thread transitioning to state TIDYING will run the terminated() hook method.
+
+objectFieldOffset: 能够获取到指定实例变量的在对象内存中的偏移量
+long offset = UNSAFE.objectFieldOffset(xx.class.getDeclaredField("state"));
+
+JDK8的实现抛弃了JDK7中的Segment分段锁，利用CAS+Synchronized来保证并发更新的安全，底层采用数组+链表+红黑树的存储结构。
+
+Aside from its content, the essential properties of a buffer are its capacity, limit, and position. 
+
+ByteBuffer有几个实现：HeapByteBuffer和DirectByteBuffer
+
+NIO把支持的I/O对象抽象为Channel，Channel又称为通道，类似于I/O中的流Stream，但有所区别:
+1. Stream是单向的，Channel是双向的，可读可写；
+2. Stream读写是阻塞的，Channel可以异步读写；
+3. Stream中的数据可以选择性的先读到缓存中，Channel的数据总是先读到一个缓存中，或总缓存写入。
+常用的Channel实现类如下:
+1. FileChannel
+2. DatagramChannel
+3. SocketChannel
+4. ServerSocketChannel 
+
+MappedByteBuffer
+
+private static boolean isPowerOfTwo(int val) {
+	return (val & -val) == va;
+}
+8
+原码: 0000 1000
+反码: 1111 0111
+补码: 1111 1000
+
+
+Hashtable是怎么加锁的: 在每个有线程安全的函数里用synchronized修饰，包括size()和isEmpty()，定位数组的方法是:int index = (hash & 0x7FFFFFFF) % tab.length;，这种去余的计算比较耗时。
+
+Netty的boss线程主要负责监听并处理accept事件，将socketChannel注册到work线程的selector，由worker线程来监听并处理read事件。
+Spring中如何保证Controller并发安全:  由于默认scope是singleton，如果Controller有实例变量或者静态变量，多个线程访问时会有线程安全问题。解决思路如下, 1. 不可变对象，用final修饰变量;2. 线程封闭方式：使用ThreadLocal或者函数局部变量；3. 在类上增加@Scope("prototype")
+
+三个坑：1. (Short)i - 1的类型为Integer，包装类型;2. 三元运算符的"双目数值提升"；3. Object[]转Long[](涉及Set.toArray(new T[]))
+
+三元运算符的双目数值提升的语言特性。所谓的双目数值提升，在三元运算符java开发的环境下可以简单的理解为双目运算符的类型转换问题，其具体规则总结如下：
+1. 如果定义了数据类型的变量与未定义变量的数值共同参与三元运算符的后双目运算，那么返回结果就是范围大(精度高)类型;
+2. 如果两个定义了数据类型的变量共同参与三元运算符的后双目运算，那么返回的结果就是范围大(精度高)类型。
+3. 如果直接进行数值的比较，会自动转型成为范围大(精度高)的数据类型 。
+
+ArrayList的toArray(T[] a)的源码实现:
+
+@SuppressWarning("unchecked")
+public <T> T[] toArray(T[] a) {
+	if (a.length < size) {
+		// Make a new array of a's runtime type, but my contents:
+		return (T[]) Arrays.copyOf(elementData, size, a.getClass());
+	}
+	System.arraycopy(elementData, 0, a, 0, size);
+	if (a.length > size) {
+		a[size] = null;
+	}
+	return a;
+}
+
+JVM发生OOM的8种原因及解决办法:
+1. 堆内存不足: java.lang.OutOfMemoryError: Java heap space 
+	1.1 原因：1:代码中可能存在大对象分配;2:可能存在内存泄露，导致多次GC后，还是无法找到一块足够大的内存容纳当前对象。
+	1.2 解决方法：
+		1.2.1 检查是否存在大对象的分配，最有可能是大数组分配
+		1.2.2 通过jmap，将堆dump下来，使用mat分析，检查是否有内存泄露
+		1.2.3 如果没有明显的内存泄露，使用-Xmx加大堆内存
+		1.2.4 检查是否有大量的自定义的Finalizable对象，也有可能是框架内部提供的，考虑其存在的必要性
+2. 永久代/元空间溢出：java.lang.OutOfMemoryError: PermGen space 
+					  java.lang.OutOfMemoryError: Metaspace
+	2.1 原因: 1:在JDK7之前，频繁的错误使用String.intern方法;2. 生成了大量的代理类，导致方法区被撑爆，无法卸载; 3. 应用长时间运行，没有重启
+	2.2 解决方法：
+		2.2.1 检查永久代或元空间设置的是否过小
+		2.2.2 检查代码中是否有大量的反射操作
+		2.2.3 dump之后通过mat检查是否存在大量反射生成的代理类
+		2.2.4 重启JVM
+3. GC overhead limit exceeded: java.lang.OutOfMemoryError: GC overhead limit exceeded 
+	3.1 原因: 这是JDK6新加入的错误类型，一般都是堆太小导致的。超过98%的时间用来做GC而且回收了不到2%的堆内存时会抛出此异常
+	3.2 解决方法:
+		3.2.1 检查项目中是否有大量的死循环或有使用大内存的代码，优化代码 
+		3.2.2 添加参数-XX:-UseGCOverheadLimit禁用这个检查，其实这个参数解决不了内存问题，只是把错误的信息延后，最终出现java.lang.OutOfMemoryError: java heap space 
+		3.2.3 dump内存，检查是否存在内存泄露，如果没有加大内存。
+4. 方法栈溢出: java.lang.OutOfMemoryError: unable to create new native Thread 
+	4.1 原因： 创建了大量的线程
+	4.2 解决方法：
+		4.2.1 通过-Xss降低每个线程栈的大小
+		4.2.2 线程总数也受到系统空闲内存和操作系统的限制，检查以下配置：
+			/proc/sys/kernel/pid_max
+			/proc/sys/kernel/thread-max 
+			max_user_process(ulimit -u)
+			/proc/sys/vm/max_map_count
+5. 分配超大数组(非常规溢出): java.lang.OutOfMemoryError: Requested array size exceeds VM limit 
+	检查要分配的数组在该系统是否可以寻址(addressable)。解决方法：检查有无创建超大数组的代码
+6. swap区溢出(非常规溢出)：java.lang.OutOfMemoryError: Out of swap space 
+	原因：1. swap区大小分配不足;2. 其他进程消耗了所有的内存
+	解决方法：1. 其他服务进程选择性的移除；2. 加大swap分区的大小，或者加大机器内存。 
+7. 本地方法溢出：java.lang.OutOfMemoryError: stack_trace_with_native_method
+	方法栈的溢出发生在JVM代码层面，而本地方法溢出发生在JNI代码或本地方法处。
+
+在windows中，可以nslookup www.baidu.com 验证域名的ip地址是否可用
+
+MySQL分页查询优化方法:
+1. 尽量给出查询的大致范围;比如 select * from table where id >= 20000 limit 10;
+2. 子查询法; select * from table where id >= (select id from table limit 20000, 1) limit 10;
+3. 只读索引方法; 
+	优化前：select * from member order by last_active limit 50, 5;
+	优化后: select * from member inner join (select member_id from member order by last_active limit 50, 5) using (member_id);
+优化前的SQL需要更多I/O浪费，因为先读索引，再读数据，然后抛弃无需的行。而优化后的SQL(子查询那条)只读索引(Cover index)就可以了，然后通过member_id读取需要的列。
+4. 首先读取出ID，然后再用in读取所需的记录。如下:
+	select id from table limit 20000, 10;
+	select * from table where id in (上面查出来的id列表);
+
+join分页方式(逆序排列)的范例SQL:
+select * from content as t1 join 
+(select id from content order by id desc limt (${page - 1}) * ${pageSize}, 1) as t2
+where t1.id <= t2.id order by t1.id desc limit ${pageSize};
+
+可以使用explain SQL大致查看SQL的扫描行数，使用索引情况等。
+
+StringBuilder建议设置初始长度(默认初始长度为16)，防止append过程中，多次扩容，导致大量的Arrays.copyOf();
+StringBuilder的toString方法如下:
+@Override
+public String toString() {
+	// Create a copy, don't share the array 
+	return new String(value, 0, count);
+}
+这个toString会导致浪费一半的字符串，可以重用StringBuilder来达到重用里面的char[]。
+
+-XX:+OptimizeStringConcat(JDK7u40后默认开启),会把相邻的(中间没有隔着控制语句)的StringBuilder合成一个，也会尽量设置长度。
+
+public final class StringBuilder extends AbstractStringBuilder
+	implements java.io.Serializable, CharSequence {...}
+public final class StringBuffer extends AbstractStringBuilder 
+	implements java.io.Serializable, CharSequence {...}
+
+SO_LINGER: Socket延时关闭，优雅关闭。其底层的数据结构如下:
+typedef struct linger {
+	u_short l_onoff;   //开关，0或非0
+	u_short l_linger;  //优雅关闭最长时限
+} linger;
+SO_LINGER: 在默认情况下，当调用close关闭socket时，close会立即返回，但是如果send buffer中还有数据，系统会尝试把send buffer中的数据发送出去，然后close才返回。SO_LINGER选项是用来修改这种默认操作的。
+有三种情况的设置:
+1. l_onoff=0,l_linger值被忽略。将会关闭SO_LINGER选项，即TCP或SCTP保存默认操作:close立即返回。
+2. l_onoff非0，l_linger=0。当调用close的时候，TCP连接会立即断开，send buffer中未被发送的数据将被丢弃，并向对方发送一个RST信息。由于这种方式是非正常挥手方式结束TCP连接。所以TCP连接不会进入TIME_WAIT状态，这样会导致新建立的连接造成混乱。
+3. l_onoff和l_linger都非0。当调用close关闭socket时，内核会延迟，如果send buffer中还有数据没有发送，该进程会被休眠直到下列任何情况发生：
+	3.1 send buffer中的所有数据都被发送并且得到对方TCP的应答消息
+	3.2 延迟时间消耗完。在延迟时间被消耗完后，send buffer中的所有数据将会被丢弃。
+上面1，2两种情况中，如果socket被设置未O_NONBLOCK状态，程序将不会等待close返回，send buffer中的所有数据都将会丢弃。所以需要判断close的返回值，在send buffer中的所有数据都被发送之前并且延迟时间没有消耗完，close返回的话，close将会返回一个EWOULDBLOCK的error。
+
+常用的分布式配置中心:
+1. Spring Cloud Config: 不支持热加载，按需获取配置(每次都是将所有配置刷新，通过refresh ApplicationContext上下文的方式)，只支持Spring项目;不支持推送模式;需要依赖git，没有界面，需要手工批量刷新。
+2. Consul: 一致性算法使用Raft。使用Gossip协议来传递信息，支持多个数据中心，有可视化界面。
+3. Zookeeper: 除自研外，还可以使用Spring Cloud Zookeeper
+4. Disconf: 支持传统的配置文件配置;也支持KV结构数据;使用ZK的Watch机制来做配置的实时修改; 
+5. Apollo: 能够集中化管理不同环境，不同集群的配置，配置修改后能够实时推送到应用端，并且具备规范的权限，流程治理等特性。还有版本发布管理，灰度发布功能。
+6. Diamond: 每隔15秒拉一次全量数据，只支持KV结构数据，数据模型不支持文件; 阿里开源版本太简单，前端很丑，2年前已经不维护了.github Star 64
+7. Nacos:并不是通过推的方式将服务端最新的配置信息发送给客户端，而是客户端维护了一个长轮询的任务，定时去拉取发生变更的配置信息，然后将最新的数据推送给Listener的持有者。
+
+Spring Cloud Zookeeper Features:
+	1. Service Discovery: instances can be registered with Zookeeper and clients can discover the instances using Spring-managed beans.
+	2. Supports Ribbon, the client side load-balancer via Spring Cloud Netflix.
+	3. Supports Zuul, a dynamic router and filter via Spring Cloud Netflix.
+	4. Distributed Configuration: using Zookeeper as a data store.
+
+Access Control Lists(ACLs):
+You can add authentication information for Zookeeper ACLs by calling the addAuthInfo method of a CuratorFramework bean. One way to accomplish this is to provide your own CuratorFramework bean.
+
+Apollo的Features如下:
+1. 同一管理不同环境，不同集群，不同命名空间的配置;
+2. 配置修改实时生效(热发布);
+3. 版本发布管理;
+4. 灰度发布;
+5. 权限管理，发布审核，操作审计;
+6. 客户端配置信息监控(可以方便的看到配置在哪些实例使用)
+7. 提供Java和.Net原生客户端
+8. 提供开放平台API
+9. 部署简单
+
+Apollo客户端的实现原理:
+1. 客户端和服务端保持了一个长连接，从而能第一时间获得配置更新的推送。
+2. 客户端还会定时从Apollo配置中心服务端拉取应用的最新配置:
+	2.1 这是一个fallback机制，为了防止推送机制失效导致配置不更新;
+	2.2 客户端定时拉取上报本地版本，所以一般情况下，对于定时拉取的操作，服务端都会返回304(Not Modified)
+	2.3 定时频率为5分钟，客户端可以通过在运行时指定System Property: apollo.refreshInterval来覆盖，单位为分钟;
+3. 客户端从Apollo配置中心服务端获取到应用的最新配置后，会保存在内存中;
+4. 客户端会从服务端获取到的配置在本地文件系统缓存一份;在遇到服务不可用，或网络不通时，依然能从本地恢复配置;
+5. 应用从Apollo客户端获取最新的配置，订阅配置更新通知。
+
+Apollo配置更新推送的实现原理:Apollo客户端和服务端保存了一个长连接，从而第一时间获得配置更新的推送。长连接实际上是通过Http Long Polling实现的，具体如下:
+1. 客户端发起一个Http请求到服务端;
+2. 服务端会保持这个连接60秒
+	2.1 如果在60秒内有客户端关心的配置变化，被保持住的客户端请求会立即返回，并告知客户端有配置变化的namespace信息，客户端会据此拉取对应的namespace的最新配置；
+	2.2 如果60秒内没有客户端关心的配置变化，那么返回304给客户端;
+3. 客户端收到服务端请求后，立即重新发起连接，回到第一步;
+考虑到数万客户端向服务端发起长连接，在服务端使用了async servlet(Spring DeferredResult)来服务Http Long Polling请求。
+
+public class WeakHashMap<K, V> 
+	extends AbstractMap<K, V>
+	implements Map<K, V> {
+	...
+	//The entries int this has table extend WeakReference, using its main ref field as the key.
+	private static class Entry<K, V> extends WeakReference<Object> implements Map.Entry<K, V> {
+		V value;
+		final int hash;
+		Entry<K, V> next;
+		
+		Entry(Object key, V value, ReferenceQueue<Object> queue, int hash, Entry<K, V> next) {
+			super(key, queue);
+			this.value = value;
+			this.hash = hash;
+			this.next = next;
+		}
+		@SuppressWarning("unchecked")
+		public K getKey() {
+			return (K) WeakHashMap.unmaskNull(get());
+		}
+		public V getValue() {
+			return value;
+		}
+		public V setValue(V newValue) {
+			V oldValue = value;
+			value = newValue;
+			return oldValue;
+		}
+		public boolean equals(Object o) {
+			if (!(o instanceof Map.Entry)) return false;
+			Map.Entry<?, ?> e = (Map.Entry<?, ?>)o;
+			K k1 = getKey();
+			Object k2 = e.getKey();
+			if (k1 == k2 || (k1 != null && k1.equals(k2))) {
+				V v1 = getValue();
+				Object v2 = e.getValue();
+				if (v1 == v2 || (v1 != null && v1.equals(v2))) {
+					return true;
+				}
+			}
+			return false;
+		}
+		public int hashCode() {
+			K k = getKey();
+			V v = getValue();
+			return Objects.hashCode(k) ^ Objects.hashCode(v);
+		}
+		public String toString() {
+			return getKey() + "=" + getValue();
+		}
+	}
+}
+
+WeakHashMap中的expungeStaleEntries():
+
+//Expunges stale entries from the table
+
+private void expungeStaleEntries() {
+	for (Object x; (x = queue.poll()) != null;) {
+		synchronized (queue) {
+			@SuppressWarnings("unchecked")
+			Entry<K, V> e  = (Entry<K, V>)x;
+			int i = indexFor(e.hash, table.length);
+			
+			Entry<K, V> prev = table[i];
+			Entry<K, V> p = prev;
+			while (p != null) {
+				Entry<K, V> next = p.next;
+				if (p == e) {
+					if (prev == e)
+						table[i] = next;
+					else 
+						prev.next = next;
+					// Must not null out e.next;
+					// stale entries may be in use by a HashIterator
+					e.value = null;  //Help GC 
+					size --;
+					break;
+				}
+				prev = p;
+				p = next;
+			}
+		}
+	}
+}
+
+public interface BeanFactory {
+	String FACTORY_BEAN_PREFIX = "&";
+	Object getBean(String name) throws BeansException;
+	<T> T getBean(String name, Class<T> requiredType) throws BeansException;
+	Object getBean(String name, Object... args) throws BeansException;
+	<T> T getBean(Class<T> requiredType) throws BeansException;
+	<T> T getBean(Class<T> requiredType, Object... args) throws BeansException;
+	boolean containsBean(String name);
+	boolean isSingleton(String name) throws NoSuchBeanDefinitionException;
+	boolean isPrototype(String name) throws NoSuchBeanDefinitionException;
+	boolean isTypeMathc(String name, ResolvableType typeToMatch) throws NoSuchBeanDefinitionException;
+	boolean isTypeMatch(String name, Class<?> typeToMatch) throws NoSuchBeanDefinitionException;
+	Class<?> getType(String name) throws NoSuchBeanDefinitionException;
+	String[] getAliases(String name);
+}
+
+public interface FactoryBean<T> {
+	T getObject() throws Exception;
+	Class<?> getObjectType();
+	boolean isSingleton();
+}
+BufferedOutputStream/BufferedInputStream带有缓冲区的实现，可以避免频繁的磁盘操作，通过设计缓冲区将批量数据进行一次操作。
+
+1. 同步和异步是针对应用程序和内核的交互的;
+2. 阻塞和非阻塞是针对在访问数据的时候，根据IO操作的就绪状态来采取的不同方式。阻塞方式下读取或写入函数将一直等待，而非阻塞方式下，读取或写入函数会立即返回一个状态值。
+
+
+BIO:同步阻塞
+NIO:采用一种多路复用的机制，利用单线程轮询事件，高效定位就绪的Channel，只是Select阶段是阻塞式的，能有效避免大量连接数，频繁线程的切换带来的性能问题。NIO是同步非阻塞IO，一个线程同步进行轮询检查，Selector不断轮询注册其上的Channel。
+AIO: 异步非阻塞IO，在此模式下，用户进程只需要发起一个IO操作然后立即返回，等IO操作真正完成后，应用程序会得到IO操作完成的通知，此时用户进程只需要对数据进行处理就好了，不需要进行实际的IO读写操作，因为真正的IO读取或写入操作已经由内核完成了。
+
+BIO/NIO/AIO适用场景：
+BIO: 连接数目比较小且固定的架构，这种方式对服务器资源要求比较高，并发局限于应用中，是JDK1.4之前的唯一选择, 程序直观简单易理解;
+NIO: 连接数目多且连接比较短(轻操作)的架构，比如聊天服务器，并发局限于应用中，编程比较复杂，JDK1.4开始支持;
+AIO: 连接数目多且连接比较长(重操作)的架构，比如相册服务器，充分调用操作系统参与并发操作，编程比较复杂，JDK7开始支持。
+
+Reactor和Proactor模式的主要区别是真正的读取和写入操作是由谁来完成的，Reactor中需要应用程序自己读取或者写入数据。而Proactor模式中，应用程序不需要进行实际的读写过程，它只需要从缓冲区读取或者写入即可，操作系统会读取缓存区或者写入缓存区到真正的IO设备。
+
+public class HashSet<E> extends AbstractSet<E>
+	implements Set<E>, Cloneable, java.io.Serializable {
+	static final long serialVersionUID = *L;
+	private transient HashMap<E, Object> map;
+	// Dummy value to associate with an Object int the backing Map 
+	private static final Object PRESENT = new Object();
+	...
+}
+
+Spring中用到的设计模式:
+1.  代理模式: Spring AOP中的JDK动态代理和Cglib动态代理
+2.  责任链(职责链)模式: Spring Web MVC中的HandlerExecutionChain
+3.  组合模式: Spring Web MVC中的WebMvcConfigurerComposite
+4.  适配器模式: Spring Web MVC中的HandlerAdapter
+5.  工厂方法模式: Spring DI中的FactoryBean/factory-method 
+6.  单例模式: Spring Bean的默认scope=single
+7.  包装器模式: Spring reactive中的ServerHttpRequestDecorator, ServerHttpResponseDecorator
+8.  观察者模式: Spring Context中的ApplicationListener<E extends ApplicationEvent>
+9.  策略模式: ContentNegotiationStrategy
+10. 模板模式: JdbcTemplate, AbstractTemplateView
+11. 原型模型: Bean的scope='prototype'
+12. 构建者模式: BeanDefinitionBuilder, WebHttpHandlerBuilder 
+13. 抽象工厂模式: Spring AOP中的AopProxy的两个实现: CglibAopProxy和JdkDynamicAopProxy
+14. 门面模式:
+15. 中介者模式:
+16. 享元模式:
+17. 备忘录模式: 
+18. 迭代器模式:
+19. 解释器模式: 
+20. 访问者模式:
+21. 桥接模式: 
+22. 命令模式: 
+23. 状态模式: 
+
+public interface Condition {
+	void await() throws InterruptedException;
+	void awaitUninterruptibly();
+	long awaitNanos(long nanosTimeout) throws InterruptedException;
+	boolean await(long time, TimeUnit unit) throws InterruptedException;
+	boolean awaitUnitl(Date deadline) throws InterruptedException;
+	void signal();
+	void signalAll();
+}
+
+Condition接口在JDK中只有两个实现，分别是AbstractQueuedSynchroinizer和AbstractQueuedLongSynchronizer中的ConditionObject。
+
+

@@ -1,0 +1,614 @@
+The namespace can also be set explicitly via the "namespace" servlet init-param.
+org.springframework.web.servlet.HttpServletBean;
+
+Spring的Environment;
+ConfigurableEnvironment;
+ApplicationContextInitializer;
+java.lang.InheritableThreadLocal;
+
+AnnotationAwareOrderComparator.sort(List<?> list);
+
+public abstract class CorsUtils {
+	public static boolean isCorsRequest(HttpServletRequest request) {
+		return (request.getHeader(HttpHeaders.ORIGIN) != null);
+	}
+	
+	public static boolean isPreFlightRequest(HttpServletRequest request) {
+		return (isCorsRequest(request) && HttpMethod.OPTIONS.matches(request.getMethod()) &&
+					request.getHeader(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD) != null );
+	}
+}
+Prefight：预检请求，通过OPTIONS方法。
+
+AsyncTaskExecutor;
+
+HandlerExceptionResolver;
+RequestToViewNameTranslator;
+DefaultRequestToViewNameTranslator;
+
+-------------------------DispatcherServlet.properties----------------------------------------------
+# Default implementation classes for DispatcherServlet's strategy interfaces.
+# Used as fallback when no matching beans are found in the DispatcherServlet context.
+# Not meant to be customized by application developers.
+org.springframework.web.servlet.LocaleResolver=org.springframework.web.servlet.i18n.AcceptHeaderLocaleResolver
+org.springframework.web.servlet.ThemeResolver=org.springframework.web.servlet.theme.FixedThemeResolver
+
+org.springframework.web.servlet.HandlerMapping=org.springframework.web.servlet.handler.BeanNameUrlHandlerMapping,\
+	org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping
+
+org.springframework.web.servlet.HandlerAdapter=org.springframework.web.servlet.mvc.HttpRequestHandlerAdapter,\
+	org.springframework.web.servlet.mvc.SimpleControllerHandlerAdapter,\
+	org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter
+
+org.springframework.web.servlet.HandlerExceptionResolver=org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver,\
+	org.springframework.web.servlet.mvc.annotation.ResponseStatusExceptionResolver,\
+	org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver
+
+	org.springframework.web.servlet.RequestToViewNameTranslator=org.springframework.web.servlet.view.DefaultRequestToViewNameTranslator
+
+org.springframework.web.servlet.ViewResolver=org.springframework.web.servlet.view.InternalResourceViewResolver
+
+org.springframework.web.servlet.FlashMapManager=org.springframework.web.servlet.support.SessionFlashMapManager
+
+-------------------------End DispatcherServlet.properties----------------------------------------------
+
+HandlerExecutionChain
+
+The removeEldestEntry(Map.Entry) method may be overridden to impose a policy for removing stale mappings automatically when new mappings are added to the map.
+
+Misfire(错失触发)策略
+Terracotta
+
+@RestTemplate
+
+ByteArrayHttpMessageConverter;
+StringHttpMessageConverter;
+ResourceHttpMessageConverter;
+SourceHttpMessageConverter;
+AllEncompassingFormHttpMessageConverter;
+AtomFeedHttpMessageConverter;
+RssChannelHttpMessageConverter;
+MappingJackson2XmlHttpMessageConverter;
+Jaxb2RootElementHttpMessageConverter;
+MappingJackson2HttpMessageConverter;
+GsonHttpMessageConverter;
+
+Http Patch;
+
+动态服务名或URL的自定义FeignClient;
+
+自定义总线事件：extends RemoteApplicationEvent;
+
+@FunctionalInterface
+Predicate: Determines if the input object matches some criteria;
+Consumer: An operation which accepts a single argument and returns no result. Unlike most other functional interface, Consumer is expected to operate via side-effects.
+
+In JDK8 interface can have default implementation;
+
+public interface SpringCloudBusClient {
+	String INPUT = "springCloudBusInput";
+	String OUTPUT = "springCloudBusOutput";
+	
+	@Output(SpringCloudBusClient.OUTPUT)
+	MessageChannel springCloudBusOutput();
+	
+	@Input(SpringCloudBusClient.INPUT)
+	SubscribableChannel springCloudBusInput();
+}
+
+Spring Cloud Config可以指定destination目的地, /bus/refresh?destination=服务名:port来指定具体实例，/bus/refresh?destination=服务名:**,触发本服务的所有实例。
+
+
+Kafka的高吞吐率，在廉价的商用机器上可以支持单机每秒100K条以上的吞吐量。
+Kafka的分布式：支持消息分区以及分布式消费，并保证分区内的消息顺序。
+
+REST: Representational State Transfer;
+
+org.springframework.core.env.Environment;
+
+Environment类体系：
+PropertyResolver：提供属性访问功能。
+ConfigurablePropertyResolver：继承自PropertyResolver，主要提供属性类型转换(基于org.springframework.core.convert.ConversionService)功能。
+Environment：继承自PropertyResolver，提供访问和判断profiles的功能。
+ConfigurableEnvironment：继承自ConfigurablePropertyResolver和Environment，并且提供设置激活的profile和默认的profile的功能。
+ConfigurableWebEnvironment：继承自ConfigurableEnvironment，并且提供配置Servlet上下文和Servlet参数的功能。
+AbstractEnvironment：实现了ConfigurableEnvironment接口，默认属性和存储容器的定义，并且实现了ConfigurableEnvironment种的方法，并且为子类预留可覆盖了扩展方法。
+StandardEnvironment：继承自AbstractEnvironment，非Servlet(Web)环境下的标准Environment实现。
+StandardServletEnvironment：继承自StandardEnvironment，Servlet(Web)环境下的标准Environment实现。
+ConfigurableReactiveWebEnvironment
+StandardReactiveWebEnvironment;
+
+Eureka的心跳续约。
+
+MultiValueMap<String, Object>
+
+Quartz任务持久化和配置管理：org.quartz.spi.JobStore接口来实现存储。
+RAMJobStore
+JobStoreTX;
+JobStoreCMT: CMT的全称是Container Managed Transactions, 表示容器管理事务，也就是让应用容器托管事务。
+
+在使用Feign的@RequestLine注解时，可以使用@Headers来指定报文头，特别是Content-Type和Accept.
+
+Eureka Client在刚启动的时候会从Eureka Server全量获取一次注册信息，同时初始化Eureka Client本地实例信息缓存定时更新任务，默认30S一次:registryFetchIntervalSeconds = 30
+
+Environment加载的源码位于SpringApplication#prepareEnviroment.
+
+发布ConfigurableEnvironment准备完毕事件listeners.environmentPrepared(environment)，实际上这里用到了同步的EventBus, 事件的监听者是ConfigFileApplicationListener, 具体处理逻辑是onApplicationEnvironmentPreparedEvent方法。
+
+MappingJackson2HttpMessageConverter;
+HttpMessageConverterExtractor;
+
+FlashMapManager;
+	- AbstractFlashMapManager;
+		- SessionFlashMapManager;
+抽象类采用模板模式定义整个流程，具体实现类用SessionFlashMapManager通过模板方法提供了具体操作FlashMap的功能。
+
+IdentityHashMap: 使用==，而不是equals来比较key的Map.
+
+spring boot在启动过程中增加了事件监听机制，支持4种事件类型:
+1. ApplicationStartedEvent; spring boot启动开始时执行的事件
+2. ApplicationEnvironmentPreparedEvent; spring boot对应Environment已经准备完毕，但此时上下文context还没有创建
+3. ApplicationPreparedEvent; spring boot上下文context创建完成，但此时spring中的bean是没有完全加载完成的。
+4. ApplicationFailedEvent; spring boot启动异常时执行事件。
+
+添加hook, Runtime.getRuntime().addShutdownHook(Thread thread);
+
+CacheControl: Add a "public" directive. This directive indicates that any cache MAY store the response, even if the response would normally be non-cacheable or cacheable only within a private cache.
+
+Spring Cloud有一个声明式服务调用Feign，是基于Netflix Feign实现的，整合了Spring Cloud Ribbon与Spring Cloud Hystrix，并且实现了声明式的web服务客户端定义方式。本质上Feign是在RestTemplate的基础上对其再次封装，由它来帮助我们定义和实现依赖服务接口的定义。
+
+Content-Disposition: 属性是作为对下载文件的一个标识字段。Content-Disposition属性有两种类型: inline和attachment; inline:将文件内容直接显示在页面上。attachment: 弹出对话框让用户下载。
+
+Accept-Ranges: 响应的HTTP头是由服务器使用，以通告其支持部分请求的标志物。此字段的值可用于定义范围的单位。如果存在Accept-Ranges标题，浏览器可能会尝试恢复中断的下载，而不是从头再次开始。
+
+Access-Control-Allow-Credentials
+Access-Control-Allow-Headers
+Access-Control-Allow-Methods
+Access-Control-Allow-Origin
+Access-Control-Expose-Headers
+Access-Control-Max-Age
+Access-Control-Request-Headers
+Access-Control-Request-Method
+
+
+RedirectView在页面跳转，数据的保存依赖于FlashMap和FlashMapManager;
+FlashMapManager在容器初始化时被填入，而FlashMap从Manager可以获取。
+
+eureka.client.disable-delta=false
+Eureka的全量更新和增量更新: initScheduledTasks();
+EurekaHttpClient的实现类很多，最终发起http调用的是AbstractJerseyEurekaHttpClient类。
+默认先从二级缓存读取，如果二级缓存没有命中，那么去一级缓存中读取，并设置到二级缓存中。如果一级缓存没有命中，由于一级缓存采用了Google Guava Cache, 在remove的时候可以自定义回调，在get方法没有返回值的时候，去调用load(Key key)方法将返回值返回并保存。
+
+
+=========================================
+show collections;
+use scm;
+
+db.getCollection('bairong-pr-inout').find().limit(100);
+db.getCollection('china-data-inout').find().limit(100);
+db.getCollection('mobile-batch-inout').find().limit(100);
+db.getCollection('mobile-data-inout').find().limit(100);
+db.getCollection('persional-risk-inout').find().limit(100);
+db.scmModel.find().limit(100);
+=========================================
+Access-Control-Expose-Headers: 响应报文头哪些可以公开为通过列出他们名字的部分，默认默认情况下，只显示6个简单的响应标头：：
+-Cache-Control
+-Content-Language
+-Content-Type
+-Expires
+-Last-Modified
+-Pragma
+
+ResourceRegion: Region of a Resource implementation, materialized by a position within the Resource and a byte count for the length of that region.
+
+mongoDB恢复：https://help.aliyun.com/document_detail/58329.html?spm=a2c6r.11610030.0.0.74854231U6yCWf
+mysql恢复： https://help.aliyun.com/knowledge_detail/41817.html
+
+
+http://rdsbak-shanghai-v2.oss-cn-shanghai-internal.aliyuncs.com/custins5089517/hins5047263_data_20190311124954.tar.gz?OSSAccessKeyId=LTAIyKzxtSYNknVO&Expires=1552546473&Signature=TqDx2vaWMK7tDiVpV567AM5pFCU%3D
+
+
+Environment代表了profile和properties.
+public interface PropertyResolver {
+	boolean containsProperty(String key);
+	String getProperty(String key);
+	String getProperty(String key, String defaultValue);
+	<T> T getProperty(String key, Class<T> targetType);
+	<T> T getProperty(String key, Class<T> targetType, T defaultValue);
+	<T> Class<T> getPropertyAsClass(String key, Class<T> targetType);
+	String getRequiredProperty(String key) throws IllegalStateException;
+	<T> T getRequiredProperty(String key, Class<T> targetType) throws IllegalStateException;
+	String resolvePlaceholders(String text);
+	String resolveRequiredPlaceholders(String text) throws IllegalStateException;
+}
+
+6大设计模式：
+- Single Responsibility Principle: 单一职责原则
+- Liskov Substitution Principle: 里氏替换原则
+- Dependence Inversion Principle: 依赖倒置原则
+- Interface Segregation Principle: 接口隔离原则
+- Law of Demeter: 迪米特法则
+- Open Closed Principle: 开闭原则
+
+SpringBoot 2.0使用WebMvcConfigurer添加拦截器，在2.0之前1.x中的WebMvcConfigurerAdapter抽象类过时了。
+
+@Deprecated
+public abstract class WebMvcConfigurerAdapter implements WebMvcConfigurer {
+	//后续每个方法省略@Override
+	@Override
+	public void configurePathMathc(PathMatchConfigurer configurer){}
+	public void configureContentNegotiation(ContentNegotiationConfigurer configurer){}
+	public void configureAsyncSupport(AsyncSupportConfigurer configurer){}
+	public void configureDefaultServletHandling(DefaultServletHandlerConfigurer configurer) {}
+	public void addFormatters(FormatterRegistry registry){}
+	public void addInterceptors(InterceptorRegistry registry){}
+	public void addResourceHandlers(ResourceHandlerRegistry registry){}
+	public void addCorsMappings(CorsRegistry registry){}
+	public void addViewControllers(ViewControllerRegistry registry){}
+	public void configureViewResolvers(ViewResolverRegistry registry){}
+	public void addArgumentResolvers(List<HandlerMethodArgumentResolver> argumentResolvers){}
+	public void addReturnValueHandlers(List<HandlerMethodReturnValueHandler> returnValueHandlers){}
+	public void configureMessageConverters(List<HttpMessageConverter<?>> converters){}
+	public void extendMessageConverters(List<HttpMessageConverter<?>>){}
+	public void configureHandlerExceptionResolvers(List<HandlerExceptionResolver> exceptionResolvers){}
+	public void extendHandlerExceptionResolvers(List<HandlerExceptionResolver> exceptionResolvers){}
+	public Validator getValidator(){return null;}
+	public MessageCodesResolver getMessageCodesResolver(){return null;}
+}
+SpringBoot2.0中这个抽象类已经过时，直接实现WebMvcConfigurer接口，2.0使用了java8的特性default方法。
+
+HandlerMethod: 
+	- InvocableHandlerMethod
+		- ServletInvocableHandlerMethod
+			- CallableHandlerMethod
+HandlerMethod封装方法定义相关的信息，如类/方法/参数等，HandlerMapping时会使用。
+InvocableHandlerMethod添加参数准备，方法调用功能，执行使用@ModelAtrribute注解会使用
+ServletInvocableHandlerMethod添加返回值处理职责，ResponseStatus处理，执行http相关方法会使用，比如调用处理执行。
+
+public class HandlerMethod {
+	private final Object bean;
+	private final Method method;
+	private final BeanFactory beanFactory;
+	private final MethodParameter[] parameters;
+	//如果方法是bridged方法，则对应原始方法
+	private final Method bridgedMethod;
+}
+
+由于反射中没有参数名的信息，而这边需要，所以Spring添加了一个参数名查找器ParameterNameDiscover;
+private HandlerMethodArgumentResolverComposite argumentResolvers = new HandlerMethodArgumentResolverComposite();
+private WebDataBinderFactory dataBinderFactory;
+
+HandlerMethodReturnValueHandler: Strategy interface to handle the value returned from the invocation of a handler method;
+HandlerMethodArgumentResolver
+卡特兰数问题: 
+<mvc:annotation-driven>
+    <mvc:return-value-handlers>
+        <bean class="com.netease.vcloud.statics.dqs.system.returnhandler.ResultBeanReturnValueHandler" />
+    </mvc:return-value-handlers>
+    <mvc:message-converters>
+        <bean class="org.springframework.http.converter.StringHttpMessageConverter">
+            <property name="supportedMediaTypes">
+                <list>
+                    <value>text/plain;charset=UTF-8</value>
+                    <value>text/html;charset=UTF-8</value>
+                </list>
+            </property>
+        </bean>
+    </mvc:message-converters>
+</mvc:annotation-driven>
+
+RequestMappingHandlerAdapter;
+
+<mvn:annotation-driven/> META-INF/spring.handlers spring.schemas
+AnnotationDrivenBeanDefinitionParser
+
+Ordered接口, OrderComparator类
+
+Spring Cloud Feign请求动态URL：
+1. FeignClient中不要写url, 使用@RequestLine修饰方法
+2. 调用地方必须引入FeignClientConfiguration, 必须有Decoder, Encoder
+3. 调用类必须以构造函数的方式注入FeignClient类
+4. 传入URL作为参数。
+
+myth:采用消息队列解决分布式事务的开源框架，基于jdk8开发，支持dubbo,springcloud,motan等rpc框架进行分布式事务。
+
+
+Fescar, fescar的TXC模型仿照于传统事务模型XA方案，主要区别在于资源管理器的定位一个在应用层一个在数据库层。
+XA分布式事务：
+	在非XA环境中，消息队列的插入过程独立于数据库更新操作，ACID准则中的原子性和独立性不能得到保证，从而整体上数据完整性收到损害。我们需要的是，有一种方式能够让消息队列和数据库处于单一事务的控制之下，以至于两个资源能被协调成一个工作单元。使用X/Open的XA接口，可以做到协调多个资源，保证维持ACID准则。
+	
+Fescar的TXC模型：由三个组件组成。
+	- TM: 全局事务管理器，在标注开启fescar分布式事务的服务端开启，并将全局事务发送到TC事务控制端管理
+	- TC: 事务控制中心，控制全局事务的提交或回滚。这个组件需要独立部署维护，目前只支持单机版本，后续迭代计划会有集群版本
+	- RM: 资源管理器，主要负责分支事务的上报，本地事务的管理。
+
+server模块: TC组件所在，主要协调管理全局事务，负责全局事务的提交或回滚，同时管理维护全局锁。
+实例GlobalTransactionScanner启动时会扫描所有实例，具体见Spring模块，并将标注了@GlobalTransactional注解的方法织入GlobalTransactionalInterceptor的invoke方法逻辑。同时应用启动时，会初始化TM(TmRpcClient)和RM(RmRpcClient)的实例，此时，服务和TC事务控制中心进行了连接。
+DefaultTransactionManager: 负责使用TmRpcClient向TC控制中心发送指令，如开启全局事务(GlobalBeginRequest),提交(GlobalCommitRequest),回滚(GlobalRollbackRequest),查询状态(GlobalStatusRequest)；
+TransactionPropagationFilter;
+模块本地资源管理的介入：RM
+Fescar的AT模式在本地事务之上默认支持读未提交的隔离级别，但是通过SelectForUpdateExecutor执行器，可以支持读已提交的隔离级别。
+分支事务的注册和上报
+DefaultCoordinator，这个是AbstractTCInboundHandler控制处理器默认实现。
+通过注册中心(目前支持nacos, redis, zk和eureka)和服务名找到可用的TC服务节点，然后RM Client, TM Client与TC进行rpc交互。
+扩展机制类加载器
+FescarRestTemplateInterceptor实现了ClientHttpRequestInterceptor接口的intercept方法，对调用的请求做了包装，在发送请求时，若存在Fescar事务上下文XID则取出并放在Http的header中。
+@AutoConfigureBefore()
+@Scope("prototype")
+@ConditionalOnClass()
+@ConditionalOnProperty(name = "feign.hystrix.enabled", havingValue = "true")
+
+BeanPostProcessor中的两个方法可以对Spring容器中的Bean做前后处理。
+postProcessBeforeInitialization处理时机是初始化之前，postProcessAfterInitialization的处理时机是初始化之后，这2个方法的返回值可以是原先生成的实例bean，或者使用wrapper包装后的实例。
+
+
+AQS: AbstractQueuedSynchronizer, AQS提供了一种实现阻塞锁和一系列依赖FIFO等待队列的同步器的框架。资源state。
+AbstractQueuedSynchronizer并不实现任何同步接口，它提供了一些可以被具体实现类直接调用的一些原子操作方法来重写相应的同步逻辑，AQS同时提供了互斥模式(exclusive)和共享模式(shared)两种不同的同步逻辑。一般情况下，字类只需要根据需求实现其中一种模式，当然也有同时实现两种模式的同步类，如ReadWriteLock.
+AQS维护了一个volatile int类型的变量，表示当前同步状态。volatile虽然不能保证操作的原子性，但保证了变量state的可见性。
+state的访问方式compareAndSetState()的实现依赖于Unsafe的compareAndSwapInt()方法。
+AQS定义了两种资源共享方式: Exclusive(独占，只有一个线程能执行，如ReentrantLock)和Share(共享，多个线程可以同时执行，如Semaphore/CountDownLatch)
+
+sum.misc.Unsafe;
+
+HandlerInterceptor
+
+TreeSet<String> thisAttributes = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+public class MediaType extends MimeType implements Serializable {}
+
+/**
+Parse the given String value into a MediaType object, with this method name following the 'valueOf' naming 
+convention as supported by org.springframework.core.convert.ConversionService.
+*/
+public static MediaType valueOf(String value){
+	return parseMediaType(value);
+}
+
+public static List<MediaType> asMediaTypes(List<MimeType> mimeTypes) {
+	return mimeTypes.stream().map(MediaType::asMediaType).collect(Collectors.toList());
+}
+
+Reactor 3利用了java8中的CompletableFuture, Stream, Duration, 在此基础上发展出了两个更通用的模型: Flux和Mono.
+Flux简单来讲， 就是一个可以发射1到N个元素的异步“发射器”。onNext方法，onComplete方法，onError方法。
+相对于Flux而言，Mono最多只能发射1个元素。
+Mongo和Flux都是实现Publisher接口的抽象类, 一个相当于Optional，一个相当于0...N的stream.两个都是Spring 5 reactive编程的重要基础概念。
+
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
+希尔排序是插入排序的一种又称"缩小增量排序", 是直接插入排序算法的一种更高效的改进版本，希尔排序是非稳定排序算法。
+插入排序是稳定的排序算法。
+插入排序又分为直接插入排序，折半(二分)插入排序，链表插入排序和希尔排序。
+
+Spring MVC通过HandlerMethodArgumentResolver自定义参数解析
+
+- 多个环境的数据如何隔离?
+- 如何优雅的隔离?(不需要用户做任何改动)
+从概念的定义可以看出，环境隔离至少有三个方面的用途:故障隔离，故障恢复和灰度测试。
+
+Nginx的geo指令使用ngx_http_geo_module模块提供的，默认情况下，nginx加载这个模块。ngx_http_geo_module模块可以用来创建变量，其值依赖于客户端IP地址。
+
+Spring Cloud Gateway: This project provides a library for building an API Gateway on top of Spring MVC. Spring Cloud Gateway aims to provide a simple, yet effective way to route to APIs and provide cross cutting concerns to them such as:security, monitoring/metrics, and resiliency.
+Spring Cloud Gateway features:
+	- Built on Spring Framework 5, Project Reactor and Spring Boot 2.0;
+	- Able to match routes on any request attribute.
+	- Predicates and filters are specific to routes.
+	- Hystrix Circuit Breaker integration.
+	- Spring Cloud DiscoveryClient integration.
+	- Easy to write Predicates and Filters.
+	- Request Rate Limiting
+	- Path Rewriting.
+	
+Spring Boot Features:
+	- Create stand-alone Spring applications;
+	- Embed Tomcat, Jetty or Undertow directly(no need to deploy WAR files)
+	- Provide opinionated 'starter' dependencies to simplify your build configuration
+	- Automatically configure Spring and 3rd party libraries whenever possible
+	- Provide production-ready features such as metrics, health checks and externalized configuration
+	- Absolutely no code generation and no requirement for XML configuration
+	
+The application.properties definitive list comes from searching the source code for @ConfigurationProperties and @Value annotations, as well as the occasional use of RelaxedPropertyResolver;	
+	
+归并排序是稳定的排序算法。
+	
+RequestEntity is extension of HttpEntity that adds a HttpMethod and URI. Used in RestTemplate and @Controller methods.	
+
+public interface StreamingHttpOutputMessage extends HttpOutputMessage {
+	void setBody(Body body);
+	@FunctionalInterface
+	interface Body {
+		void writeTo(OutputStream outputStream) throws IOException; 
+	}
+}
+
+import reactor.core.publisher.Mono;
+
+public interface ZeroCopyHttpOutputMessage extends ReactiveHttpOutputMessage {
+	default Mono<Void> writeWith(File file, long position, long count) {
+		return writeWith(file.toPath(), position, count);
+	}
+	
+	Mono<Void> writeWith(Path file, long position, long count);
+}
+
+在调用远程服务时，必须用HTTP客户端，可以使用JDK原生的URLConnection, Apache的HttpClient, Netty的异步HTTP Client, Spring的RestTemplate, 最方便/优雅的是FeignClient.
+RestTemplate对象在底层通过使用java.net包下的实现创建Http请求，可以通过使用ClientHttpRequestFactory指定不同的http请求方式，ClientHttpRequestFactory接口主要提供了两种实现方式:
+	- 一种是SimpleClientHttpRequestFactory, 使用J2SE提供的方式(即java.net包提供的方式)创建底层的Http请求连接;
+	- 一种方式是使用HttpComponentsClientHttpRequestFactory方式，底层使用HttpClient访问远程http服务，使用HttpClient可以配置连接池和证书等信息。
+
+常用重试Handler: org.apache.http.impl.client.DefaultHttpRequestRetryHandler;
+
+@WebServlet, @WebFilter and @WebListener annotated classed can be automatically registered with an embedded servlet container by annotating a @Configuration class with @ServletComponentScan and specifying the packages containing the components that you want to register. By default, @ServletComponentScan will scan from the package of the annotated class.
+
+
+ApplicationListener<EmbeddedServletContainerInitalizedEvent>;
+
+Configure SSL;
+Customize Tomcat's proxy configuration;
+
+Tomcat cookie domain validation问题：To swithc to the LegacyCookieProcessor use an EmbeddedServletContianerCustomizer bean that adds a TomcatContextCustomizer.
+
+spring-boot-starter-undertow
+
+AnnotationDrivenBeanDefinitionParser;
+HandlerMethodArgumentResolver;
+HandlerMethodReturnValueHandler;
+
+默认的异常信息解析器：三个异常信息解析器的处理顺序：ExceptionHandlerExceptionResolver最先，ResponseSatusExceptionResolver次之，DefaultHandlerExceptionResolver顺序为最后。
+处理器拦截器必须实现HandlerInterceptor接口，定义了三个方法:preHandler, postHandler, afterCompletion;
+
+在非XA环境中，消息队列的插入过程独立于数据库更新操作，ACID准则中的原子性和独立性不能得到保证，从而整体上数据完整性受到损害。需要一种方式能够让消息队列和数据库处于单一事务的控制之下，来保证两个资源能够被协调形成单一工作单元。使用X/Open的XA接口，能够做到协调多个资源，保证维持ACID准则。
+
+XA接口是双向的系统接口，分布式事务是由一个应用程序(Application Program),一个事务管理器(Transaction Manager),以及一个或多个资源管理器(Resource Manager)之间形成通信桥梁。事务管理器控制着JTA事务，管理事务生命周期，并协调资源。
+在JTA中，事务管理器抽象为javax.transaction.TransactionManager接口，并通过底层事务服务(JTS)实现。资源管理器负责控制和管理实际资源(数据库或JMS)。
+
+从两阶段(2PC)提交的工作方式来看，在提交事务的过程中需要在多个节点之间进行协调，而各节点对锁资源的释放必须等到事务最终提交时，这样比起一阶段(1PC)提交，两阶段提交在执行同样的事务时会消耗更多时间。事务执行时间的延长意味着锁资源发生冲突的概率增加，当事务并发量达到一定数量的时候，就会出现大量事务积压甚至死锁，系统性能就会严重下降。
+
+public abstract class AbstractClientHttpRequestFactoryWrapper implements ClientHttpRequestFactory {
+	private final ClientHttpRequestFactory requestFactory;
+	protected abstract ClientHttpRequest createRequest(URI uri, HttpMethod httpMethod, 
+			ClientHttpRequestFactory requestFactory) throws IOException;
+}
+
+BufferingClientHttpRequestFactory: Wrapper for a ClientHttpRequestFactory that buffers all outgoing and incoming streams in memory. Using this wrapper allows for multiple reads of the ClientHttpResponse.getBody() response body.
+
+BufferingClientHttpRequestWrapper;
+BufferingClientHttpResponseWrapper;
+Composing XML-based configuration metadata; The Groovy Bean Definition DSL;
+
+Instantiating beans
+	- Instantiation with a constructor;
+	- Instantiation with a static factory method;
+	- Instantiation using an instance factory method;
+
+多个Bean Scope: single, prototype, request, session, global session, application, WebSocket scope;
+
+Shutting down the Sping IoC container gracefully in non-web applications.
+ApplicationContextAware and BeanNameAware
+Bean definition inheritance;
+
+Container Extension Points:
+	- Customizing beans using a BeanPostProcessor;
+	- Customizing configuration metadata with a BeanFactoryPostProcessor;
+	- Customizing instantiation logic with a FactoryBean;
+
+Composing Java-based configurations
+	- Using the @Import annotation;
+	- Conditionally include @Configuration classes or @Bean methods;
+	- Combining Java and XML configuration;
+
+Registering a LoadTimeWeaver
+Resources
+RxJava - Reactive Extensions for the JVM - a library for composing asynchronous and event-based programs using observable sequences for the Java VM.
+
+java io之AutoClosable, Closeable和Flushable接口: Closeable和FlushAble两个接口在java.io包中定义，并且在JDK5中添加;而AutoCloseable，在JDK7中添加，在java.lang包中。
+
+org.springframework.beans.factory.InitializingBean;
+org.springframework.beans.factory.DisposableBean;
+org.springframework.util.concurrent.ListenableFuture;
+
+CompletableFuture;
+
+java.util.concurrent.ExecutionException: Exception thrown when attempting to retrieve the result of task that aborted by throwing an execption. This exception can be inspected using the getCause() method.
+
+Spring Cloud gateway: Combined Global Filter and GatewayFilter Ordering;
+OkHttp的使用是非常简单的，它的的请求/响应API使用构造器模式builders来设计，它支持阻塞式的同步请求和带回调的异步请求。
+
+org.springframework.core.task.AsyncListenableTaskExecutor;
+org.springframework.util.FileCopyUtils;
+org.springframework.util.StringUtils;
+org.springframework.util.StreamUtils;
+	
+org.springframework.cloud:spring-cloud-starter-alicloud-ans实现了Spring Cloud Registry的标准接口与规范，可以完全地替代Spring Cloud Eureka和Spring Cloud Consul提供的服务发现功能.
+java.util.stream.Collectors;
+reator.core.publisher.Flux;
+reator.core.publisher.Mono;
+org.springframework.util.MultiValueMap;
+org.springframework.util.LinkedMultiValueMap;
+java.util.concurrent.atomic.AtomicReference;
+sun.misc.Unsafe的作用是提供CAS操作
+@FunctionalInterface
+java.util.function.Supplier;
+
+List<? extends Publisher<Void>> actions = this.commitActions.stream().map(Supplier::get)
+	.collect(Collectors.toList());
+
+JVM的并行和并发: 
+	- concurrent并发，多个线程协同做同一件事情(有状态);
+	- parallel并行，多个线程各做各的事情(相互间无共享状态);
+
+大多数情况对JVM调优，需要关注2个指标：响应速度和吞吐量。
+
+G1的长期目标是取代CMS(Concurrent Mark-Sweep Collector, 并发标记-清除). 因为特性的不同使G1成为比CMS更好的解决方案。一个区别是，G1是压缩型的收集器。G1通过有效的压缩完全避免了对细微空闲内存空间的分配，不用依赖regions，这不仅大大简化了收集器，而且还消除了潜在的内存碎片。除了压缩之外，G1的垃圾收集停顿也比CMS容易估计，也允许用户自定义所希望的停顿参数(pause targets);
+G1使用暂停预测模型(pause prediction model)来达到用户定义的目标暂停时间，并根据目标暂停时间来选择此次进行垃圾收集的heap区域数量。
+因此,每次垃圾收集时, G1都会持续不断地减少碎片, 并且在用户给定的暂停时间内执行. 这比以前的方法强大了很多. CMS垃圾收集器(Concurrent Mark Sweep,并发标记清理)不进行压缩. ParallelOld 垃圾收集只对整个堆执行压缩,从而导致相当长的暂停时间。
+
+org.springframework.http.client.ClientHttpRequestInterceptor;
+org.springframework.http.client.InterceptingClientHttpRequestFactory;
+Spring作为一站式框架，为开发者提供了异步执行和任务调度的抽象接口TaskExecutor和TaskScheduler。Spring对这些接口的实现类支持线程池(ThreadPool)和代理。提供对JDK Timer和开源的Quartz的支持。Spring通过将关联的Scheduler转化为FactoryBean来实现。通过Spring调度框架，开发者可以快速地通过MethodInvokingFactoryBean来实现将POJO类的方法转化为任务。
+AsyncListenableTaskExecutor接口允许返回拥有回调功能的ListenableFuture接口，这样在结果执行完毕时，能够直接回调处理。
+org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+同时可以在annotation-driven标签上注册实现了AsyncUncaughtExceptionHandler接口的异常处理器。
+同时，Servlet3.x为Web的异步调用提供了AsyncContext，对基于Web的异步调用提供了原生支持。
+
+CMS收集器在老年代堆内存中执行分为以下阶段：
+1. 初始标记(Initial Mark): (Stop the world Event,所有线程暂停)在老年代(old generation)中的对象，如果从年轻代(young generation)中能访问到，则被标记marked为可达的(reachable).对象在旧一代“标记”可以包括这些对象可能可以从年轻一代。暂停时间一般持续时间较短，相对小的收集暂停时间。
+2. 并发标记(Concurrent Marking): 在Java应用程序运行的同时遍历老年代的可达对象图。扫描从被标记的对象开始，直到遍历完从root可达的所有对象。调整器(mutators)在并发阶段的2,3,5阶段执行，在这些阶段中新分配的所有对象(包括被提升的对象)都立刻标记为存活状态。
+3. 再次标记(Remark): (Stop the world Event,所有应用线程暂停)查找在并发标记阶段漏过的对象，这些对象是在并发收集器完成对象跟踪之后由应用线程更新的。
+4. 并发清理(Concurrent Sweep): 回收在标记阶段(marking phases)确定为不可及的对象。死对象的回收将此对象占用的空间增加到一个空闲列表(free list)。死对象的合并可能在此时发生。请注意，存活的对象并没有被移动。
+5. 重置(Resetting): 清理数据结构，为下一个并发收集做准备。
+两次stop the world事件发生在: 初始标记(initial mark)以及重新标记(remark)阶段. 当老年代达到一定的占有率时,CMS垃圾回收器就开始工作.
+
+在使用CMS时，老年代的对象回收就地进行(deallocated in place)。他们不会被移动到其他地方，除了Full GC，否则内存空间不会进行压缩。
+
+如图所示,heap区可以分配为 Eden, Survivor, 或 old generation(老年代)区. 此外,还有第四种类型的对象被称为巨无霸区域(Humongous regions),这种巨无霸区是设计了用来保存比标准块(standard region)大50%及以上的对象, 它们存储在一组连续的区中. 最后一个类型是堆内存中的未使用区(unused areas).
+
+备注: 截止英文原文发表时,巨无霸对象的回收还没有得到优化. 因此,您应该尽量避免创建太大(大于32MB?)的对象.
+
+总结下来,G1对老年代的GC有如下几个关键点:
+	-并发标记清理阶段(Concurrent Marking Phase)
+		-活跃度信息在程序运行的时候被并行计算出来
+		-活跃度(liveness)信息标识出哪些区域在转移暂停期间最适合回收.
+		-不像CMS一样有清理阶段(sweeping phase).
+	-再次标记阶段(Remark Phase)
+		-使用的 Snapshot-at-the-Beginning (SATB, 开始快照) 算法比起 CMS所用的算法要快得多.
+		-完全空的区域直接被回收.
+	-拷贝/清理阶段(Copying/Cleanup Phase)
+		-年轻代与老年代同时进行回收.
+		-老年代的选择基于其活跃度(liveness).
+
+java -Xmx2048m -Xms2048m -XX:+UseG1GC -XX:MaxGCPauseMilis=200 -jar *.jar
+-XX:InitiatingHeapOccupancyPercent=45  启动并发GC时的堆内存占用百分比. G1用它来触发并发GC周期,基于整个堆的使用率,而不只是某一代内存的使用比例。值为 0 则表示“一直执行GC循环)'. 默认值为 45 (例如, 全部的 45% 或者使用了45%).
+
+Oracle Hotspot/OpenJDK/jRockit/IBM J9
+
+手动管理/引用计数/对象可达性(reachability)
+弱引用
+垃圾收集根元素(Garbage Collection Roots): 局部变量，活动线程，静态域，JNI引用(JNI reference)，(当Minor GC时，对年轻代来说，老年代就是GC Root)
+
+JVM使用标记-清除算法(Mark and Sweep algorithm)，来跟踪所有的可达对象(即存活对象)，确保所有不可达对象(non-reachable objects)占用的内存都能被复用。其中包含两步：
+	-Marking(标记):遍历所有的可达对象，并在本地内存(native)中分门别类记下。
+	-Sweeping(清除)：保证不可达对象所占用的内存，在之后进行内存分配时可以重用。
+标记清除算法最重要的优势，就是不再因为循环引用而导致内存泄漏。
+而不好的地方在于，垃圾收集过程中，需要暂停应用程序的所有线程。假如不暂停，则对象间的引用关系会一直不停发生变化，那样就没法进行统计了，这种情况是STW，让应用程序暂时停止，让JVM进行内存清理工作。有很多原因会触发STW停顿，其中垃圾收集是最主要的因素。
+
+JVM中包含了多种GC算法，如Parallel Scavenge(并行清除)，Parallel Mark+Copy(并行标记+复制)以及CMS，理论上都采用了两个步骤。
+
+JVM为了确保碎片问题不可控，在垃圾收集过程中，不仅是标记和清除，还需要执行“内存碎片整理”过程，这个过程让所有可达对象(reachable objects)依次排列，以消除/减少碎片。
+JVM中的引用是一个抽象的概念，如果GC移动某个对象，就会修改(堆中和栈中)所有指向该对象的引用。移动/提升/压缩是一个STW的过程，所以修改对象引用是一个安全的行为。
+分代假设(Generational Hypothesis)
+拆分年轻代和年老代，允许采用不同的算法来大幅提高GC的性能。
+Eden是内存中的一个区域，用来分配新创建的对象，通常会有多线程同时创建多个对象，所以Eden区被划分为多个线程本地分配缓冲区(Thread Local Allocation Buffer, 简称TLAB)。通过这种缓冲区划分，大部分对象直接由JVM在对应线程的TLAB中分配，避免与其他线程的同步操作。
+如果 TLAB 中没有足够的内存空间, 就会在共享Eden区(shared Eden space)之中分配。如果共享Eden区也没有足够的空间, 就会触发一次年轻代GC 来释放内存空间。如果GC之后 Eden 区依然没有足够的空闲内存区域, 则对象就会被分配到老年代空间(Old Generation)。
+
+具体的提升阈值由JVM动态调整，也可以用-XX:+MaxTenuringThreshold来指定上限。如果设置-XX:+MaxTenuringThreshold=0，则GC时存活对象不在存活区之间复制，直接提升到老年代。现在JVM中这个阈值默认设置为15个GC周期。这也是HotSpot中的最大值。
+如果存活区空间不够存放年轻代中的存活对象，提升(Promotion)也可能更早地进行。
+
+老年代GC发生的频率比年轻代小很多。同时, 因为预期老年代中的对象大部分是存活的, 所以不再使用标记和复制(Mark and Copy)算法。而是采用移动对象的方式来实现最小化内存碎片。
+
+在Java8之前有一个特殊的空间,称为“永久代”(Permanent Generation)。这是存储元数据(metadata)的地方,比如class 信息等。此外,这个区域中也保存有其他的数据和信息, 包括内部化的字符串(internalized strings)等。实际上这给Java开发者造成了很多麻烦,因为很难去计算这块区域到底需要占用多少内存空间。预测失败导致的结果就是产生java.lang.OutOfMemoryError: Permgen space 这种形式的错误。除非OutOfMemoryError确实是内存泄漏导致的,否则就只能增加permgen 的大小，例如下面的示例，就是设置permgen最大空间为 256 MB:
+java -XX:MaxPermSize=256m com.mycompany.MyApplication
+
+当然，像类定义(class definitions)之类的信息会被加载到Metaspace 中。元数据区位于本地内存(native memory),不再影响到普通的Java对象。默认情况下, Metaspace的大小只受限于 Java进程可用的本地内存。这样程序就不再因为多加载了几个类/JAR包就导致 java.lang.OutOfMemoryError: Permgen space。注意, 这种不受限制的空间也不是没有代价的 ——如果Metaspace失控, 则可能会导致很严重的内存交换(swapping), 或者导致本地内存分配失败。
+如果需要避免这种最坏情况，那么可以通过下面这样的方式来限制 Metaspace 的大小, 如 256 MB:
+java -XX:MaxMetaspaceSize=256m com.mycompany.MyApplication
+

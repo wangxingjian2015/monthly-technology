@@ -1,0 +1,552 @@
+-MaxPermSize=256m
+-MaxMetaspaceSize=256m
+
+并发标记和清除收集器(Concurrent Mark and Sweep Collector, -XX:+UseConcMarkSweepGC)
+
+jstat命令可以通过具备图形界面的工具得出同样的信息, 比如 jconsole 或者 jvisualvm (或者最新的 jmc)。
+
+Spring Cloud是一个基于Spring Boot实现的云应用开发工具，它为基于JVM的云应用开发中的配置管理，服务发现，断路器，智能路由，微代理，控制总线，全局锁，决策竞选，分布式会话和集群状态管理等操作提供了一种简单的开发方式。
+
+当Ribbon与Eureka联合使用时，ribbonServerList会被DiscoveryEnabledNIWSServerList重写，扩展成从Eureka注册中心获取服务端列表。同时它也会用NIWSDiscoveryPing来取代IPing，它将职责委托给Eureka来确定服务端是否已经启动。
+
+Feign是一个声明式的Web Service客户端，它使得编写Web Serivce客户端变得更加简单。我们只需要使用Feign来创建一个接口并用注解来配置它既可完成。它具备可插拔的注解支持，包括Feign注解和JAX-RS注解。Feign也支持可插拔的编码器和解码器。Spring Cloud为Feign增加了对Spring MVC注解的支持，还整合了Ribbon和Eureka来提供均衡负载的HTTP客户端实现。
+
+Spring Cloud COnfig为服务端和客户端提供了分布式系统的外部化配置支持，它实现了对服务端和客户端对Spring Environment和PropertySource抽象的映射。
+
+@EnableZuulProxy
+@SpringCloudApplication整合了@SpringBootApplication，@EnableDiscoveryClient,@EnableCircuitBreaker
+
+org.springframework.core.codec.Decoder;
+org.springframework.core.codec.Encoder;
+
+Spring MVC的自动配置，包含了ContentNegotiatingViewResolver与BeanNameViewResolver
+如果你希望提供自定义的RequestMappingHandlerMapping, RequestMappingHandlerAdapter, or ExceptionHandlerExceptionResolver的实例。可以使用WebMvcRegistrationsAdapter提供组件。
+
+Spring MVC提供了MessageCodesResolver来根据产生的错误码来提示对应的错误信息。如果你设置了spring.mvc.message-codes-resolver.format属性PREFIX_ERROR_CODE或者是POSTFIX_ERROR_CODE
+
+jps
+jstat -class <pid>
+jstat -compiler <pid>
+jstat -gc <pid>
+jstat -gccapacity <pid>
+jstat -gcnew <pid>
+jstat -gcold <pid>
+jstat -gcoldcapacity <pid>
+jstat -gcmetacapacity <pid>
+jstat -gcutil <pid>
+jstat -printcompilation <pid>
+
+@RestContoller:Spring4之后加入，原来在@Controller中返回json需要@ResponseBody来配合，如果直接用@RestController替代@Controller就不需要再配置@ResponseBody，默认返回json格式。
+
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Controller
+@ResponseBody
+public @interface RestController {
+	String value() default "";
+}
+
+Collections.synchronizedMap(new HashMap<A, B>());
+
+@Autowired
+private JdbcTemplate jdbcTemplate;
+
+在Spring Boot中使用Spring-data-jpa
+spring-boot-starter-data-jpa
+
+spring.jpa.properties.hibernate.hbm2ddl.auto=(create/create-drop/update/validate)
+JpaRepository: 通过解析方法名创建查询
+
+JNI: Java Native Interface 
+
+@RefreshScope
+
+spring-boot-starter-actuator
+@EnableDiscoveryClient
+Eureka: Region/Zone
+
+Spring Cloud Gateway之Predict
+
+Predicate来自java8接口，接受一个输入参数，返回一个boolean。该接口包含多种默认方法来将Predicate组合成其他复杂的逻辑(与或非).可以用于接口请求参数校验，判断新老数据是否变化需要进行更新操作。
+RoutePredicateFactory
+AfterRoutePredicateFactory
+HeaderRoutePredicateFactory
+CookieRoutePredicateFactory
+HostRoutePredicateFactory
+MethodRoutePredicateFactory
+PathRoutePredicateFactory
+QueryRoutePredicateFactory
+
+JProfiler
+
+spring-cloud-starter-bus-amqp, spring-boot-starter-actuator
+Spring Cloud Bus的/bus/refresh接口提供了针对服务和实例进行配置更新的参数。
+spring.cloud.laodbalancer.retry.enabled:该参数用来开启重试机制
+hystrix.command.default.execution.isolation.thread.timeoutMilliseconds: 断路器的超时时间大于ribbon的超时时间，不然不会触发重试。
+hello-service.ribbon.ConnectTimeout:请求连接的超时时间
+hello-service.ribbon.ReadTimeout:请求处理的超时时间
+hello-service.ribbon.OkToRetryOnAllOperations:对所有操作请求都进行重试
+hello-service.ribbon.MaxAutoRetriesNextServer:切换实例的重试次数
+hell-service.ribbon.MaxAutoRetries:对当前实例的重试次数
+
+Spring Cloud Bus默认支持RabbitMQ，也可以支持Kafka，其他消息中间件需要自己实现扩展接口。
+Kafka用Scala开发，支持消息分区以及分布式消费，并保证分区内的消息顺序。
+Consumer Group
+
+public interface LoadBalancerClient extends ServiceInstanceChooser;
+org.springframework.beans.factory.SmartInitializingSingleton;
+org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
+org.springframework.boot.context.properties.EnableConfigurationProperties;
+org.springframework.http.client.ClientHttpRequestInterceptor;
+org.springframework.retry.support.RetryTemplate;
+org.springframework.web.client.RestTemplate;
+Auto configuration for Ribbon(client side load balancing);
+在LoadBalancerAutoConfiguration这个自动化配置类中，主要做了三件事情:
+	- 创建一个LoadBalancerInterceptor的Bean，用于实现对客户端发起请求时进行拦截，以实现客户端负载均衡；
+	- 创建一个RestTemplateCustomizer的Bean，用于给RestTemplate增加LoadBalancerInterceptor拦截器；
+	- 维护了一个被@LoadBalanced注解修饰的RestTemplate对象列表，并进行初始化，通过调用RestTemplateCustomizer的实例来给需要客户端负载均衡的RestTemplate增加LoadBalancerInterceptor拦截器。
+
+LoaderBalancerInterceptor
+javax.annotation.PostConstruct;
+spring-cloud-starter-gateway;
+
+AddRequestHeaderGatewayFilterFactory;
+
+大多数JVM都需要两种不同的GC算法:一种用来清理年轻代，一种用来清理老年代。
+
+-年轻代和老年代的串行GC(Serial GC)
+-年轻代和老年代的并行GC(Parallel GC)
+-年轻代的并行GC(Parallel GC) + 老年代的CMS(Concurrnt Mark and Sweep)
+-G1, 负责回收年轻代和老年代
+
+Serial GC对年轻代使用mark-copy(标记-复制)算法，对老年代使用mark-sweep-compact(标记-清除-整理)算法。两者都是单线程的垃圾收集器，不能并行处理，两者都会触发STW，停止所有的应用线程。
+java -XX:+UseSerialGC *.jar 
+输出GC日志：-XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCTimeStamps
+DefNew: 垃圾收集器的名称，表示的时在年轻代中使用：单线程，标记-复制(mark-copy)，STW垃圾收集器
+
+Parallel GC(并行GC):并行垃圾收集器这一类组合, 在年轻代使用 标记-复制(mark-copy)算法, 在老年代使用 标记-清除-整理(mark-sweep-compact)算法。年轻代和老年代的垃圾回收都会触发STW事件,暂停所有的应用线程来执行垃圾收集。两者在执行 标记和 复制/整理阶段时都使用多个线程, 因此得名“(Parallel)”。通过并行执行, 使得GC时间大幅减少。
+通过命令行参数 -XX:ParallelGCThreads=*来指定GC线程数，其默认值为CPU内核数
+并行垃圾收集器适用于多核服务器,主要目标是增加吞吐量。因为对系统资源的有效使用,能达到更高的吞吐量:
+	-在GC期间, 所有 CPU 内核都在并行清理垃圾, 所以暂停时间更短
+	-在两次GC周期的间隔期, 没有GC线程在运行,不会消耗任何系统资源
+
+CMS其对年轻代采用并行STW的mark-copy(标记-复制)算法，对老年代主要使用并发mark-sweep(标记-清除)算法。
+CMS的设计目标是避免在老年代垃圾收集时，出现长时间的卡顿。主要通过两个手段来达到此目标：
+	-第一，不对老年代进行整理，而是使用空闲列表(free-list)来管理内存空间的回收
+	-第二，在mark-and-sweep标记-清除阶段的大部分工作和应用线程一起并发执行。
+也就是说, 在这些阶段并没有明显的应用线程暂停。但值得注意的是, 它仍然和应用线程争抢CPU时间。默认情况下, CMS 使用的并发线程数等于CPU内核数的 1/4。
+java -XX:+UseConcMarkSweepGC *.jar
+如果服务器是多核CPU，并且主要调优目标是降低延迟, 那么使用CMS是个很明智的选择. 减少每一次GC停顿的时间,会直接影响到终端用户对系统的体验, 用户会认为系统非常灵敏。 因为多数时候都有部分CPU资源被GC消耗, 所以在CPU资源受限的情况下,CMS会比并行GC的吞吐量差一些。
+
+StringBuffer/StringBuilder
+BIO:当发起I/O的读写时，均为阻塞方式，直到应用程式读到了流或者将流写入数据;
+NIO:基于事件驱动思想，常采用reactor(反应器)模式。当发起I/O请求时，应用程式是非阻塞的。当Socket有流可读或者写的时候，由操作系统通知应用程序，应用程序再将流读取到缓冲区或者写入系统;
+AIO:同样基于事件驱动的思想，通常采用Proactor(前聂器模式)实现，对于读操作，操作系统将数据读到缓冲区，并通知应用程序，对于写操作，操作系统将write方法传递的流写入并主动通知应用程序，它节省了NIO中遍历事件通知队列的代价。
+阻塞：某个请求发出后，由于该请求操作需要的条件不满足，请求操作一直阻塞，不会返回，直到满足条件;
+非阻塞：请求发出后，若该请求需要的条件不满足，则立即返回一个标志信息告知条件不满足，而不会一直等待。一般需要循环判断请求条件是否满足来获取结果。
+NIO和AIO的不同：AIO是操作系统完成IO并通知应用程序，NIO是操作系统通知应用程序，由应用程序完成。
+
+reactor模型:当客户端请求抵达后，服务处理程序使用多路分配策略，由一个非阻塞的线程来接收所有的请求，然后派发这些请求至相关的工作线程进行处理
+
+获取Class的三种方式:
+	1. Class<?> claz1 = Class.forName("x.y.z);
+	2. Class<?> claz2 = x.y.z.class;
+	3. x.y.z z1 = new x.y.z(); Class<?> claz3 = z1.getClass();
+
+java中从Class.forName()和ClassLoader都可用来对类进行加载，Class.forName()除了将类的.class文件加载到jvm之外，还会对类进行解释，执行类中的static块。而ClassLoader只是将.class文件加载到jvm中，不会执行static中的内容，只有在newInstance才会执行static块。
+JVM中的内存共分为：程序计数器，堆，虚拟机栈，本地方法栈和方法区5部分。
+
+出现栈内存溢出的几种可能原因
+	-1. 类中和引用变量使用了过多static变量
+	-2. 大量的递归或者无限递归(递归中用到了大量的新建的对象)
+	-3. 大量循环或者死循环(循环中用到了大量的新建对象)
+
+-Xss1024k: 设置每个线程的堆栈大小。JDK5.0以后每个线程堆栈大小为1M，以前每个线程堆栈大小为256K。根据应用的线程所需内存大小进行调整。在相同物理内存下，减小这个值能生成更多的线程。但是操作系统对一个进程内的线程数还是有限制的，不能无限生成，经验值在3000~5000左右。
+
+扩展原理@EventListener与SmartInitializingSingleton
+
+微服务:
+1. 组件化与服务(Componentization and Services)
+2. 围绕业务功能的组织
+3. 强化终端及弱化通道
+4. 分散治理
+5. 分散数据管理：导致的数据一致性问题，分布式事务的难以落地；只能采取最终一致性或者数据补偿；为了达到数据一致性，而导致时间的消耗。
+6. 基础设施自动化
+7. 容错性设计
+8. 设计改进
+
+AMQP: Advanced message queue protocol
+
+Routing Key/Exchange/Binding Key/
+
+Queue:
+prefetchCount=1是指每次从Queue中发送一条消息来，等消费者处理完这条消息后Queue再发送一条消息给消费者.
+RabbitMQ的生产者发送的消息经过Exchange(交换器)，由Exchange再将消息路由到一个或者多个Queue，不符合路由规则的消息进行丢弃掉，Exchange Type Binding。RabbitMQ是通过Binding将Exchange和Queue连接在一起
+
+SmartInitizlizingSingleton:实现该接口后，当所有单例bean都初始化完成以后，容器会回调该接口的方法afterSingletonsInstantiated，主要应用场合就是在所有单例bean创建完成之后，可以在回调中做一些事情。
+ApplicationContext在refresh过程中会调用finishBeanFactoryInitialization(beanFactory)来提前初始化单例bean,具体方法是调用preInstantiateSingletons, 该方法定义在接口ConfigurableListableBeanFactory中。
+
+
+RewritePathGatewayFilterFactory;
+Spring Cloud Gateway内置了19种强大的过滤器工厂，能够满足很多场景的需求。可以实现GatewayFilter和Ordered2个接口，接口自定义过滤器。
+
+Spring Cloud Gateway根据作用范围划分为GatewayFilter和GlobalFilter，区别如下：
+	- 1. GatewayFilter需要通过spring.cloud.routes.filters配置在具体路由下，只作用在当前路由上或通过spring.cloud.default-filters配置在全局，作用在所有路由上
+	- 2. GlobalFilter, 全局过滤器，不需要在配置文件中配置，作用在所有的路由上，最终通过GatewayFilterAdapter包装成GatewayFilterChain可识别的过滤器，它为请求业务及路由的URI转换为真实业务服务的请求地址的核心过滤器，不需要配置，系统初始化时加载，并作用在每个路由上。
+
+
+Mycat带来的最大好处就是完全不用修改原有的代码，可以直接像连接数据库一样连接Mycat，遵从同样的数据库协议(MySQL)，还有Mycat本身的管理端口，或者使用Mycat-Web进行管理。
+
+Mycat配合数据库本身的复制功能，可以解决读写分离的问题，但是针对分库分表的问题，不是完美的解决。至今为止，业界没有完美的解决方案。
+分库分表写入能完美解决，但是不能完美解决数据一致性和联表查询的问题。Mycat支持两个表的查询，多于两个表的查询不支持。其实，很多数据库中间件关于分库分表查询的问题，都是需要自己实现的，而且都不支持联表查询,Mycat已经算做非常先进了。分库分表后的联表查询问题，需要通过合理的数据库设计来避免。
+Mycat的前身是阿里的Cobar
+可以通过在SQL语句前增加explain来查看Mycat的路由分析。
+Mycat支持MySQL原生协议，支持数据的多片自动路由与聚合，支持sum,count,max等常用的聚合函数，支持跨库分页。
+	- 支持单库内部任意join，支持跨库2表join，甚至基于caltlet的多表join。
+	- 支持分布式事务(弱XA)，支持XA分布式事务(1.6.5)
+	- 支持全局序列号，解决分布式下的主键生成问题。
+
+
+Sharding-JDBC/Sharding-Sphere，柔性事务
+TDDL(Taobao Distribute Data Layer)和DRDS是同属于一个产品,代码一样。
+Sharding-JDBC: 通过Hint强制指定某次查询走写库。保证同一用户线程的数据一致性。
+
+org.springframework.core.io.ClassPathResource;
+org.springframework.core.io.support.PropertiesLoaderUtils;
+org.springframework.util.ClassUtils;
+reactor.core.publisher.Flux;
+reactor.core.publisher.Mono;
+
+AQS: AbstractQueuedSynchronizer 
+同步器的核心方法是acquire和release操作。
+
+AQS类使用单个int来保存同步状态，并暴露getState,setState以及compareAndSet操作来读取和更新这个同步状态。其中state被声明为volatile，并且通过CAS指令来实现compareAndSetState，使得仅当同步状态拥有一个一致的期望值的时候，才会被原子地设置成新值，这样就达到了同步状态的原子性管理，确保了同步状态的原子性，可见性和有序性。
+
+Java Memory Model:JMM Java内存模型的主要目标是定义程序中各个变量的访问规则，即变量在内存中的存储和从内存中取出变量这样的底层细节。其规定了所有变量都存储在主内存，每个线程还有自己的工作内存，线程读写变量时需先复制到工作内存，执行完计算操作后再回写到主内存，每个线程还不能访问其他线程的工作内存。
+另外，为了获得较好的执行性能，Java内存模型并没有限制执行引擎使用处理器的寄存器或者高速缓存来提升指令执行速度，也没有限制编译器对指令进行重排序。也就是说，在java内存模型中，还会存在指令重排序的问题。
+java通过volatile关键字来解决缓存一致性和指令重排问题，volatile作用就是确保可见性和禁止指令重排。
+
+内存屏障提供了3个功能：确保指令重排序时不会把其后面的指令排到内存屏障之前的位置，也不会把前面的指令排到内存屏障的后面；强制将对缓存的修改操作立即写入主存；如果是写操作，它会导致其他CPU中对应的缓存行无效。这3个功能又是怎么做到的呢？来看下内存屏障的策略：
+
+在每个volatile写操作前面插入storestore屏障；
+在每个volatile写操作后面插入storeload屏障；
+在每个volatile读操作后面插入loadload屏障；
+在每个volatile读操作后面插入loadstore屏障；
+其中loadload和loadstore对应的是方法acquire，storestore对应的是方法release，storeload对应的是方法fence。
+
+从XML中构建SqlSessionFactory,每个基于MyBatis的应用都是以一个SqlSessionFactory的实例为核心的。SqlSessionFactory的实例可以通过SqlSessionFactoryBuilder获得。而SqlSessionFactoryBuilder则可以从XML配置文件或一个预先定制的Configuration的实例构建出SqlSessionFactory的实例。
+类路径下的资源文件. MyBatis包含一个名为Resources的工具类，它包含一些实用方法，可使从classpath或其他位置加载资源文件更加容易。
+String resource = "org/mybatis/example/mybatis-config.xml";
+InputStream inputStream = Resoucres.getResourceAsStream(resource);
+SqlSessionFactory sqlSessionFactory = new SqlSessionFactoryBuilder().build(inputStream);
+
+XML配置文件中包含了对MyBatis系统的核心设置，包含数据库连接实例的数据源(DataSource)和决定事务作用域和控制方式的事务管理器(TransactionManager)
+<configuration>
+	<environments default="development">
+		<environment id="development">
+			<transactionManager type="JDBC"/>
+			<dataSource type="POOLED">
+				<property name="driver" value="${driver}"/>
+				...
+			</dataSource>
+		</environment>
+	</environments>
+	<mappers>
+		<mapper resource="org/mybatis/example/BlogMapper.xml">
+	</mappers>
+</configuration>
+
+environment元素体中包含了事务管理和连接池的配置，mappers元素则是包含一组映射器mapper,这些映射器的XML映射文件包含了SQL和映射定义信息。
+也可以使用java代码构建SqlSessionFactory:
+DataSource dataSource = BlogDataSourceFactory.getBlogDataSource();
+TransactionFactory transactionFactory = new JdbcTransactionFactory();
+Environment environment = new Environment("development", transactionFactory, dataSource);
+Configuration configuration = new Configuration(environment);
+configuration.addMapper(BlogMapper.class);
+SqlSessionFactory sqlSessionFactory = new SqlSessionFactoryBuilder().build(configuration);
+SqlSession session = sqlSesstionFactory.openSession();
+try {
+	//Blog blog = (Blog)session.selectOne("org.mybatis.example.BlogMapper.selectBlog", 101);
+	//更优雅的方式
+	BlogMapper mapper = session.getMapper(BlogMapper.class);
+	Blog blog = mapper.selectBlog(101);
+} finally {
+	session.close();
+}
+现在有了更简洁的方式-使用正确描述每个语句的参数和返回值的接口(BlogMapper.class)，不仅可以执行更清晰和类型安全的代码，而且不用担心易错的字符串字面值以及强制类型转换。
+命名解析：为了减少输入量，MyBatis对所有的命名配置元素(包括语句，结果映射，缓存等)使用了如下的命名解析规则。
+	- 完全限定名(com.mypackage.MyMapper.selectAllThings)将被直接用于查找及使用
+	- 短名称(selectAllThings)；如果全局唯一也可以作为一个单独的引用。如果不唯一，有两个或两个以上的相同名称，那么使用时就会产生"短名称不唯一"的错误，这种情况下就必须使用完全限定名。
+
+依赖注入框架可以创建线程安全，基于事务的SqlSession和映射器，并将注入到Bean中，因此可以忽略它们的生命周期。可以参考MyBatis-Spring或MyBatis-Guice两个子项目。
+
+SqlSessionFactoryBuilder, SqlSessionFactory, SqlSession, 各种Mapper
+属性(properties)可以外部配置且可动态替换，既可以在典型的Java属性文件中配置，也可以通过properties元素的子元素来传递。
+设置特定的属性来修改分割键名和默认值的字符
+<properties resource = "org/mybatis/example/config.properties">
+	<property name="org.apache.ibatis.parsing.PropertyParser.enable-default-value" value="true"/><!-- 启用默认值特性 -->
+	<property name="org.apache.ibatis.parsing.ProperyParser.default-value-separator" value="true"/><!-- 修改默认值的分隔符-->
+	<property name="" value="">
+</properties>
+设置(settings):
+cacheEnabled
+lazyLoadingEnabled
+aggressiveLazyLoading
+multipleResultSetsEnabled
+useColumnLabel
+useGeneratedKeys
+autoMappingBehavior
+autoMappingUnknownColumnBehavior
+defaultExecutorType
+defaultStatementTimeout
+defaultFetchSize
+safeRowBoundsEnabled
+safeResultHandlerEnabled
+mapUnderscoreToCamelCase
+localCacheScope
+jdbcTypeForNull
+lazyLoadTriggerMethods
+defaultScriptingLanguage
+defaultEnumTypeHandler
+callSettersOnNulls
+returnInstanceForEmptyRow
+logPrefix
+logImpl
+proxyFactory
+vfsImpl
+useActualParamName
+configurationFactory
+
+<typeAliases>
+	<package name="domain.blog">
+	<typeAlias alias="" type="">
+</typeAliases>
+@Alias("author")
+类型别名
+类型处理器(typeHandlers)
+预处理语句PreparedStatement
+从MyBatis-3.4.5开始，默认支持JSR-310(日期和时间API)
+可以重写类型处理器/创建自己的类型处理器来处理不支持/非标准的类型。具体做法为：实现org.apache.ibatis.TypeHandler或继承support类：org.apache.ibatis.type.BaseTypeHandler, 然后可以选择性的将它映射到一个JDBC类型。
+@MappedJdbcTypes(JdbcType.VARCHAR)
+public class ExampleTypeHandler extends BaseTypeHandler<String> {
+...
+}
+通过类型处理器的泛型，MyBatis可以得知该类型处理器处理的Java类型，不过可以有两种方式改变：
+	- typeHandler元素增加javaType属性
+	- 在类型处理器的类上增加@MappedTypes
+可以通过两种方式来指定被关联的JDBC类型：
+	- 类型处理器的配置元素上增加jdbcType属性
+	- 类型处理器的类上增加@MappedJdbcTypes
+
+泛型类型处理器
+public class GenericTypeHandler<E extends MyObject> extends BaseTypeHandler<E> {
+...
+}
+EnumTypeHandler/EnumOrinalTypeHandler
+对象工厂(ObjectFactory):MyBatis每次创建结果对象的新实例时，都会使用一个对象工厂ObjectFactory实例来完成。
+插件(plugins):MyBatis允许在已映射语句执行过程中的某一点进行拦截调用。默认，允许使用插件来拦截的方法调用包括：
+	- Executor(update, query, flushStatement, commit, rollback, getTransaction, close, isClosed)
+	- ParameterHandler(getParameterObject, setParameters)
+	- ResultSetHandler(handleResultSets, handleOutputParameters)
+	- StatementHandler(prepare, parameterize, batch, update, query)
+	
+@Intercepts(@Signature(type = Executor.class, method = "update", args = {MappedStatement.class, Object.class}))
+public class ExamplePlugin implements Interceptor {
+	public Object intercept(Invocation invocation) throws Throwable {return invocation.proceed();}
+	public Object plugin(Object object) {return Plugin.wrap(target, this);}
+	public void setProperties(Properties properties) {}
+}
+
+<plugins>
+	<plugin interceptor = "org.mybatis.example.ExamplePlugin">
+		<property name = "someProperty" value = "100"/>
+	</plugin>
+</plugins>
+事务管理器(transactionManager):在MyBatis中有两种类型的事务管理器(type="[JDBC|MANAGED]")
+<transactionManager type="MANAGED">
+	<property name = "closeConnection" value="false"/>
+</transactionManager>
+如果使用Spring+MyBatis，则没有必要配置事务管理器，因为Spring会使用自带的管理器来覆盖前面的配置。
+使用TransactionFactory和Transaction两个接口的实现类，就可以自定义MyBatis对事务的处理。
+MyBatis有三种内建的数据源(dataSource)，type="[UNPOOLED|POOLED|JNDI]"
+defaultTransactionIsolationLevel：默认的连接事务隔离级别
+可以通过DriverManager.getConnection(url, driverProperties)方法传递属性给数据库驱动	
+映射器(mappers): 
+1. 使用相对于类路径的资源引用
+2. 使用完全限定资源定位符(URL)
+3. 使用映射器接口实现类的完全限定类名
+4. 将包内映射器接口完全注册为映射器
+	
+jstat命令可以查看堆内存各部分的使用量以及加载类的数量。
+jstat -gc <pid>
+S0C:第一个幸存区的大小
+S1C:第二个幸存区的大小
+S0U:第一个幸存区的使用大小
+S1U:第二个幸存区的使用大小
+EC:Eden区的大小
+EU:Eden区的使用大小
+OC:老年代大小
+OU:老年代的使用大小
+MC:方法区的大小
+MU:方法区的使用大小
+CCSC:压缩类空间大小
+CCSU:压缩类空间使用大小
+YGC:年轻代垃圾回收次数
+YGCT:年轻代垃圾回收消耗时间
+FGC:老年代垃圾回收次数
+FGCT:老年代垃圾回收消耗时间
+GCT:垃圾回收消耗总时间
+jstat -gccapacity <pid>
+NGCMN:新生代最小容量
+NGCMX:新生代最大容量
+NGC:当前新生代容量
+S0C:第一个幸存区大小
+S1C:第二个幸存区大小
+EC:Eden区的大小
+MCMN:最小元数据容量
+MCMX:最大元数据容量
+MC:当前元数据大小
+TT:对象在新生代存活的次数
+MTT:对象在新生代存活的最大次数
+DSS:期望的幸存区大小
+jstat -gcold <pid>
+jstat -gcoldcapacity <pid>
+jstat -gcmetacapacity <pid>
+jstat -printcompilation <pid>
+Arthas是基于Greys进行二次开发的全新在线诊断工具，利用java6的Instrumentation特性，动态增强所指定的类，获取想要的信息，采用命令行交互模式，同时提供丰富的Tab自动补全功能，可以在定位/分析诊断问题提供很大便利。
+Greys: Java线上问题诊断工具, 在不中断程序执行的情况下轻松完成JVM相关问题排查工作。
+
+常用的线上Java诊断工具:
+1. BTrace
+2. HouseMD
+3. Greys
+4. Arthas
+
+HouseMD:是一款非常敏捷的Java进程运行时的诊断调试命令行工具，具备安全易用高效的特点，让它非常适合在要求严格的线上/生产环境中使用。
+BTrace基于java Instruction实现，方便跟踪代码，对于线上应用不能debug来获取运行的详细信息，通过BTrace可以解决，用到的技术有:Java Comiler API;Annotation Processing;Java Agent;ASM 4;Attach API;jvmstat;JMX
+
+基于C/S架构的任务模式甚至能让多人同时远程到同一进程上执行不同的指令/脚本，非常适合团队一起进行线上问题排查与跟踪。Greys采用纯Java编写并留有良好的扩展，可以编写想要的功能。Greys最有利的武器是表达式，可以感受到HouseMD集成功能便利的同时，也能发挥出自定义BTrace脚本的灵活。
+Greys相对于HouseMD,BTrace而言最灵活的地方就是用表达式来灵活的支持不同的问题排查，分析场景。
+表达式分为两种：条件表达式和观察表达式。
+
+[wangxj@VM_0_6_centos arthas]$ java -jar arthas-boot.jar -h
+[INFO] arthas-boot version: 3.1.0
+Usage: arthas-boot [-h] [--target-ip <value>] [--telnet-port <value>]
+       [--http-port <value>] [--session-timeout <value>] [--arthas-home <value>]
+       [--use-version <value>] [--repo-mirror <value>] [--versions] [--use-http]
+       [--attach-only] [-c <value>] [-f <value>] [--height <value>] [--width
+       <value>] [-v] [pid]
+
+Bootstrap Arthas
+EXAMPLES:
+  java -jar arthas-boot.jar <pid>
+  java -jar arthas-boot.jar --target-ip 0.0.0.0
+  java -jar arthas-boot.jar --telnet-port 9999 --http-port -1
+  java -jar arthas-boot.jar -c 'sysprop; thread' <pid>
+  java -jar arthas-boot.jar -f batch.as <pid>
+  java -jar arthas-boot.jar --use-version 3.0.5
+  java -jar arthas-boot.jar --versions
+  java -jar arthas-boot.jar --session-timeout 3600
+  java -jar arthas-boot.jar --attach-only
+  java -jar arthas-boot.jar --repo-mirror aliyun --use-http
+WIKI:
+  https://alibaba.github.io/arthas
+
+Options and Arguments:
+ -h,--help                      Print usage
+    --target-ip <value>         The target jvm listen ip, default 127.0.0.1
+    --telnet-port <value>       The target jvm listen telnet port, default 3658
+    --http-port <value>         The target jvm listen http port, default 8563
+    --session-timeout <value>   The session timeout seconds, default 1800
+                                (30min)
+    --arthas-home <value>       The arthas home
+    --use-version <value>       Use special version arthas
+    --repo-mirror <value>       Use special maven repository mirror, value is
+                                center/aliyun or http repo url.
+    --versions                  List local and remote arthas versions
+    --use-http                  Enforce use http to download, default use https
+    --attach-only               Attach target process only, do not connect
+ -c,--command <value>           Command to execute, multiple commands separated
+                                by ;
+ -f,--batch-file <value>        The batch file to execute
+    --height <value>            arthas-client terminal height
+    --width <value>             arthas-client terminal width
+ -v,--verbose                   Verbose, print debug info.
+ <pid>                          Target pid
+
+
+nonheap:code_cache, metaspace, compressed_class_space, direct, mapped;
+Arthas的常用命令:
+1. dashboard
+2. thread 1 | grep 'main('
+3. jad a.b.c.Class
+Arthas的JVM相关命令:
+1. dashboard
+2. thread
+3. jvm
+4. sysprop
+5. sysenv
+6. getstatic
+7. ognl
+class/classloader相关命令:
+1. sc
+2. sm
+3. jad
+4. mc
+5. redefine
+6. dump
+7. classloader
+monitor/watch/trace相关命令:
+1. monitor
+2. watch
+3. trace 
+4. stack 
+5. tt 
+options命令:
+1. options 
+管道命令:
+1. grep
+2. plaintext
+3. wc 
+后台异步任务命令:
+1. >
+2. jobs
+3. kill
+4. fg
+5. bg
+
+Consul是Google开源的使用Go语言开发的服务发现，配置管理中心服务。内置了服务注册与发现框架，分布式一致性协议实现，健康检测，Key/Value存储，多数据中心方案，不再依赖其他工具(Zookeeper等)。服务部署简单，只有一个可运行的二进制包。每个节点都需要运行agent，有server和client运行模式。每个数据中心官方建议需要3或5个server节点以保证数据安全，同时保证server-leader的选举能够正确进行。
+Consul数据一致性协议使用的是raft,zookeeper使用的是paxos,etcd使用的是raft。
+Consul服务发现协议采用http和dns协议，etcd只支持http, eureka也是http。
+
+Spring Boot是一个用来构建单个微服务应用的理想选择，但需要以某种方式互相联系起来，这就是Spring Cloud试图解决的问题，尤其是Spring Cloud Netflix。他提供了各种组件，比如Eureka服务发现与Ribbon客户端负载均衡的结合，为内部微服务提供通信支持。对于与外界通信，可以考虑用Zuul, Spring Cloud gateway.
+
+server.port=0
+eureka.instance.instance-id=${spring.application.name}:${random.int}
+
+server.port=${random.int[10000,19999]}
+
+当Spring Cloud应用中使用Consul来实现服务治理时，由于Consul不会自动将不可用的服务实例注销掉(deregister),实际使用过程中，可能因为操作失误/环境变更等原因让Consul中存在一些无效实例信息，而这些实例在Consul中会长期存在，并处于断开状态。
+
+Spring Cloud Consul
+public class ConsulLifecycle extends AbstractDiscoveryLifecle {
+...
+} 
+
+当使用Spring Cloud Ribbon实现客户端负载均衡时，会利用@LoadBalanced让RestTemplate具备客户端负载功能，从而实现面向服务名的接口访问。
+从Spring Cloud Camden SR2开始，Spring Cloud整合了Spring Retry来实现重试逻辑，只需要配置一下就可以。
+spring.cloud.loadbalancer.retry.enabled=true
+
+Spring Cloud Ribbon是基于Netflix Ribbon实现的一套客户端负载均衡的工具。它是一个基于HTTP和TCP的客户端负载均衡器。它可以通过在客户端中配置ribbonServerList来设置服务端列表去轮询访问以达到均衡负载的作用。
+
+当Ribbon与Eureka联合使用时，ribbonServerList会被DiscoveryEnabledNIWSServerList重写，扩展成从Eureka注册中心中获取服务实例列表。同时它也会用NIWSDiscoveryPing来取代IPing，它将职责委托给Eureka来确定服务端是否已经启动。
+
+而当Ribbon与Consul联合使用时，ribbonServerList会被ConsulServerList来扩展成从Consul获取服务实例列表。同时由ConsulPing来作为IPing接口的实现。
+
+我们在使用Spring Cloud Ribbon的时候，不论是与Eureka还是Consul结合，都会在引入Spring Cloud Eureka或Spring Cloud Consul依赖的时候通过自动化配置来加载上述所说的配置内容，所以我们可以快速在Spring Cloud中实现服务间调用的负载均衡。
+
+可以通过DiscoveryClient接口的getServices获取当前客户端缓存的所有服务清单。
