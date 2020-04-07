@@ -1,0 +1,1162 @@
+@Aync注意：如果异步方法变成阻塞的同步方法，可能原因是异步方法和普通的调用方法在同一个类中，解决方法是将异步方法单独放到一个类中。产生原因：spring对@Transactional注解时也有类似问题，spring扫描时具有@Transactional注解方法的类时，是生成一个代理类，由代理类去开启关闭事务，而在同一个类中，方法调用是在类体内执行的，spring无法截获这个方法调用。
+
+Consule: 是由HashiCorp公司提供的商业产品，不过有一个开源基础版本提供。它于服务发现的基础功能之外还提供了多数据中心的部署能力等一众出色的特性。
+
+尽管传统的DNS系统不适用于微服务环境中的服务发现，但SkyDNS项目(后来称为kubedns)是一个有趣的实现，它结合古老的DNS技术和GO语言、Raft算法并构建于etcd存储系统之上，为Kubernetes系统实现了一种服务发现机制。Service资源为Kubernetes提供了一个较为稳定的抽象层，这有点类似于服务端发现的方式，也就不存在DNS服务的时间窗口问题。
+Kubernetes自1.3版本开始，其用于服务发现的DNS更新为kubeDNS，而类似的另一个基于较新的DNS的服务发现项目是由CNCF孵化的CoreDNS，它基于GO语言开发，通过串接一组实现DNS功能的插件的插件链进行工作。自Kubernetes1.11版本起，CoreDNS取代kubeDNS成为默认的DNS附近。不过Kubernetes依然支持使用环境变量进行服务发现。
+
+k8s的版本 : 1.8.3
+
+
+Kubernetes的使用问题：
+	1. 使用不规范问题：
+		CD部署比较慢；
+		docker registry拉取比较慢；
+		重复重启: Readiness Probe, Liveness Probe;
+		资源限制：Resources: Memory
+		Replicas:副本的自动Autosacaling
+		Termination Grase Period: 默认30秒，需要大于Eureka的最迟发现周期
+	2. V1.8.3不能根据使用内存进行自动扩容/缩容，有些属于IO密集型的。
+	3. Pod始终处于Pending状态，无法被正常调度到节点；原因如下：
+		3.1 系统没有足够的资源;特别是内存，增加更多内存密集型的节点
+		3.2 指定了hostPort: 通过hostPort用户能够将服务暴露到指定的主机端口上，会限制Pod能够调度执行的节点。
+	4. Pod处于CrashLoopBackOff状态。CrashLoopBackOff状态说明容器曾经启动了，但又异常退出了。此时Pod的RestartCounts通常是大于0
+		4.1 容器进程退出；
+		4.2 健康检查失败退出；
+		4.3 OOMKilled;
+	5. K8s证书过期
+	6. dial tcp: getsockopt: no route to host；在部署Kubernetes服务时，出现kube-dns服务反复重启现象；
+		很可能是iptables规则乱了，执行下面命令即可：
+			systemctl stop kubelet
+			systemctl stop docker 
+			iptables --flush
+			iptables -tnt --flush 
+			systemctl start kubelet 
+			systemctl start docker;
+
+系统幂等性：
+	1. 数据库乐观锁；(两种实现方式：通过版本号实现；通过待改变的条件实现)
+	2. 前端控制一部分：表单重复提交、按钮置灰、隐藏、不可点击等；
+	3. Token机制：每次重要操作前，由服务器返回token，在操作时带上token，设置有效期，有效期内只允许一次操作；业务操作完毕后删除token。
+	4. 在数据库中设置唯一标识作为去重表。
+	5. Redis保存唯一标识字段，为了保证Redis的可用性和空间使用，需要设置合理的有效期；
+	6. 状态机：
+	7. 悲观锁： select * from xx for update;
+MySQL提供的三种可以防止重复插入数据的方式：
+	1. Replace
+	2. on duplicate key update
+	3. insert ignore
+Java中double类型比较大小或相等的方法：
+	1. 使用Double.toString()，然后比较字符串。这种方法只适用于比较精度相同的数据，并且只能比较是否相等，不能判断大小。
+	2. 使用new BigDecimal(Double.toString(xx));
+	3. 使用sun提供的Double.doubletoLongBits()方法将double转换成long型数据。
+	4. 允许特定的阈值范围内；Math.abs(d1 - d2) < 0.00000000...1
+
+
+
+2PC和TCC的区别：
+	1. 2PC是依赖数据库层面的XA实现的。TCC是业务层面实现的,属于业务逻辑处理；
+	2. TCC使用了加锁粒度较小的柔性事务，不保证各个数据源的数据强一致性。TCC追求的是最终一致性；符合BASE理念。
+	3. 2PC性能比较差(阻塞协议，锁时间。需要数据库支持)，依赖中间件支持。
+
+CAT: Central Application Tracking, 是基于Java开发的分布式实时监控系统。CAT在基础存储、高性能通信、大规模在线访问、服务治理、实时监控、容器化及集群智能调度等领域提供业界领先的、统一的解决方案。CAT 目前在美团的产品定位是应用层的统一监控组件，基本接入了美团所有核心应用，在中间件（RPC、数据库、缓存、MQ 等）框架中得到广泛应用，为各业务线提供系统的性能指标、健康状况、实时告警等。
+
+/* A BlockingQueue blocking queue in which each insert operation must wait for a corresponding remove operation by another thread, and vice versa. A synchronous queue does not hava any internal capacity, not event a capacity of one. You cannot peek at a synchronous queue because an element is only present when you try to remove it; you cannot insert an element (using any method) unless another thread is trying to remove it; you cannot iterate as there is nothing to iterate. The head of the queue is the element that first queued inserting thread is trying to add to the queue; if there is no such queued thread then no element is available for removal and poll() will return null. For purposes of other Collection methods (for example contains), a SynchronousQueue acts as an empty collection. This queue does not permit null elements. 
+Synchronous queues are similar to rendezvous channels used in CSP and Ada. They are well suited for handoff designs, in which an object running in one thread must sync up with an object running in another thread in order to hand it some information, event, or task.
+This class supports an optional fairness policy for ordering waiting producer and consumer threads.  By default, this ordering is not guaranteed. However, a queue constructed with fairness set to {@code true} grants threads access in FIFO order.
+This class and its iterator implement all of the <em>optional</em> methods of the {@link Collection} and {@link Iterator} interfaces.
+*/
+public class SynchronousQueue<E> extends AbstractQueue<E> 
+	implements BlockingQueue<E>, java.io.Serializable {
+	
+}
+
+SynchronousQueue是一个队列和栈算法实现，在SynchronouseQueue中双队列FIFO提供公平模式，而双栈LIFO提供的则是非公平模式。对于SynchronouseQueue来说，put和take方法都被抽象成统一方法进行操作，通过抽象出内部类Transferer，来实现不同的操作。
+---------------------------------------------------
+基于Kafka的一种事务消息分布式事务的最终一致性方案：
+1. DB操作+消息记录
+	kafka线程异步发送消息，并删除消息记录或者更新消息记录。
+2. 消费者，kafka本身不支持事务。
+	拉取消息，插入消息记录，DB操作，提交事务。
+	kafka线程异步发送offset，在异步的通知里并删除消息记录或更新消息记录。
+
+由于offset是有序的，怎么保证一个卡住，后面的可以继续进行。
+导致offset一直没有更新。
+根据offset进行去重，发现重复N次拉取后，直接发往特殊的topic。
+强制提交offset，不阻挡后续的消息。
+理论只会卡住一个分区。
+无法保证分区的有序性。
+kafka是分区的。
+
+特点：
+	1. 会进行异步化；
+	2. 存在大量中间状态，业务逻辑复杂；
+	3. 多了消息记录。
+	4. 不具备通用性。
+---------------------------------------------------
+分布式配置的拉的模式怎么实现？
+	1. 后台异步线程按指定时间去拉取配置;
+	2. 在/refresh的URL进行拦截，记录每次更新的时间；并进行锁的控制，来保证只有一个进行更新。
+	3. 后台异步线程在拉取时，判断和上次时间进行比对，确保有足够的间隔；
+	4. 每次异步拉取记录内容的MD5值，和上次进行比对，如果不同，才进行更新；并更新时间。
+---------------------------------------------------
+public class Collections {
+	...
+	@SuppressWarnings("unchecked")
+	public static <T extends Comparable<? super T>> void sort(List<T> list) {
+		list.sort(null);
+	}
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	public static <T> void sort(List<T> list, Comparator<? super T> c) {
+		list.sort(c);
+	}
+	...
+}
+
+public interface List<E> extends Collection<E> {
+	...
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	default void sort(Comparator<? super E> c) {
+		Object[] a = this.toArray();
+		Arrays.sort(a, (Comparator)c);
+		ListIterator<E> i = this.listIterator();
+		for (Object e : a) {
+			i.next();
+			i.set((E) e);
+		}
+	}
+	...
+}
+
+public class ArrayList<E> extends AbstractList<E> 
+	implements List<E>, RandomAccess, Cloneable, java.io.Serializable {
+	...
+	@Override
+	@SuppressWarnings("unchecked")
+	public void sort(Comparator<? super E> c) {
+		final int expectedModCount = modCount;
+		Arrays.sort((E[]) elementData, 0, size, c);
+		if (modCount != expectedModCount) {
+			throw new ConcurrentModificationException();
+		}
+		modCount ++;
+	}
+}
+
+
+public class Arrays {
+	...
+	public static void sort(int[] a) {
+		DualPivotQuicksort.sort(a, 0, a.length - 1, null, 0, 0);
+	}
+	public static void sort(int[] a, int fromIndex, int toIndex) {
+		rangeCheck(a.length, fromIndex, toIndex);
+		DualPivotQuicksort.sort(a, fromIndex, toIndex - 1, null, 0, 0);
+	}
+	public static void sort(long[] a) {
+        DualPivotQuicksort.sort(a, 0, a.length - 1, null, 0, 0);
+    }
+	//基础类型的排序都是DualPivotQuicksort
+	
+	public static void sort(Object[] a) {
+		if (LegacyMergeSort.userRequested) {
+			legacyMergeSort(a);
+		} else {
+			ComparableTimSort.sort(a, 0, a.length, null, 0, 0);
+		}
+	}
+	
+	// To be removed in a future release.
+	private static void legacyMergeSort(Object[] a) {
+		Object[] aux = a.clone();
+		mergeSort(aux, a, 0, a.length, 0);
+	}
+	...
+}
+
+Kafka中有那些地方需要选举？这些地方的选举策略又有哪些
+	1. 控制器, ControllerManager;
+	2. 优先副本, perferred replica
+	3. 消费者协调器和消费组协调器，ConsumerCoordinator, ConsumerGroupCoordinator
+	4. 事务协调器, TransactionCoordinator
+
+/* This class implements the Dual-Pivot Quicksort algorithm by Vladimir Yaroslavskiy, Jon Bentley, and Josh Bloch. The algorithm offers O(n log(n)) performance on many data sets that cause other quicksorts to degrade to quadratic performance, and is typically faster than traditional (one-pivot) Quicksort implementations. 
+All exposed methods are package-private, designed to be invoked from public methods(in class Arrays) after performing any necessary array bounds checks and expanding parameters into the required forms. 
+*/
+final class DualPivotQuicksort {
+	...
+}
+
+
+/* A stable, adaptive, iterative mergesort that requires far fewer than n*lg(n) comparisons when running on partially sorted arrays, while offering performance comparable to a traditional mergesort when run on random arrays. Like all proper mergesots, this sort is stable and runs O(n*log(n)) time (worst case). In the worst case, this sort requires temporary storage space for n/2 object references; in the best case, it requires only a small constant amount of space. 
+While the API to this class consists solely of static methods, it is (privately) instantiable; a TimSort instance holds the state of an ongoing sort, assuming the input array is large enough to warrant the full-blown TimSort. Small arrays are sorted in place, using a binary insertion sort. 
+*/
+class TimSort<T> {
+	...
+}
+
+/* This is a near duplicate of TimSort, modified for use with arrays of objects that implement Comparable, instead of using explicit comparators.
+If you are using an optimizing VM, you may find that ComparableTimSort offers no performance benefit over TimSort in conjunction with a comparator that simply return ((Comparable)first).compareTo(second). If this is the case, you are better off deleting ComparableTimSort to eliminate the code duplication. (See Arrays.java for details.)
+*/
+class ComparableTimSort {
+	...
+}
+
+CAS原理：调用Unsafe类的相关函数。底层又调用JNI的代码，C++代码。再底层调用汇编代码。
+// Adding a lock prefix to an instruction on MP machine
+// VC++ doesn't like the lock prefix to be on a single line 
+// so we can't insert a label after the lock prefix.
+// By emitting a lock prefix, we can define a label after it. 
+#define LOCK_IF_MP(mp) __asm cmp mp, 0  \
+                       __asm je L0      \
+                       __asm _emit 0xF0 \
+                       __asm L0:
+
+inline jint     Atomic::cmpxchg    (jint     exchange_value, volatile jint*     dest, jint     compare_value) {
+  // alternative for InterlockedCompareExchange
+  int mp = os::is_MP();
+  __asm {
+    mov edx, dest
+    mov ecx, exchange_value
+    mov eax, compare_value
+    LOCK_IF_MP(mp)
+    cmpxchg dword ptr [edx], ecx
+  }
+}
+程序会根据当前处理器的类型来决定是否为cmpxchg指令添加lock前缀。如果是多处理器，就为cmpxchg指令加上lock前缀(lock cmpxchg)。反之，如果在单处理器上，就省略lock前缀。单处理器自身会维护单处理器内的顺序一致性，不需要lock前缀提供的内存屏障效果。
+
+
+
+CAS有什么缺陷，如何解决
+	1. ABA问题; AtomicStampedReference, AtomicMarkableReference;
+	2. 只能保证一个共享变量的原子性；当对一个共享变量进行操作时，可以使用循环CAS保证原子性；但是对于多个共享变量，无法保证原子性；这个时候可以用锁。或者另外一个技巧：把多个共享变量合并成一个共享变量来操作。可以使用AtomicReference类来保证引用对象之间的原子性，把多个变量放在一个对象里来CAS.
+	3. 自旋消耗资源，循环时间长开销大。竞争条件比较激烈时，自旋CAS一直不成功的话，会给CPU带来非常大的开销。解决方法：超过一定阈值后，退出，改用重量级锁。使用其他替代：LongAdder, ConcurrentHashMap等。
+
+常见负载均衡算法：
+	1. 轮询: Round Robin
+	2. 加权轮询：Weighted Round Robin 
+	3. 最小连接数：Least Connection
+	4. 最小连接数慢启动时间：Least Connection Slow Start Time
+	5. 加权最小连接：Weighted Least Connection 
+	6. 基于代理的自适应负载均衡：Agent Based Adaptive Balancing
+	7. 固定权重：Fixed Weighted 
+	8. 加权响应：Weighted Response
+	9. 源IP哈希：Sorce IP Hash 
+	10. 随机：Random 
+	11. 一致性Hash: ConsistentHash
+
+Ribbon是客户端提供负载均衡功能，内部提供一个ILoadBalancer接口代表负载均衡器的操作，比如addServers(List<Server>), chooseServer(key), markServerDown(Server), getReachableServers(), getAllServers()。ILoadBalancer的继承关系如下：
+ILoadBalancer
+	- AbstractLoadBalancer
+		- BaseLoadBalancer
+			- DynamicServerListLoadBalancer
+				- ZoneAwareLoadBalancer
+		- NoOpLoadBalancer
+负载均衡器是从EurekaClent(EurekaClient的实现类DiscoveryClient)获取服务信息，根据IRule去路由，并且根据IPing判断服务的可用性。
+
+/* Interface that defines a "Rule" for a LoadBalancer. A Rule can be thought of as a Strategy for loadbalacing. Well known loadbalancing strategies include Round Robin, Response Time based etc. 
+*/
+public interface IRule {
+	public Server choose(Object key);
+	public void setLoadBalancer(ILoadBalancer lb);
+	public ILoadBalancer getLoadBalancer();
+}
+
+IRule的继承关系如下：
+IRule 
+	- AbstractLoadBalancerRule
+		- ClientConfigEnabledRoundRobinRule
+			- BestAvailableRule
+			- PredicateBasedRule
+				- AvailabilityFilteringRule
+				- ZoneAvoidanceRule
+		- RandomRule
+		- RetryRule
+		- RoundRobinRule
+			- ResponseTimeWeightedRule
+			- WeightedResponseTimeRule
+
+MySQL不同的存储引擎支持不同的锁机制：MyISM和Memory存储引擎采用的是表级锁；BDB存储引擎采用的是页面锁；InnoDB存储引擎既支持行级锁也支持表级锁，默认情况下采用行级锁。
+InnoDB使用间隙锁的目的：
+	一方面是为了防止幻读，以满足相关隔离级别的要求；
+	另外一方面是为了满足其恢复和复制的需要。
+
+MySQL提供了两种事务型的存储引擎：InnoDB和NDB Cluster。另外还有第三方存储引擎也支持事务，比如XtraDB和PBXT。
+
+什么场景下用表锁：
+InnoDB默认采用行锁，在未使用索引字段查询时升级为表锁。MySQL这样设计并不是给你挖坑。它有自己的设计目的。
+即便你在条件中使用了索引字段，MySQL会根据自身的执行计划，考虑是否使用索引(所以explain命令中会有possible_key 和 key)。如果MySQL认为全表扫描效率更高，它就不会使用索引，这种情况下InnoDB将使用表锁，而不是行锁。因此，在分析锁冲突时，别忘了检查SQL的执行计划，以确认是否真正使用了索引。
+	第一种情况：全表更新。事务需要更新大部分或全部数据，且表又比较大。若使用行锁，会导致事务执行效率低，从而可能造成其他事务长时间锁等待和更多的锁冲突。
+	第二种情况：多表级联。事务涉及多个表，比较复杂的关联查询，很可能引起死锁，造成大量事务回滚。这种情况若能一次性锁定事务涉及的表，从而可以避免死锁、减少数据库因事务回滚带来的开销。
+
+------------------------------------------------------
+Kafka is used as Schema Registry storage backend. The special Kafka topic <kafkastore.topic>(default _schemas), with a single partition, is used as a high available write ahead log. All schemas, subject/version and ID metadata, and compatibility settings are appended as messages to this log. A Schema Registry instance therefore both produces and consumes messages under the _schemas topic. It produces message to the log when, for example, new schemas are registered under a subject, or when updates to compatibility settings are registered. Schema Registry consumes from the _schemas log in a background thread, and updates its local caches on consumption of each new _schemas message to reflect the newly added schema or compatibility setting. Updating local state from the Kafka log in this manner ensures durability, ordering, and easy recoverability. 
+Tip:
+The Schema Registry topic is compacted and therefore the latest value of every key is retained forever, regardless of the Kafka retention policy. You can validate this with kafka-configs:
+$ kafka-configs --zookeeper localhost:2181 --entity-type topics --entity-name _schemas --describe 
+Configs for topic '_schemas' are cleanup.policy=compact
+---------------------MySQL---------------------------------
+show [SESSION|GLOBAL] variables;
+show [SESSION|GLOBAL] status;
+information_schema;
+explain
+show processlist;
+show index from <table>;
+show status like '%lock%';
+kill <session_id>; 停止有问题的session
+vmstat : reports information about processes, memory, paging, block IO, traps, disks and cpu activity.
+show variables like 'max_connections';
+set global max_connections = 5000;
+------------------------------------------------------
+EventLoopGroup
+EventLoop
+Channel
+ChannelFuture
+ChannelHandler
+ChannelPipeline
+ChannelInitializlizer
+ChannelOutboundHandler
+Bootstrap
+ServerBootstrap
+ChannelInboundHandler
+------------------------------------------------------
+-XX:+HeapDumpBeforeFullGC
+jvisualvm
+mat 
+Keep unreachable objects 
+jstat -gcutil <pid> 3000 每隔三秒钟输出GC的统计信息
+-XX:+UseConcMarkSweepGC 
+-XX:+UseParNewGC 
+-XX:+CMSFullGCsBeforeCompaction=5
+-XX:+UseCMSCompactAtFullCollection 
+jstat -gccause <pid> 查看gc的详细原因 (System.gc(), Allocation Failure)
+首先通过top查看java进程的占用CPU是否高，如果高记录下进程ID
+使用top -Hp <Java进程ID>， 查看每个线程的运行情况
+找出占用CPU最高的线程ID，将这个线程ID转换成十六进制。
+使用jstack dump出线程堆栈，根据上面的线程十六进制查找正在执行的代码。
+对于不定期/偶尔出现接口耗时的现象，排查手段：找到此接口后，在测试环境压测，并周期性记录jstack堆栈，通过查看jstack日志，找出阻塞点，定位代码。
+jstat -J-Djstat.showUnsupported=true -snap 5496
+
+------------------------------------------------------
+死锁的4个必要条件：
+	1. 互斥:当资源被一个线程使用/占用时，其他线程不能使用；
+	2. 不可抢占：资源请求者不能强制从资源占用者中抢占资源，资源只能由资源占有者主动释放；
+	3. 占有和保持：即资源请求者在请求其他资源的同时保持对原有资源的占有；
+	4. 循环等待：即存在一个等待队列：P1占有P2的资源，P2占有P3的资源，P3占有P1的资源。这样形成一个等待环路
+如何检测死锁：
+	1. Jconsole里面的“线程” -> "检测死锁"
+	2. jstack
+	3. jcmd <pid> Thread.print
+	4. 使用ThreadMXBean协助查找死锁，效果和jstack类似。做一个后台异步周期看门狗线程，
+		ThreadMXBean tmx = ManagementFactory.getThreadMXBean();
+		long[] ids = tmx.findDeadlockedThreads();
+		if (ids != null) {
+			ThreadInfo[] infos = tmx.getThreadInfo(ids, true, true);
+			for (ThreadInfo : infos) {
+				StackTraceElement[] stack = info.getStackTrace();
+				//打印信息
+			}
+		}
+	5. 对于锁由于某些原因没有执行unlock，再次执行lock时，这种死锁是没有办法使用工具进行检测的，可考虑下面的手段：
+		5.1 如果能够控制资源死锁的情况：
+			1. 死锁前dump线程快照
+			2. 死锁后dump线程快照
+			3. 两者比较；
+		5.2 如果已经死锁：
+			1. 每隔一段时间dump出线程快照
+			2. 对比找到没有改变的那些线程再排查问题
+		
+如何避免死锁：
+	1. 超时放弃，使用ReentractLock.tryLock(long time, TimeUnit)
+	2. 使用Semaphore
+	3. 银行家算法
+	4. 以确定的顺序获得锁
+	5. 超时放弃
+	6. 一次性申请所有的资源
+
+为什么要hashCode进行spread: 充分使用key.hashCode()的高16位信息，保证hash分布更分散。
+JDK7中数组的容量是在HashMap初始化时就已经赋予；而在JDK8是在put第一个元素时才会赋予数组容量。
+
+HashMap的JDK7为什么先扩容再插入，而JDK8是先插入再扩容?
+	对JDK7来说，是先扩容再插入if ((size >= threshold) && (null != table[bucketIndex]))，当发现插入的桶不为空，说明发生了hash冲突，那么必须进行扩容。如果桶为空，说明没有发生hash冲突，那就等下次发生hash冲突的时候再进行扩容。但是如果以后没有发生hash冲突，就不会扩容了，减少了无用的扩容，也减少了内存的使用。
+
+HashMap在JDK8引入了红黑树，若桶中链表元素个数大于等于8时，链表转换成数结构；若桶中元素个数小于等于6时，数结构还原成链表。因为红黑树的平均查找长度是log(N)，长度为8时，平均查找长度为3；如果继续使用链表，平均查找长度为8/2=4，这才有转换为树的必要。链表长度如果小于等于6，6/2=3，虽然速度也很快，但是转化成树结构和生成树的时间并不会短。
+还有选择6和8，中间有个差值7可以有效防止链表和树频繁转换。假设一下，如果设计成链表个数超过8则链表转换成树结构，链表个数小于8则树结构转换成链表，如果一个HashMap不停的插入、删除元素，链表个数在8左右徘徊，就会频繁的发生树转链表、链表转树，效率会很低。
+
+参数: innodb_flush_log_at_trx_commit用来控制重做日志redo log刷新到磁盘的策略，有三个值：
+	0：表示事务提交时不进行redo log file的操作，这个操作仅在master thread中完成，每隔1秒一次fsync操作；
+	1: 默认值，表示每次事务提交时进行redo log file的操作；
+	2：表示事务提交时redo log写入文件，不过仅写入文件缓存，不进行fsync操作。
+
+innodb事务日志包括redo log和undo log。redo log是重做日志，提供前滚操作，undo log是回滚日志，提供回滚操作。
+undo log不是redo log的逆向过程。
+	1. redo log通常是物理日志，记录的是数据页的物理修改，而不是某一行或某几行修改成什么，它用来恢复提交后的物理数据页(恢复数据页，且只能恢复到最后一次提交的位置).
+	2. undo用来回滚行记录到某个版本。undo log一般是逻辑日志，根据每行记录进行记录。
+
+innodb_flush_log_at_trx_commit : 
+
+
+/* A package-local class holding common representation and mechanics for classes supporting dynamic striping on 64bit values. The class extends Number so that concrete subclasses must publicly do so. 
+*/
+@SuppressWarnings("serial")
+abstract class Striped64 extends Number {
+	
+}
+
+Striped64在ConcurrentHashMap中的应用：
+	Striped64的计数方法在JDK8的ConcurrentHash中也有使用，在addCount方法中实现细节。在ConcurrentHash的size方法如下：
+	public int size() {
+		long n = sumCount();
+		return (n < 0L) ? 0 :
+						(n > (long)Integer.MAX_VALUE) ? Integer.MAX_VALUE : (int)n);
+	}
+	final long sumCount() {
+		CounterCell[] as = counterCells;
+		CounterCell a;
+		long sum = baseCount;
+		if (as != null) {
+			for (int i = 0;i < as.length; ++ i) {
+				if ((a = as[i]) != null)
+					sum += a.value;
+			}
+		}
+		return sum;
+	}
+ConcurrentHashMap中的baseCount对应着Striped64中的base变量，而counterCells则对应着Striped64中的cells数组，它们的实现是一样的。
+
+/* One or more variables that together maintain a running long value updated using a supplied function. When updates (method accumulate) are contended across threads, the set of variables may grow dynamically to reduce contention. Method get (or equivalently, longValue) returns the current value across the variables maintaining updates.
+This class is usually preferable to AtomicLong when mulitiple threads update a common value that is used for purposes such as collecting statistics, not for fine-grained synchronization control. Under low update contention, the two classes have similar characteristics. But under high contention, expected throughput of this class is significantly higher, at the expense of higher space consumption.
+The order of accumulation within or across thread is not guranteed and cannot be depended upon, so this class is only applicable to functions for which the order of accumulation does not matter. The supplied accumulator function should be side-effect-free, since it may be re-applied when attempted updates fail due to contention among threads. The function is applied with the current value as its first argument, and the given update as the second argument. For example, to maintain a running maximum value, you could supply Long::max along with Long.MIN_VALUE as the identity.
+Class LongAdder provides analogs of the functionality of this class for the common special case of maintaining counts and sums. The call new LongAdder() is equivalent to new LongAccumulator((x, y) -> x + y, 0L);
+This class extends Number, but does not define methods such as equals, hashCode, and compareTo because instances are expected to be mutated, and so are not useful as collection keys.
+*/
+public class LongAccumulator extends Striped64 implements Serializable {
+	
+}
+
+
+开源排查消耗CPU最高的前N个线程: show-busy-java-threads 
+# 在项目模块目录下执行，拷贝依赖jar到目录target/dependency下
+$ mvn dependency:copy-dependencies -DincludeScope=runtime 
+
+开发可伸缩系统必须遵守的11条软件设计原则：
+	1. 简单；
+	2. 低耦合；
+	3. 不要重复造轮子；
+	4. 基于约定编程；
+	5. 画架构图；
+	6. 单一职责；
+	7. 开闭原则；
+	8. 依赖注入；
+	9. 控制反转；
+	10. 为伸缩而设计；
+	11. 自愈设计；
+
+两种IO多路复用模式：Reactor和Proactor.
+一般地，IO多路复用机制都依赖于一个事件多路分离器(Event Demultiplexer)。分离器对象可将来自事件源的IO事件分离出来，并分发到对应的read/write事件处理器(Event Handler)。开发人员预先注册需要处理的事件及其事件处理器(或回调函数)；事件分离器负责将请求事件传递给事件处理器。两个与事件分离器有关的模式是Reactor和Proactor。Reactor模式采用同步IO，而Proactor采用异步IO。
+在Reactor中，时间分离器负责等待文件描述符或socket为读写操作准备就绪，然后将就绪事件传递给对应的处理器，最后由处理器负责完成实际的读写工作。
+而在Proactor中，处理器或者兼任处理器的时间分离器，只负责发起异步读写操作。IO操作本身由操作系统来完成。传递给操作系统的参数需要包括用户定义的数据缓冲区地址和数据大小，操作系统才能从中得到写出操作所需数据，或写入从socket读到的数据。时间分离器捕获IO操作完成实际，然后将事件传递给对应处理器。比如，在Windows上，处理器发起一个异步IO操作，再由时间分离器等待IOCompletion事件。典型的异步模式实现，都建立在操作系统支持异步API的基础之上，这种实现称为"系统级"或"真异步". 因为应用程序完全依赖操作系统执行真正的IO工作。
+
+举个例子，将有助于理解Reactor与Proactor二者的差异，以读操作为例。
+在Reactor中实现读：
+	- 注册读就绪事件和相应的事件处理器
+	- 事件分离器等待事件
+	- 事件到来，激活分离器，分离器调用事件对应的处理器。
+	- 事件处理器完成实际的读操作，处理读到的数据，注册新的事件，然后返还控制权。
+在Proactor中实现读：
+	- 处理器发起异步读操作（注意：操作系统必须支持异步IO）。在这种情况下，处理器无视IO就绪事件，它关注的是完成事件。
+	- 事件分离器等待操作完成事件
+	- 在分离器等待过程中，操作系统利用并行的内核线程执行实际的读操作，并将结果数据存入用户自定义缓冲区，最后通知事件分离器读操作完成。
+	- 事件分离器呼唤处理器。
+	- 事件处理器处理用户自定义缓冲区中的数据，然后启动一个新的异步操作，并将控制权返回事件分离器。
+
+可以看出，两个模式的相同点，都是对某个IO事件的事件通知(即告诉某个模块，这个IO操作可以进行或已经完成)。在结构上，两者也有相同点：demultiplexor负责提交IO操作(异步)、查询设备是否可操作(同步)，然后当条件满足时，就回调handler；不同点在于，异步情况下(Proactor)，当回调handler时，表示IO操作已经完成；同步情况下(Reactor)，回调handler时，表示IO设备可以进行某个操作(can read or can write)。
+
+使用Proactor框架和Reactor框架都可以极大的简化网络应用的开发，但它们的侧重点不同。
+	1. Reactor框架中用户定义的操作是在实际操作之前调用的。比如定义了操作是向socket写数据，那么当该socket可以接收数据的时候，操作就会被调用；而Proactor框架中用户定义的操作是在实际操作之后调用的，比如定义了一个操作要从socket中读入数据，那么当读操作完成以后，操作才会被调用。
+	2. Proactor和Reactor都是并发编程中的设计模式。它们都是用于派发/分离IO操作事件的。这里所谓的IO事件也就是read/write的IO操作。派发/分离就是将单独的IO事件通知到上层模块。两个模式不同的地方在于，Proactor用于异步，Reactor用于同步。
+
+Kotlin中的协程：一般程序会有主进程，主进程中可能含有多个线程。而协程，是线程中的，也就是说一个线程中可能包含多个协程，协程与协程之间是可以嵌套的。
+协程的作用：当线程要执行可能会阻塞的任务时，一般情况下会开启一个子线程来完成，如果阻塞任务过多，就需要开启多个子线程(线程池)，协程可以帮助我们完成的是，将可能会阻塞的任务放在线程的协程中来完成，多个任务就创建多个协程。线程直接维持数据准确性需要消耗很多资源，而协程消耗的会少很多。注：协程是可以直接运行在进程中的，不是一定要依赖于线程，只不过限制支持协程的Kotlin,Python,Go等语言都会以主线程的方法开启程序的运行。总结：通过提升CPU利用率，减少线程切换进而提升程序运行效率。
+协程的特性：
+	- 可控制：协程能做到可被控制的发起子任务(协程的启动和停止都由代码控制，不像java)
+	- 轻量级：协程非常小，占用资源比线程还少
+	- 语法糖：使多任务或多线程切换不再使用回调语法。
+
+并行流内部使用了默认的ForkJoinPool，默认的线程数量就是处理器的数量(包括虚拟内核):
+	- 通过:Runtime.getRuntime().availableProcessors()得到；
+	- 通过：System.setProperty("java.util.concurrent.ForkJoniPool.common.parallism", "12")来改变线程池大小。
+
+SynchronousQueue主要有如下的特点：
+	1. SynchronousQueue的容量为0，因此它是无法用于数据存储。
+	2. 每一次向队列中执行写操作时，写线程都会等待；直到另一个线程去执行读操作，写线程才会返回；反之亦然，并且写入的元素不允许为NULL。
+	3. 由于SynchronousQueue的容量为0，没有存储任何数据，因此执行peek方法返回队列中的元素时，总是返回Null；如果执行迭代操作，同样也是没有任何元素可以迭代；
+	4. SynchronousQueue将put,take两个截然不同的方法，统一抽象成一个transfer方法来进行处理，主要是根据方法的参数来判断是执行take操作还是put操作；
+	5. SynchronousQueue和ReentrantLock类似，提供了公平与非公平两种策略的处理实现，其分别是基于队列与栈来实现，一个是TransferQueue，另一个是TransferStack，都分别实现了Transfer接口，然后实现transfer方法。
+
+Spring Bean的加载过程(简单)：
+	1. 获取配置文件资源：通过ResourceLoader来完成资源文件位置的定位，DefaultResourceLoader是默认的实现，同时上下文本身给出了ResourceLoader的实现，可以从类路径、文件系统、URL等方式来定位资源位置；
+	2. 对Bean定义信息的解析：容器通过BeanDefinitionReader来完成Bean定义信息的解析，使用XmlBeanDefinitionReader来解析Bean的xml定义文件，实际的处理过程是委托给BeanDefinitionParserDelegate来完成的，从而得到Bean的定义信息，这些信息在Spring中使用BeanDefinition对象来表示；
+	3. 加载提取Bean并注册(添加到beanDefinitionMap中): IOC容器解析得到Bean以后，需要在IOC容器中注册，这由BeanDefinitionRegistry接口来实现。注册过程就是在IOC容器内部维护的一个HashMap来保存得到BeanDefinition的过程。这个HashMap是IOC容器持有Bean信息的场所，以后对Bean的操作都是围绕这个HashMap来实现的。
+	4. Bean的初始化：通过DefaultListableBeanFactory的getBean()方法去初始化，实际由AbstractAutowireCapableBeanFactroy的doCreateBean()去完成。一个是创建Bean实例的createBeanInstance方法，一个是依赖注入的populateBean方法，还有就是回调方法initializeBean。BeanPostProcessor两个方法：postProcessBeforeInitialization和postProcessAfterInitialization,两个方法分别在Bean初始化之前和之后得到执行。
+
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.xml.XmlBeanDefinitionReader;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
+public class Main {
+	public static void main(String[] args) {
+		Resource resource = new ClassPathResource("spring-context.xml");
+		DefaultListableBeanFactory beanFactory = new DefaultListableBeanFactory();
+		XmlBeanDefinitionReader reader = new XmlBeanDefinitionReader(beanFactory);
+		reader.loadBeanDefinitions(resource);
+		User user = beanFactory.getBean(User.class);
+		...
+	}
+}
+Resource继承了InputStreamSource，这个接口定义了IO流的基本操作。常用的如ClassPathResource，FileSystemResource，FileUrlResource等等，详细就不介绍了，通过名字都可以看的出来只是加载资源的方式不同而已。
+
+/* Generic registry for shared bean instances, implementing the SingletonBeanRegistry. Allows for registering singleton instances that should be shared for all callers of the registry, to be obtained via bean name.
+Also supports registration of DisposableBean instances, (which might or might not correspond to registered singletons), to be destroyed on shutdown of the registry. Dependencies between beans can be registered to enforce an appropriate shutdown order.
+This class mainly servers as base class for BeanFactory implementations, factoring out the common management of singleton bean instances. Note that the ConfigurableBeanFactory interface extends the SingletonBeanRegistry interface.
+Note that this class assumes neither a bean definition concept nor a specific creation process for bean instances, in contrast to AbstractBeanFactory and DefaultListableBeanFactory (which inherit from it). Can alternatively also be used as a nested helper to delegate to. 
+*/
+public class DefaultSingletonBeanRegistry extends SimpleAliasRegistry implements SingletonBeanRegistry {
+	private final Map<String, Object> singletonObjects = new ConcurrentHashMap<>(256);
+	private final Map<String, ObjectFactory<?>> singletonFactories = new HashMap<>(16);
+	private final Map<String, Object> earlySingletonObjects = new HashMap<>(16);
+	private final Set<String> registeredSingletons = new LinkedHashSet<>(256);
+	private final Set<String> singletonsCurrentlyInCreation = new Collections.newSetFromMap(new ConcurrentHashMap<>(16));
+	private final Set<String> inCreationCheckExclusions = new Collections.newSetFromMap(new ConcurrentHashMap<>(16));
+	private Set<Exception> suppressedExcetions;
+	private boolean singletonsCurrentlyInDestruction = false;
+	private final Map<String, Object> disposableBeans = new LinkedHashMap<>();
+	private final Map<String, Set<String>> containedBeanMap = new ConcurrentHashMap<>(16);
+	private final Map<String, Set<String>> depenentBeanMap = new ConcurrentHashMap<>(64);
+	private final Map<String, Set<String>> dependenciesForBeanMap = new ConcurrentHashMap<>(64);
+	...
+}
+--------------------------------------------------------------------
+在SpringBoot的jar包里的META-INF里的MANIFEST.MF文件中:
+Main-Class: org.springframework.boot.loader.JarLauncher 
+Start-Class: com.hzphfin.fund.tjj.server.FundTjjServerApplication
+可以看到jar的启动类为:org.springframework.boot.loader.JarLauncher，而不是业务代码的入口类，应用程序入口类标记为了Start-Class。
+jar启动并不是通过应用程序入口类，而是通过JarLauncher代理启动。其中SpringBoot有3个不同的Launcher:JarLauncher, WarLauncher, PropertiesLauncher。
+相关的类层次结构如下：
+Launcher
+	- ExecutableArchiveLauncher
+		- JarLauncher
+		- WarLauncher 
+	- PropertiesLauncher 
+在不同的应用场景下，SpringBoot应用的ClassLoader是不同的：
+	1. 在IDE里，直接run main函数：ClassLoader是sun.misc.Launcher.AppClassLoader；
+	2. 以fat jar运行：ClassLoader是LaunchedURLClassLoader，它的parent是AppClassLoader;
+	3. 将jar解压后，运行 java org.springframework.boot.loader.PropertiesLauncher ：ClassLoader是LaunchedURLClassLoader，它的parent是AppClassLoader。
+另外还有两种运行方式: mvn spring-boot:run 和 mvn spring-boot:run -Dfork=true 
+--------------------------------------------------------------------
+/* Holder class to expose the web request in the form of a thread-bound RequestAttributes object. The request will be inherited by any child threads spawned by the current thread if the inheritable flag is set to true;
+Use RequestContextListener or org.springframework.web.filter.RequestContextFilter to expose the current web request. Note that DispatcherServlet already exposes the current request by default. 
+*/
+public abstract class RequestContextHolder {
+	...
+}
+/**
+ * One or more variables that together maintain an initially zero
+ * {@code double} sum.  When updates (method {@link #add}) are
+ * contended across threads, the set of variables may grow dynamically
+ * to reduce contention.  Method {@link #sum} (or, equivalently {@link
+ * #doubleValue}) returns the current total combined across the
+ * variables maintaining the sum. The order of accumulation within or
+ * across threads is not guaranteed. Thus, this class may not be
+ * applicable if numerical stability is required, especially when
+ * combining values of substantially different orders of magnitude.
+ *
+ * <p>This class is usually preferable to alternatives when multiple
+ * threads update a common value that is used for purposes such as
+ * summary statistics that are frequently updated but less frequently
+ * read.
+ *
+ * <p>This class extends {@link Number}, but does <em>not</em> define
+ * methods such as {@code equals}, {@code hashCode} and {@code
+ * compareTo} because instances are expected to be mutated, and so are
+ * not useful as collection keys.
+ */
+public class DoubleAdder extends Striped64 implements Serializable {
+	/* Note that we must use "long" for underlying representations, because there is no compareAndSet for double, due to the fact that the bitwise equals used in any CAS implementation is not the same as double-precision equals. However, we use CAS only to detect and alleviate contention, for which bitwise equals works best anyway. In principle, the long/double conversions used here should be essentially free on most platforms since they just re-interpret bits.
+	*/
+	...
+	public void add(double x) {
+		Cell[] as; long b, v;int m; Cell a;
+		if ((as = cells) != null || 
+			!casBase(b = base, 
+					Double.doubleToRawLongBits(Double.longBitsToDouble(b) + x))) {
+			boolean uncountended = true;
+			if (as == null || (m = as.length - 1) < 0 ||
+				(a = as[getProbe() & m] == null || 
+				!(uncontended = a.cas(v = a.value, Double.doubleToRawLongBits(Double.longBitsToDouble(V) + x)))))
+				doubleAccumulate(x, null, uncontended);
+		}
+	}
+	...
+}
+
+Codis is a proxy based high performance Redis cluster solution written in GO. It is production-ready and widely used at wandoujia.com and many companies.
+"Resharding" means migrating the data in one slot from one redis server to another, usually happens while increading/decreasing the number of redis servers.
+Codis, Twemproxy, Redis Cluser的比对：
+											Codis		Twemproxy		Redis Cluster 
+resharding without restartting cluster:		Yes			No					Yes
+pipeline:									Yes 		Yes 				No 
+hash tags for multi-key operations:			Yes 		Yes 				Yes
+multi-key operations while resharding:		Yes   		-					No
+Redis clients supporting:					Any clients Any Clients		Clients have to support cluster protocol
+
+Codis other Features:
+	- GUI website dashboard & admin tools
+	- Supports most of Redis commands, Fully compatible with Twemproxy 
+	- Proxies can register on zk/etcd, clients can avoid dead proxies.
+	
+/* An int array in which elements may be updated atomically. 
+*/
+public class AtomicIntegerArray implements java.io.Serializable {
+	private static final long serialVersionUID = 2862133569453604235L;
+	
+	private static final Unsafe unsafe = Unsafe.getUnsafe();
+	private static final int base = unsafe.arrayBaseOffset(int[].class);
+	private static final int shift;
+	private final int[] array;
+	
+	static {
+		int scale = unsafe.arrayIndexScale(int[].class);
+		if ((scale & (scale - 1)) != 0)
+			throw new Error("data type scale not a power of two");
+		shift = 31 - Integer.numberofLeadingZeros(scale);
+	}
+}
+
+StampedLock的等待队列与AQS的CLH队列相比，有如下特点：
+	1. 当入队一个线程时，如果队尾是读节点，不会直接链接到队尾，而是链接到该读节点的cowait链中，cowait链本质是一个栈；
+	2. 当入队一个线程时，如果队尾是写节点，则直接链接到队尾；
+	3. 唤醒线程的规则和AQS类似，都是首先唤醒队首节点。区别是StampedLock中，当唤醒的节点是读节点时，会唤醒该读节点的cowait链中的所有读节点(顺序和入栈顺序相反，也就是后进先出);
+另外，StampedLock使用时要特别小心，避免锁重入的操作，在使用乐观读锁时也需要遵循相应的调用模板，防止出现数据不一致问题。
+
+Apollo Features:
+	- 统一管理不同环境、不同集群的配置；
+	- 配置修改实时生效(热发布)；
+	- 版本发布管理
+	- 灰度发布
+	- 权限管理、发布审核、操作审计；
+	- 客户端配置信息监控；
+	- 提供Java和.Net原生客户端；
+	- 提供开放平台API
+	- 部署简单；
+
+Apollo客户端的高可用性：通过推拉结合的机制，以及内存和本地文件双缓存的方式，有效地保证了客户端的可用性。
+
+/* A thread managed by a ForkJoinPool, which executes ForkJoinTasks.
+This class is subclassable solely fro the sake of adding functionality -- there are no overridable methods dealing with scheduling or execution. However, you can override initialization and termination methods surrounding the main task processing loop. If you do create such a subclass, you will also need to supply a custom ForkJoinPool.ForkJoinWorkerThreadFactory to ForkJoinPool use it in a ForkJoinPool. 
+*/
+public class ForkJoinWorkerThread extends Thread {
+	...
+}
+
+public class AtomicReference<V> implements java.io.Serializable {
+	private static final long serialVersionUID = -1848883965231344442L;
+	private static final Unsafe unsafe = Unsafe.getUnsafe();
+	private static final long vauleOffset;
+	
+	static {
+		try {
+			valueOffset = unsafe.objectFieldOffset(AtomicReference.class.getDeclaredField("value"));
+		} catch (Exception ex) { throw new Error(ex);}
+	}
+	private volatile V value;
+	...
+	
+	public final void lazySet(V newValue) {
+		unsafe.putOrderedObject(this, valueOffset, newValue);
+	}
+}
+
+可以从几个维度对分布式事务进行区分和比较：
+	1. 一致性：强一致性，最终一致性；
+	2. 事务：一般都是全局事务；
+	3. 吞吐量
+	4. 实现复杂度；
+比如常见的：2PC, 3PC，saga长事务，补偿型，可靠事件，TCC。
+
+1987年普林斯顿大学的Hector Garcia-Molina和Kenneth Salem发表了一篇Paper Sagas, 讲述的是如何处理long lived transaction(长活事务)。Saga是一个长活事务可被分解成可以交错运行的子事务集合。其中每个子事务都是一个保持数据库一致性的真实事务。
+------------------------------------------------------------------------
+Saga和TCC的对比：
+	Saga相比TCC的缺点是缺少预留动作，导致补偿动作的实现比较麻烦：Ti就是commit，比如一个业务是发送邮件，在TCC模式下，先保存草稿(Try)再发送(Confirm)，撤销的话直接删除草稿(Cancel)就可以。而Saga则就直接发送邮件了(Ti)，如果要撤销则得再发送一个邮件说明撤销(Ci)，实现起来有一些麻烦。
+	如果把例子换成：A服务在完成Ti后立即发送Event到ESB(企业服务总线)，下游服务监听到这个Event做自己的一些工作然后再发送Event到ESB，如果A服务执行补偿动作Ci，那么整个补偿动作的层级就很深。
+	不过没有预留动作也可以认为是优点：
+		- 有些业务很简单，套用TCC需要修改原来的业务逻辑，而Saga只需要添加一个补偿动作就行；
+		- TCC最少通信次数为2n,而Saga为n(n=sub-stransaction的数量)
+		- 有些第三方服务没有Try接口，TCC模式实现起来就比较tricky了，而Saga则很简单；
+		- 没有预留动作就意味着不必担心资源释放的问题，异常处理起来也更简单(请对比Saga的恢复策略和TCC的异常处理).
+------------------------------------------------------------------------
+servicecomb是华为开源的一个微服务框架，后进入Apache孵化，现已毕业，是Apache顶级开源项目，而servicecomb-pack是servicecomb孵化的三个子项目之一，是分布式事务最终一致性解决方案，0.3.0版本之前叫saga，现改名为servicecomb-pack，支持saga和TCC两种分布式事务协议。
+
+Apache ServiceComb Pack is an eventually data consistency solution for micro-service applications. ServiceComb Pack currently provides TCC and Saga distributed transaction co-ordination solutions by using Alpha as a transaction coordinator and Omega as an transaction agent.
+
+
+
+/* An unbounded TransfterQueue based on linked nodes. This queue orders elements FIFO with respect to any given producer. The head of the queue is that element that has been on the queue the longest time for some producer. The tail of the queue is that element that has been on the queue the shortest time for some producer. 
+Beware that, unlike in most collections, the size method is NOT a constant-time operation. Because of the asynchronous nature of these queues, determining the current number of elements requires a traversal of the elements, and so may report inaccurate results if this collection is modified during traversal. Additionally, the bulk operations addAll, removeAll, retainAll, containsAll, equals, and toArray are not guaranteed to be performed atomically. For example, an iterator operating concurrently with an addAll operation might view only some of the added elements.
+This class and its iterator implement all of the optional methods of the Collection and Iterator interfaces.
+Memory consistency effects: A with other concurrent collections, actions in a thread prior to placing an object into a LinkedTransferQueue happen-before actions subsequent to the access or removal of that element from the LinkedTransferQueue in another thread. 
+*/
+public class LinkedTransferQueue<E> extends AbstractQueue<E> 
+	implements TransferQueue<E>, java.io.Serializable {
+	...
+}
+
+HashMap的并发问题：
+	1. 脏读;
+	2. JDK7会出现链表环形，导致get查找一个不存在key时，程序会进入死循环。
+	3. 扩容时，有可能会出现浪费空间
+	4. 更新丢失/覆盖丢失的问题；
+----------------------------------------------------------------------------------------
+对于 LinkedTransferQueue,Doug Lea进行了尽乎极致的优化。Grizzly的采用了PaddedAtomicReference ：
+PaddedAtomicReference相对于父类AtomicReference只做了一件事情，就将共享变量追加到64字节。计算下，一个对象的引用占4个字节，它追加了15个变量共占60个字节，再加上父类的Value变量，一共64个字节。上面追加15个4字节对象的代码看起来是不是很奇葩？其实不是的, 这样做是为了在并发中提升效率。
+为什么追加64字节能够提高并发编程的效率呢 ？ 因为对于英特尔酷睿i7，酷睿，Atom和NetBurst，Core Solo和Pentium M处理器的L1L2或L3缓存的高速缓存行是64个字节宽，不支持部分填充缓存行，这意味着如果队列的头节点和尾节点都不足64字节的话，处理器会将它们都读到同一个高速缓存行中，在多处理器下每个处理器都会缓存同样的头尾节点，当一个处理器试图修改头接点时会将整个缓存行锁定，那么在缓存一致性机制的作用下，会导致其他处理器不能访问自己高速缓存中的尾节点，而队列的入队和出队操作是需要不停修改头接点和尾节点，所以在多处理器的情况下将会严重影响到队列的入队和出队效率。Doug lea使用追加到64字节的方式来填满高速缓冲区的缓存行，避免头接点和尾节点加载到同一个缓存行，使得头尾节点在修改时不会互相锁定。
+那么是不是在使用Volatile变量时都应该追加到64字节呢？不是的。在两种场景下不应该使用这种方式。第一： 缓存行非64字节宽的处理器 ，如P6系列和奔腾处理器，它们的L1和L2 高速缓存行是32个字节宽。第二： 共享变量不会被频繁的写 。因为使用追加字节的方式需要处理器读取更多的字节到高速缓冲区，这本身就会带来一定的性能消耗，共享变量如果不被频繁写的话，锁的几率也非常小，就没必要通过追加字节的方式来避免相互锁定。
+----------------------------------------------------------------------------------------
+/* An AtomicMarkableReference maintains an object reference along with a mark bit, that can be updated atomically.
+Implementation note: This implementation maintains markable references by creating internal objects representing "boxed" [reference, boolean] pairs.
+*/
+public class AtomicMarkableReference<V> {
+	...
+}
+
+public class AtomicStampedReference<V> {
+	private static class Pair<T> {
+		final T reference;
+		final int stamp;
+		private Pair(T reference, int stamp) {
+			this.reference = reference;
+			this.stamp = stamp;
+		}
+		static <T> Pair<T> of(T reference, int stamp) {
+			return new Pair<T>(reference, stamp);
+		}
+	}
+	
+	private volatile Pair<V> pair;
+	
+	public AtomicStampedReference(V initialRef, int initialStamp) {
+		pair = Pair.of(initialRef, initialStamp);
+	}
+	
+	public V getReference() {
+		return pair.reference;
+	}
+	public int getStamp() {
+		return pair.stamp;
+	}
+	public V get(int[] stampHolder) {
+		Pair<V> pair = this.pair;
+		stampHolder[0] = pair.stamp;
+		return pair.reference;
+	}
+	public boolean weakCompareAndSet(V expectedReference,
+										V newReference,
+										int expectedStamp,
+										int newStamp) {
+		return compareAndSet(expectedReference, newReference,
+								expectedStamp, newStamp);
+	}
+	
+	public boolean compareAndSet(V expectedReference,
+									V newReference,
+									int expectedStamp, 
+									int newStamp) {
+		Pair<V> current = pair;
+		return expectedReference == current.reference && 
+				expectedStamp == current.stamp && 
+				((newReference == current.reference && newStamp == current.stamp) || 
+				casPair(current, Pair.of(newReference, newStamp)));
+	}
+	
+	public void set(V newReference, int newStamp) {
+		Pair<V> current = pair;
+		if (newReference != current.reference || newStamp != current.stamp)
+			this.pair = Pair.of(newReference, newStamp);
+	}
+	
+	public boolean attempStamp(V expectedReference, int newStamp) {
+		Pair<V> current = pair;
+		return expectedReference == current.reference && 
+			(newStamp == current.stamp || 
+				casPair(current, Pair.of(expectedReference, newStamp)));
+	}
+	
+	//Unsafe mechanics 
+	private static final sun.misc.Unsafe UNSAFE = sun.misc.Unsafe.getUnsafe();
+	private static final long pairOffset = objectFieldOffset(UNSAFE, "pair", AtomicStampedReference.class);
+	
+	private boolean casPair(Pair<V> cmp, Pair<V> val) {
+		return UNSAFE.compareAndSwapObject(this, pairOffset, cmp, val);
+	}
+	
+	static long objectFieldOffset(sun.misc.Unsafe UNSAFE, 
+									String field, Class<?> klazz) {
+		try {
+			return UNSAFE.objectFieldOffset(klazz.getDeclaredField(field));
+		} catch (NoSuchFieldException e) {
+			NoSuchFieldError error = new NoSuchFieldError(field);
+			error.initCause(e);
+			throw error;
+		}
+	}
+}
+
+写一个word-count用到哪些命令,三个方案：
+	1. cat xxx.txt|tr -s ' ' '\n'|sort|uniq -c|sort -r|awk '{print $2, $1}'
+		缺点：大小写敏感；会包含标点符号；
+	2. awk -F" " '{for(i=1;i<=NF;i++) {array[$i]+=1;}} END{for (s in array){print s" "array[s];}}' xxx.txt|sort -nr -k 2
+		缺点：大小写敏感；会包含标点符号；
+	3. cat xxx.txt|tr 'A-Z' 'a-z'|egrep -o "\b[[:alpha:]]+\b"
+		|awk '{count[$0] ++ END{for(ind in count) {printf("%-14s%d\n", ind, count[ind]);}}'
+		|sort -k2 -n -r 
+
+HashMap.Node: 
+public class HashMap<K, V> extends AbstractMap<K, V> 
+	implements Map<K, V>, Cloneable, Serializable {
+	...
+	//Tree bins
+	/* Entry for Tree bins. Extends LinkedHashMap.Entry(which in turn extends Node) so can be used as extension of either regular or linked node. 
+	*/
+	static final class TreeNode<K, V> extends LinkedHashMap.Entry<K, V> {
+		TreeNode<K, V> parent;   //red-black tree links
+		TreeNode<K, V> left;
+		TreeNode<K, V> right;
+		TreeNode<K, V> prev;   // needed to unlink next upon deletion
+		boolean read;
+		
+	}
+}
+
+redis获取一个有序列表的前10个元素用什么命令: lrange <key> 0 9
+可以通过在字段之间通过填充长整型变量的方式把热点变量隔离在不同的缓存行中，减少伪同步，在多核CPU中极大的提升效率。
+Java对象中的元数据指针是一个引用类型，正常来说64位机器元数据指针为8字节，32位机器元数据指针为4字节，但是HotSpot中有一项优化是对元数据类型指针进行压缩存储，使用JVM参数：-XX:+UseCompressedOops开启压缩。
+
+开发一个新的API，需要考虑哪些方面？
+	1. 哪种请求模式，get/post/put/delete; 是否符合Restful规范
+	2. 版本；版本兼容性：向前兼容/向后兼容
+	3. 应答的设计；如何标注成功/失败，失败的提示是否合理；
+	4. 安全性：SSL, 授权/权限，Token等；
+	5. 良好的接口说明文档和测试案例；
+	6. 接口的相关统计功能；
+	7. 接口调用频率的控制；
+	8. 应答是否需要分页；
+
+/*
+*/
+public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
+	
+}
+
+Instrumentation.getObjectSize(Object objectToSize); 这个方法不包括超类继承下来的和当前类声明的实例引用字段的对象本身的大小、实例引用数组引用的对象本身的大小。
+MySQL和ElasticSearch的区别：
+	1. ES是分布式全文搜索引擎；MySQL是关系型数据库；
+	2. ES天然支持分布式(shard, replicator)
+	3. MySQL支持事务；ES不支持事务；
+	4. ES支持灵活的Json格式存储，可以不用预先定义格式；
+	5. ES使用倒排索引；MySQL-InnoDB使用B+树索引；
+	6. 
+
+ParNew用于垃圾回收的线程可用参数-XX:ParalleGCThreads=n进行配置，建议与CPU数一致。ParNew是许多运行在Server模式下的虚拟机中首选的新生代收集器，除了Serial收集器外，只有它能与CMS收集器配合工作。
+-XX:MaxTenuringThreshold=15
+-XX:+UseConcMarkSweepGC 
+-XX:+DisableExplicitGC 
+
+/* Handlers all registry requests from eureka clients.
+Primary operations that are performed are the Registers, Renewals, Cancels, Expirations, and status Changes. The registry also stores only the delta operations.
+*/
+public abstract class AbstractInstanceRegistry implements InstanceRegistry {
+	private static final Logger logger = LoggerFactory.getLogger(AbstractInstanceRegistry.class);
+	
+	private static final String[] EMPTY_STR_ARRAY = new String[0];
+	private final ConcurrentHashMap<String, Map<String, Lease<InstanceInfo>> registry = 
+		new ConcurrentHashMap<String, Map<String, Lease<InstanceInfo>>();
+	protected Map<String, RemoteRegionRegistry> regionNameVSRemoteRegistry = new HashMap<String, RemoteRegionRegistry>();
+	protected final ConcurrentMap<String, InstanceStatus> overriddenInstanceStatusMap = CacheBuilder
+									.newBuilder().initialCapacity(500)
+									.expireAfterAccess(1, TimeUnit.HOURS)
+									.<String, InstanceStatus>build().asMap();
+	
+	// CircularQueues here for debugging/statistics purposes only 
+	private final CircularQueue<Pair<Long, String>> recentRegisteredQueue;
+	private final CircularQueue<Pair<Long, String>> recentCanceledQueue;
+	private ConcurrentLinkedQueue<RecentlyChangedItem> recentlyChangedQueue = new ConcurrentLinkedQueue<RecentlyChangedItem>();
+	
+	private final ReentrantReadWriteLock readWriteLock = new ReentrantReadWriteLock();
+	private final Lock read = readWriteLock.readLock();
+	private final Lock write = readWriteLock.writeLock();
+	
+	private Timer deltaRetentionTimer = new Timer("Eureka-DeltaRetentionTimer", true);
+	private Timer evictionTimer = new Timer("Eureka-EvictionTimer", true);
+	private final MeasuredRate renewsLastMin;
+	
+	private final AtomicReference<EvictionTask> evictionTaskRef = new AtomicReference<EvitionTask>();
+	
+	protected String[] allKnownRemoteRegions = EMPTY_STR_ARRAY;
+	protected volatile int numberOfRenewsPerMinThreshold;
+	protected volatile int expectedNumberOfRenewsPerMin;
+	
+	protected final EurekaServerConfig serverConfig;
+	protected final EurekaClientConfig clientConfig;
+	protected final ServerCodecs serverCodecs;
+	protected volatile ResponseCache responseCache;	
+	...
+}
+
+-XX:+PrintGCApplicationConcurrentTime: 打印应用执行的时间
+-XX:+PrintGCApplicationStoppedTime: 打印应用被暂停的时间
+-Djava.util.Arrays.useLegacyMergeSort=true： 使用JDK6之前的MergeSort，而不是JDK7的TimSort，因为TimSort的对象compare需要满足三个条件，其中一个很难满足：sgn(compare(x, y)) == -sgn(compare(y, x);所以为了兼容JDK6，可以使用这个标识。
+-Djava.nio.channels.spi.SelectorProvider=sun.nio.ch.EPollSelectorProvider: 启用NIO的epoll，对并发idle connection会有大幅度的性能提升。
+-XX:+ExplicitGCInvokesConcurrent: 指定显式的GC，即System.gc()，也是并发执行的。而不是STW的。
+-XX:SoftRefLRUPolicyMSPerMB: 
+-XX:+CMSClassUnloadingEnabled:
+
+/* A reflection-based utility that enables atomic updates to designated (volatile long) fields of designed classes.
+This class is designed for use in atomic data structures in which serveral fields of the same node are independently subject to atomic updates. 
+Note that the guarantees of the compareAndSet method in this class are weaker than in other atomic classes.Because this class cannot ensure that all uses of the field are appropriate for purpose of atomic access, it can guarantee atomicity only with respect to other invocations of compareAndSet and set on the same updater.
+*/
+public abstract class AtomicLongFieldUpdater<T> {
+	...
+	/* Atomically updates the field of the given object managed by this updater with the results of applying the given function to be current and given values, returning the updated value. The function should be side-effect-free, since it may be re-applied when attempted updates fails due to contention among threads. The function is applied with the current value as its first argument, and the given update as the second argument. 
+	*/
+	public final long accumulateAndGet(T obj, long x, LongBinaryOperator accumulatorFunction) {
+		long prev, next;
+		do {
+			prev = get(obj);
+			next = accumulatorFunction.applyAsLong(prev, x);
+		} while (!compareAndSet(obj, prev, next));
+		return next;
+	}
+	...
+}
+
+-XX:+UseCMSInitiatingOccupancyOnly : 告知JVM不基于运行时收集的数据来启动CMS垃圾收集周期。而是，当该标志开启时，JVM通过CMSInitiatingOccupancyFraction的值进行每一次CMS收集。
+-XX:+CMSInitiatingOccupancyFraction=60: 设定CMS在对内存占用率达到60%的时候，开始GC(因为CMS有浮动垃圾，所以一般都较早启动GC);
+
+jmap -histo:live <PID>
+-------------------------------------------------------
+添加下面两个参数强制在remark阶段和FGC阶段之前先进行一次YGC，减少CMS-Remark的内存量。
+-XX:+ScavengeBeforeFullGC 
+-XX:+CMSScavengeBeoreRemark
+FGC阶段之前先进行一次YGC的意义是：Yong区对象引用了Old区的对象，如果在Old区进行清理之前不进行Yong区清理，就会导致Old区被Yong区引用的对象无法释放。
+结论：
+	1. 在CMS-remark阶段需要对堆中所有的内存对象进行处理，如果在这个阶段之前强制执行一次年轻代的GC会大量减少remark需要处理的内存数量，进而降低JVM卡顿对请求的影响；
+	2. 对Java HTTP服务，JVM的卡顿时间应该小于HTTP客户端的调用超时时间，否则JVM卡顿对请求造成影响。
+-------------------------------------------------------
+-XX:+UseCMSCompactAtFullCollection: 在FGC时，对老年代进行压缩；CMS是不会移动内存的，因此，会产生碎片，导致内存不够用，因此内存的压缩这个时候就会被启用。增加这个参数是比较好的，可能会影响性能，但是可以消除碎片。
+-XX:CMSFullGCsBeforeCompaction=9: 由于CMS不对内存空间进行压缩整理，所以运行一段时间以后会产生碎片，使得运行效率降低。此值设置运行多少次GC以后对内存空间进行压缩整理。
+-----------------------------------------------------------------------------------------
+CMS GC要决定是否在FGC时做压缩，会依赖几个条件。其中：
+	- 第一种条件：UseCMSCompactAtFullCollection与CMSFullGCsBeforeCompaction搭配使用，前者默认True，关键在后者上；
+	- 第二种：调用了System.gc(), 而且DisableExplicitGC没有开启；
+	- 第三种：YGC做增量收集失败；即YGC预估Old区没有足够空间来容纳下次YGC晋升的对象；
+上述三种条件的任意一种成立都会让CMS决定这次FGC要做压缩。
+
+CMSFullGCsBeforeCompaction 说的是，在上一次CMS并发GC执行过后，到底还要再执行多少次full GC才会做压缩。默认是0，也就是在默认配置下每次CMS GC顶不住了而要转入full GC的时候都会做压缩。 把CMSFullGCsBeforeCompaction配置为10，就会让上面说的第一个条件变成每隔10次真正的full GC才做一次压缩（而不是每10次CMS并发GC就做一次压缩，目前VM里没有这样的参数）。这会使full GC更少做压缩，也就更容易使CMS的old gen受碎片化问题的困扰。 本来这个参数就是用来配置降低full GC压缩的频率，以期减少某些full GC的暂停时间。CMS回退到full GC时用的算法是mark-sweep-compact，但compaction是可选的，不做的话碎片化会严重些但这次full GC的暂停时间会短些；这是个取舍。
+-----------------------------------------------------------------------------------------
+-XX:+CMSParallelRemarkEnabled: 在CMS最初的实现中，初始标记和重新标记都是单线程的，但现在都已经修改为多线程的。激活多线程的初始标记和重新标记阶段的JVM选项分别是：-XX:+CMSParalleInitialMarkEnabled和-XX:+CMSParallelRemarkEnabled。
+
+----------------------------------------------
+-XX:-ReduceInitialCardMarks: 为了解决一个JDK1.6.0_18的已知Bug，其主要原因是card-marking performance optimization算法在实现的时候有瑕疵，在某些情况下会引起heap corruption。这个情况发生在新创建的大对象和Eden space大小差不多，然后JVM做YGC的时候。解决方案：启动参数添加：-XX:-ReduceInitialCardMarks将性能优化策略关闭。
+----------------------------------------------
+-XX:+CMSPermGenSweepingEnabled和-XX:+CMSClassUnloadingEnabled配合同时启用，对PermGen进行GC。
+-XX:CMSInitiatingPermOccupancyFraction=70:当永久代占用率达到此值时，启动CMS回收。
+   
+The Executor implementations provided in this package implement ExecutorService, which is a more extensive interface. The ThreadPoolExecutor class provided an extensible thread pool implementation. The Executors class provides convenient factory methods for these Executors. 
+
+自适应自旋锁：线程空循环等待的自旋次数并非是固定的，而是会动态根据实际情况来改变自旋等待的次数。
+能否从偏向锁直接升级为重量级锁: 如果对于某个锁，一个线程自旋之后，很少成功获得该锁，那么以后这个线程获取该锁时，是有可能直接忽略掉自旋过程，直接升级为重量级锁，以免空循环等待浪费资源。
+
+---------------------------------------------
+mysql主从同步原理：主库针对写操作，顺序写binlog，从库单线程去主库顺序读”写操作的binlog”，从库取到binlog在本地原样执行（随机写），来保证主从数据逻辑上一致。
+mysql的主从复制都是单线程的操作，主库对所有DDL和DML产生binlog，binlog是顺序写，所以效率很高，slave的Slave_IO_Running线程到主库取日志，效率比较高，下一步，问题来了，slave的Slave_SQL_Running线程将主库的DDL和DML操作在slave实施。DML和DDL的IO操作是随即的，不是顺序的，成本高很多，还可能可slave上的其他查询产生lock争用，由于Slave_SQL_Running也是单线程的，所以一个DDL卡主了，需要执行10分钟，那么所有之后的DDL会等待这个DDL执行完才会继续执行，这就导致了延时。
+有朋友会问：“主库上那个相同的DDL也需要执行10分，为什么slave会延时？”，答案是master可以并发，Slave_SQL_Running线程却不可以。
+
+MySQL数据库主从同步延迟是怎么产生的？
+当主库的TPS并发较高时，产生的DDL数量超过slave一个sql线程所能承受的范围，那么延时就产生了，当然还有就是可能与slave的大型query语句产生了锁等待。
+首要原因：数据库在业务上读写压力太大，CPU计算负荷大，网卡负荷大，硬盘随机IO太高
+次要原因：读写binlog带来的性能影响，网络传输延迟。
+---------------------------------------------
+在数据库主从同步的情况下，如果从库同步主库的数据延迟比较高，怎么才能写到主库后立刻能够读取到数据？
+	1. 启用MySQL5.6支持的Semi-Sync半同步功能；
+	2. 启用Redis缓存，但不保证强一致的事务；另外还需要注意数据一致性；
+	3. 进行数据分片，分库分表，分散从库的同步压力；
+	4. 升级到MySQL5.7，多线程复制，几乎完美解决单线程复制引起的从库延迟；
+
+ThreadPoolExecutor: This class provides protected overridable beforeExecute(Thread, Runnable) and afterExecute(Runnable, Throwable) methods that are called before and after execution of each task. These can be used to manipulate the execution environment; for example, reinitializing ThreadLocals, gathering statistics, or adding log entries. Additionally, method terminated can be overridden to perform any special processing that needs to be done once the Exceutor has fully terminated. 
+
+
+权限系统的可扩展性：
+	1. 角色的树形结构支持；
+	2. 权限的功能点和资源的对应关系设计成1对N;
+	3. 对于各种资源的扩展支持：页面， URL，文件等其他资源；从权限中再抽取一种关系；
+	4. 权限的分组或者类似于角色的树形结构支持；
+	5. 权限系统的审计跟踪功能，操作日志表；
+	6. 对资源类型的管理称为粗粒度权限管理；对资源实例的控制称为细粒度权限管理；
+	7. 对粗粒度的权限管理可以很容易做系统架构级别的功能，即系统功能操作使用统一的粗粒度的权限管理；
+	8. 对细粒度的权限管理不建议做成系统架构级别的功能，因为这属于业务需求，变化性比较大；
+	
+
+几种BlockingQueue的实现类：
+	1. ArrayBlockingQueue;
+	2. DelayedWorkQueue;
+	3. DelayQueue
+	4. LinkedBlockingQueue
+	5. PriorityBlockingQueue
+	6. SynchronousQueue
+	7. BlockingDeque
+	8. LinkedTransferQueue 
+
+public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQueue<E>, java.io.Serializable{...}
+
+ScheduledThreadPoolExecutor的内部类: static class DelayedWorkQueue extends AbstractQueue<Runnable> implements BlockingQueue<Runnable>{...}
+
+public class DelayQueue<E extends Delayed> extends AbstractQueue<E> implements BlockingQueue<E> {...}
+
+public class LinkedBlockingQueue<E> extends AbstractQueue<E> implements BlockingQueue<E>, java.io.Serializable {...}
+
+public class PriorityBlockingQueue<E> extends AbstractQueue<E> implements BlockingQueue<E>, java.io.Serializable {...}
+
+public class SynchronousQueue<E> extends AbstractQueue<E> implements BlockingQueue<E>, java.io.Serializable {...}
+
+public interface BlockingDeque<E> extends BlockingQueue<E>, Deque<E> {...}
+
+public class LinkedBlockingDeque<E> extends AbstractQueue<E> implements BlockingDeque<E>, java.io.Serializable {...}
+
+public interface TransferQueue<E> extends BlockingQueue<E> {...}
+
+public class LinkedTransferQueue<E> extends AbstractQueue<E> implements TransferQueue<E>, java.io.Serializable {...}
+
+Redis的字典渐进式扩容与ConcurrentHashMap的扩容策略比较：
+	1. 扩容所花费的时间比对：一个单线程渐进扩容，一个多线程协同扩容。在平均的情况下，是ConcurrentHashMap快。意味着，扩容时所需要花费的空间能够更快的进行释放。
+	2. 读操作，两者差不多；
+	3. 写操作，Redis字典返回更快些，因为不像ConcurrentHashMap那样去帮着扩容(当要写的桶已经迁移到newTable时),等扩容完才能进行操作；
+	4. 删除操作，与写一样。
+所以选择单线程渐进式扩容还是选择多线程协同扩容，需要具体问题具体分享。
+	1. 如果内存资源吃紧，希望能够尽快扩容来释放扩容时需要的辅助空间，那么选择多线程协同扩容；
+	2. 如果对于写和删除操作要求迅速，那么可以选择单线程渐进式扩容。
+从现有机器多核的情况来看，ConcurrentHashMap的扩容策略更好一些。
+-------------------------------------
+redis中的hash如何扩容: 
+首先Redis的字典采用的是一种'单线程渐进式rehash'，这里的单线程是指只有一个线程在扩容，而在扩容的同时其他的线程可以并发的进行读写。
+Redis系统后台会定时给予扩容的那个线程足够的运行时间，这样不会导致它饿死。大致过程是这样的：
+ht[0]，是存放数据的table，作为非扩容时容器。
+ht[1]，只有正在进行扩容时才会使用，它也是存放数据的table，长度为ht[0]的两倍。
+
+扩容时，单线程A负责把数据从ht[0] copy到ht[1] 中。如果这时有其他线程进行读操作：会先去ht[0]中找，找不到再去ht[1]中找。
+进行写操作：直接写在ht[1]中。
+进行删除操作：与读类似。
+当然这过程中会设计到一系列的锁来保证同步性，不过这并不是本文的重点。
+
+而ConcurrentHashMap采用的扩容策略为： '多线程协同式rehash'。
+这里的多线程指的是，有多个线程并发的把数据从旧的容器搬运到新的容器中。
+扩容时大致过程如下：
+线程A在扩容把数据从oldTable搬到到newTable，这时其他线程进行get操作：这个线程知道数据存放在oldTable或是newTable中，直接取即可。
+进行写操作：如果要写的桶位，已经被线程A搬运到了newTable。
+那么这个线程知道正在扩容，它也一起帮着扩容，扩容完成后才进行put操作。
+进行删除操作：与写一致。
+--------------------------------------
+JDK中哪些地方用到了哪些设计模式:
+	1. 观察者模式：Observalbe类和Observer接口;javax.servlet.http.SessionBindingListener; java.util.EventListener;
+	2. 桥接模式: Set<String> names = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());JDBC;
+	3. 装饰模式: BufferedReader br = new BufferedReader(new InputStreamReader(System.in)); Collections#synchronized***();Collections#unmodifiable***;javax.servlet.http.HttpServletRequestWrapper;HttpServletResponseWrapper;
+	4. 原型模式: Object#clone(),包括浅克隆和深克隆
+	5. 建造者模式: StringBuilder, StringBuffer,实现了java.lang.Appendable接口的类
+	6. 工厂方法: Calendar calendar = java.util.Calendar.getInstance();java.lang.Class#newInstance();java.lang.reflect.Array#newInstance();java.lang.reflect.Constructor#newInstance();
+	7. 适配器模式: java.util.Arrays.asList(new Integer[]{1,2,3}); java.util.Arrays.asList(1,2,3);
+	8. 享元模式(Flyway): java.lang.Integer#valueOf(int);Boolean#valueOf();Byte#value();
+	9. 策略模式: java.util.Comparator#compare(); Servlet
+	10. 抽象工厂模式： java.util.ResourceBundle#getBundle();java.sql.DriverManager#getConnection();java.nio.charset.Charset#forName();java的AWT中的Button和Text等构件在Windows和Unix中的本地实现是不同的。
+	11. 单例模式: java.lang.Runtime.getRuntime();Unsafe.getUnsafe();
+	12. 组合模式: javax.swing.JComponent#add(Component);java.awt.Container#add(Component);Map#putAll(Map);List#addAll(Collection);
+	13. 代理模式: java.lang.reflect.Proxy;java.rmi.*;
+	14. 职责链模式：javax.servlet.Filter#doFilter();
+	15. 命令模式：Runnable;Callable;
+	16. 解释器模式: java.util.Pattern;java.text.Format;jvaax.el.ELResolver;
+	17. 迭代器模式: Iterator;Enumeration;
+	18. 中介者模式: Executor;ScheduledExecutorService;Method#invoke();
+	19. 备忘录模式: java.io.Serializable;
+	20. 状态模式：
+	21. 模板方法模式：java.util.AbstractList;AbstractSet;HttpServlet#do***();
+	22. 访问者模式：AnnotationValue和AnnotationValue;java.lang.model.element.Element和ElementVistor;java.lang.model.type.TypeMirror和TypeVisitor；
+	23. 门面模式：java.lang.Class;
+	
+
+--------------------------------------
+Sentinel的滑动窗口统计机制：Sentinel处理流程是基于Slot链(ProcessorSlotChain)来完成的，比如限流、熔断等，其中重要的一个Slot就是StatisticSlot，做各种数据统计，而限流/熔断的数据判断来源就是StatisticSlot，StatisticSlot的各种数据统计都是基于滑动窗口来完成的。Sentinel的Slot链(ProcessorSlotChain)是责任链模式的体现。
+
+public final class Integer extends Number implements Comparable<Integer> {
+	...
+	/**
+     * Returns an {@code Integer} instance representing the specified
+     * {@code int} value.  If a new {@code Integer} instance is not
+     * required, this method should generally be used in preference to
+     * the constructor {@link #Integer(int)}, as this method is likely
+     * to yield significantly better space and time performance by
+     * caching frequently requested values.
+     *
+     * This method will always cache values in the range -128 to 127,
+     * inclusive, and may cache other values outside of this range.
+     */
+	public static Integer valueOf(int i) {
+		if (i >= IntegerCache.low && i <= IntegerCache.high) {
+			return IntegerCache.cache[i + (-IntegerCache.low)];
+		}
+		return new Integer(i);
+	}
+	
+	/**
+     * Cache to support the object identity semantics of autoboxing for values between
+     * -128 and 127 (inclusive) as required by JLS.
+     *
+     * The cache is initialized on first usage.  The size of the cache
+     * may be controlled by the {@code -XX:AutoBoxCacheMax=<size>} option.
+     * During VM initialization, java.lang.Integer.IntegerCache.high property
+     * may be set and saved in the private system properties in the
+     * sun.misc.VM class.
+     */
+	private static class IntegerCache {
+		static final int low = -128;
+		static final int high;
+		static final Integer cache[];
+		
+		static {
+			//high value may be configured by property
+			int h = 127;
+			String integerCacheHigPropValue = sun.misc.VM.getSavedProperty("java.lang.Integer.IntegerCache.high");
+			if (integerCacheHigPropValue != null) {
+				try {
+                    int i = parseInt(integerCacheHighPropValue);
+                    i = Math.max(i, 127);
+                    // Maximum array size is Integer.MAX_VALUE
+                    h = Math.min(i, Integer.MAX_VALUE - (-low) -1);
+                } catch( NumberFormatException nfe) {
+                    // If the property cannot be parsed into an int, ignore it.
+                }
+			}
+			
+			high = h;
+
+            cache = new Integer[(high - low) + 1];
+            int j = low;
+            for(int k = 0; k < cache.length; k++)
+                cache[k] = new Integer(j++);
+
+            // range [-128, 127] must be interned (JLS7 5.1.7)
+            assert IntegerCache.high >= 127;
+		}
+		
+		prvate IntegerCache() {}
+	}
+}
+
+

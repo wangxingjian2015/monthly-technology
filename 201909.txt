@@ -1,0 +1,1135 @@
+-------------------------------------------------------------
+整个ForkJoinPool流程和重要方法如下：
+任务提交：
+	- 提交任务入口：submit, execute, invoke
+	- 完整版提交任务：externalSubmit(包括初始化)
+	- 简单版提交任务：externalPush
+	
+ForkJoinWorkerThread管理：
+	- 激活或创建：signalWork
+	- 创建：tryAddWorker, createWorker
+	- 注册、撤销注册：registerWorker, deregisterWorker
+
+ForkJoinWorkerThread执行(runWorker三部曲)
+	- 获取：scan
+	- 执行：runTask
+	- 等待：awaitWork
+
+Fork:
+	- 等同于提交任务
+	
+Join(doJoin):
+	- 当前不是ForkJoinWorkerThread:externalAwaitDone
+	- 当前是ForkJoinWorkerThread:awaitDone
+	
+awaitJoin等待两种策略：
+	- Helping: tryRemoveAndExec, helpStealer
+	- Compensating: tryCompensate
+
+等待所有任务完成：
+	- 静止：awaitQuiescence
+	- 终止：awaitTermination
+
+关闭：
+	- shutdown, shutdownNow
+	- tryTerminate
+
+异常处理：
+-------------------------------------------------------------
+除了使用ForkJoinTask外，还支持Runnable和Callable，内部使用Adapter最终转为ForkJoinTask。submit很简单的调用externalPush,这是简化版的任务入队方法，调用不成功时需要调用完整版的externalSubmit.
+externalSubmit处理非正常情况和进行初始化。ForkJoinPool构造函数只初始化一部分参数，包括WorkQueue[]等留到externalSubmit初始化。
+
+ForkJoinWorkerThread启动后调用ForkJoinPool的runWorker:
+
+// Scanning for tasks
+
+// Top-level runloop for workers, called by ForkJoinWorkerThread.run.
+final void runWorker(WorkQueue w) {
+	w.growArray();   // allocate queue
+	int seed = w.hint;   // initially holds randomization hint 
+	int r = (seed == 0) ? 1 : seed;
+	
+	for (ForkJoinTask<?> t;;) {
+		if ((t = scan(w, r)) != null) {
+			w.runTask(t);
+		} else if (!awaitWork(w, t)) {
+			break;
+		}
+		r ^= r << 13;
+		r ^= r >>> 17;
+		r ^= r << 5;   //xorshift
+	}
+}
+
+/* Scans for and tries to steal a top-level task. Scans start at a random location, randomly moving on 
+	apparent contention, otherwise continuing linearly until reaching two consecutive empty passes over 
+	all queues with the same checksum(summing each base index of each queue, that moves on each steal),
+	at which point the worker tries to inactivate and then re-scans, attempting to re-activate (itself or 
+	some other worker) if finding a task; otherwise returning null to await work. Scans disruption on other
+	scanning threads. 
+*/
+private ForkJoinTask<?> scan(WorkQueue w, int r) {
+	
+}
+
+/*	Returns the result of the computation when it #isDone() is done. This method differs from #get() in that 
+	abnormal completion results in RuntimeException or Error, not ExecutionException, and that interrupts of 
+	calling thread do not cause the method to abruptly return by throwing InterruptedException.
+*/
+public final V join() {
+	int s;
+	if ((s = doJoin() & DONE_MASK) != NORMAL)
+		reportException(s);
+	return getRawResult();
+}
+
+/*	Implementation for join, get, quitlyJoin. Directly handles only cases of already-completed, 
+	external wait, and unfork+exec. Others are relayed to ForkJoinPool.awaitJoin.
+*/
+private int doJoin() {
+	int s;
+	Thread t;
+	ForkJoinWorkerThread wt;
+	ForkJoinPool.WorkQueue w;
+	
+	return (s = status) < 0 ? s : 
+		((t = Thread.currentThread()) instanceof ForkJoinWorkerThread) ? 
+		(w = (wt = (ForkJoinWorkerThread)t).workQueue).
+		tryUnpush(this) && (s = doExec()) < 0 ? s : 
+		wt.pool.awaitJoin(w, this, 0L) : 
+		externalAwaitDone();
+}
+-------------------------------------------------------------
+change buffer的使用场景：
+	通过上面的分析，已经清楚了使用change buffer对更新过程的加速作用，也清楚了change buffer只限于用在普通索引的场景下，而不适用于唯一索引。那么，有问题：普通索引的所有场景，使用change buffer都可以起到加速作用吗？
+	因为merge的时候真正进行数据更新的时刻，而change buffer的主要目的就是将记录的变更动作缓存下来，所以在一个数据页做merge之前，change buffer记录的变更越多(也就是这个页面上要更新的次数越多)，收益越大。
+	因此，对于写多读少的业务来说，页面在写完之后马上被访问到的概率比较小，此时chang buffer的使用效果最好。这种业务模式常见的就是账单类、日志类的系统。
+	反过来，假设一个业务的更新模式是下入之后马上会做查询，那么即使满足了条件，将更新先记录在change buffer，但之后由于马上要访问这个数据页，会立即触发merge过程。这样随机访问IO的次数不会减少，反而增加了change buffer的维护代价。所以，对于这种业务模式来说，change buffer反而起到了副作用。
+-------------------------------------------------------------
+如果简单地对比两种机制(redo log和change buffer)在提升更新性能上的收益的话，redo log主要节省的是随机写磁盘的IO消耗(转成顺序写)，而change buffer主要节省的则是随机读磁盘的IO消耗。
+
+purge: 将change buffer中的操作应用到原数据页上，得到最新结果的过程，称为purge。访问这个数据页会触发purge，系统有后台线程定期purge，在数据库正常关闭的过程中，也会执行purge。
+唯一索引的更新不能使用change buffer.
+
+MySQL的一个存储过程：
+delimiter ;;
+create procedure idata()
+begin
+	declare i int;
+	set i = 1;
+	while(i <= 100000) do 
+		insert into t value(i, i, i);
+		set i = i + 1;
+	end while;
+end;;
+delimiter ;
+
+call idata();	
+-------------------------------
+Cardinality
+
+show index from fin_bill.fin_bill_product_snap;
+analyze table fin_bill.fin_bill_product_snap;
+MySQL会根据词法解析的结果分析出可能可以使用的索引作为候选项，然后在候选项列表中依次判断每个索引需要扫描多少行。如果force index指定的索引在候选索引列表中，就直接选择这个索引，不再评估其他索引的执行代价。
+
+对于由于索引统计信息不准确导致的问题，可以用analyze table来解决。
+而对于其他优化器误判的情况，可以在应用端用force index来强行指定索引，页可以通过修改语句来引导优化器。还可以通过增加或者删除索引来绕过这个问题。
+
+如果在某次写入使用了change buffer机制，之后主机异常重启，是否会丢失change buffer和数据？
+	答案：不会丢失。虽然是只更新内存，但是在事务提交的时候，把change buffer的操作也记录到redo log里了，所以崩溃恢复的时候，change buffer也能找回来。
+
+前缀索引对覆盖索引的影响：使用前缀索引就用不上覆盖索引对查询性能的优化了，这也是选择是否使用前缀索引时需要考虑的一个因素。
+刷脏页虽然是常态，但是出现以下两种情况，都是会明显影响性能的：
+	1. 一个查询要淘汰的脏页个数太多，会导致查询的响应时间明显变长；
+	2. 日志写满，更新全部堵住，写性能跌为0，这种情况对敏感业务来说，是不能接受的。
+所以，InnoDB需要有控制脏页比例的机制，来尽量避免上面的两种情况。
+
+InnoDB会在后台刷脏页，而刷脏页的过程是要将内存页写入磁盘。所以，无论是查询语句在需要内存的时候可能要求淘汰一个脏页，还是由于刷脏页的逻辑会占用IO资源并可能影响到了更新语句，都可能造成从业务端感知到了MySQL抖了一下。
+要尽量避免这种情况，就要合理地设置innodb_io_capacity的值，并且平时要多关注脏页比例，不要让它经常接近75%。
+其中，脏页比例是通过innodb_buffer_pool_pages_dirty/innodb_buffer_pool_pages_total得到的。
+
+泛型的本质是参数化类型，也就是所操作的数据类型被指定为一个参数。
+ 
+为什么InnoDB不和MyISM一样，将count(*)存储起来：这是因为即使是在同一个时刻的多个查询，由于多版本并发控制MVCC的原因，InnoDB表应该返回多少行也是不确定的。 
+
+-----------------------------------------
+MySQL怎么知道binlog是完整的：
+一个事务的binlog是有完整格式的：
+	- statement格式的binlog，最后会有commit;
+	- row格式的binlog，最后会有一个XID event；
+另外，在MySQL5.6.2版本以后，还引入了binlog-checksum参数，用来验证binlog内容的正确性。对于binlog日志由于磁盘原因，可能会在日志中间出错的情况，MySQL可以通过校验checksum的结果来发现。所以，MySQL还是有办法验证事务binlog的完整性的。
+-----------------------------------------
+对索引做函数操作，可能会破坏索引值的有序性，因此优化器就决定放弃走搜索功能。
+
+但是，由于在show processlist的结果里面，session A的Command列是"Sleep"，导致查找起来很不方便。不过有了performance_schema和sys系统库以后，就方便多了。(MySQL启动时需要设置performance_schema=on, 相比于设置为off会有10%左右的性能损失).
+通过查询sys.schema_table_lock_waits这张表，就可以直接找出造成阻塞的process_id，把这个连接用kill命令断开即可。
+select blocking_pid from sys.schema_table_lock_waits;
+
+STATE:"Waiting for table flush"，这个状态表示的是，有一个线程正要对表做flush操作。MySQL里面对表做flush操作的用法，一般有两个：
+flush tables xxx with read lock;
+flush tables with read lock;
+ 
+MySQL怎么查出是谁占用了写锁：如果用的是MySQL5.7版本，可以通过sys.innodb_lock_waits表查到。语句如下：
+select * from sys.innodb_lock_waits where locked_table='db.table' \G;
+ 
+也就是说，幻读指的是一个事务在前后两次查询同一个范围的时候，后一次查询看到了前一次查询没有看到的行。对“幻读”做一个说明：
+	1. 在可重复读隔离级别下，普通的查询是快照读，是不会看到别的事务插入的数据的。因此，幻读在"当前读"下才会出现。
+	2. SessionB的修改结果，被Session A之后的select语句用"当前读"看到，不能称为幻读。幻读仅专指“新插入的行”。
+因为这三个查询都是加了for update，都是当前读。而当前读的规则，就是要能读到所有已经提交的记录的最新值。
+
+因为间隙锁在可重复读隔离级别下才有效。若没有特殊说明，默认是可重复读隔离级别。
+在加锁规则里面，包含两个原则、两个优化和一个bug：
+	1. 原则一：加锁的基本单位是next-key lock。next-key lock是左开右闭区间。
+	2. 原则二：查找过程中访问到的对象才会加锁。
+	3. 优化一：索引上的等值查询，给唯一索引加锁的时候，next-key lock退化为行锁。
+	4. 优化二：索引上的等值查询，向右遍历时且最后一个值不满足等值条件的时候，next-key lock退化为间隙锁。
+	5. bug:唯一索引上的范围查询会访问到会访问到不满足条件的第一个值为止。
+
+在删除数据的时候尽量加limit。这样不仅可以控制删除数据的条数，让操作更安全，还可以减少加锁的范围。
+
+另外，在读提交隔离级别下还有一个优化，即：语句执行过程中加上的行锁，在语句执行完成后，就要把“不满足条件的行”上的行锁直接释放了，不需要等待事务提交。
+也就是说，在读提交隔离级别下，锁的范围更小，锁的时间更短，这也是不少业务都默认使用读提交隔离级别的原因。
+在业务需要使用可重复读隔离级别的时候，能够更细致地设计操作数据库的语句，解决幻读问题的同时，最大限度地提升系统并行处理事务的能力。
+
+从上面这些信息中，可以知道：
+	1. "lock in share mode"这条语句，持有c=5的记录锁，在等c=10的锁；
+	2. "for update"这个语句，持有c=20和c=10的记录锁，在等c=5的记录锁；
+因此导致了死锁。可以得到两个结论：
+	1. 由于锁是一个个加的，要避免死锁，对同一组资源，要按照尽量相同的顺序访问；
+	2. 在发生死锁的时刻，for update这条语句占有的资源更多，回滚成本更大，所以InnoDB选择了回滚成本更小的lock in share mode语句，来回滚。
+-----------------------------------------
+第一个问题：能不能使用join语句？
+	1. 如果可以使用Index Nested-Loop Join算法，也就是说可以用上被驱动表上的索引，没有问题；
+	2. 如果使用Block Nested-Loop Join算法，扫描行锁就会过多。尤其是在大表上的join操作，这样可能要扫描被驱动表很多次，会占用大量的系统资源。所以这种join尽量不要用。
+所以判断要不要使用join，就要看explain结果里面，Extra字段里面有没有出现"Block Nested Loop"。
+第二个问题：如果要使用join,应该选择大表做驱动还是选择小表做驱动表？
+	1. 如果是Index Nested-Loop Join算法，应该选择小表做驱动表；
+	2. 如果是Block Nested-Loop算法：
+		- 在join_buffer_size足够大的时候，是一样的；
+		- 在join_buffer_size不够大的时候(这是更常见的情况),应该选择小表做驱动表。
+所以，结论是，总是应该使用小表做驱动表。
+
+哪个表做小表：更准确地说，在决定哪个做驱动表的时候，应该是两个表按照各自的条件过滤，过滤完成之后，计算参与join的各个字段的总数据量，数据量小的那个表，应该作为驱动表。
+-----------------------------------------
+MRR能够提升性能的核心在于，这条查询语句在普通索引上做的是一个范围查询(也就是说，是一个多值查询)，可以得到足够多的主键ID。这样通过排序以后，再去主键索引查数据，才能体现顺序性的优势。(即将随机读优化为顺序读)
+
+Index Nested-Loop Join(NLJ)和Block Nested-Loop Join(BNL)的优化方法，这些优化方法中：
+	1. BKA优化是MySQL已经内置支持的，建议默认使用；
+	2. BNL算法效率低，建议尽量转成BKA算法。优化的方向就是给被驱动表的关联字段加上索引；
+	3. 基于临时表的改进方案，对于能够提前多虑出小数据的join语句来说，效果很好；
+	4. MySQL目前版本不支持hash join，但可以配合应用端模拟，理论上效果要好于临时表的方案。
+
+一些的指导原则：
+	1. 如果对group by语句的结果没有排序要求，要在语句后面加order by null;
+	2. 尽量让group by过程用上表的索引，确认方法是explain结果里没有Using temporary和Using filesort;
+	3. 如果group by需要统计的数据量不大，尽量只使用内存临时表；也可以适当调大tmp_table_size参数，来避免用到磁盘临时表；
+	4. 如果数据量实在太大，使用SQL_BIG_RESULT这个提升，来告诉优化器直接使用排序算法得到group by的结果。
+
+InnoDB和Memory引擎的数据组织方式不同：
+	- InnoDB引擎把数据放在主键索引上，其他索引上保存的是主键ID。这种方式，称为索引组织表(Index Organized Table)。
+	- Memory引擎采用的是把数据单独存放，索引上保存数据位置的数据组织形式，称为堆组织表(Heap Organized Table)。
+
+内部类持有外部类，如果一个外部类的实例对象的方法返回了一个内部类的实例对象，这个内部类对象被长期引用了，即使那个外部类实例对象不再被使用，但由于内部类持有外部类的实例对象，这个外部类对象将不被垃圾回收，这也会造成内存泄漏。
+改变哈希值，当一个对象被存储进HashSet集合中以后，就不能修改这个对象中的那些参与计算哈希值的字段了，否则，对象修改后的哈希值与最初存储进HashSet集合中时的哈希值就不同了，在这种情况下，即使在contains方法使用该对象的当前引用作为的参数去HashSet集合中检索对象，也将返回找不到对象的结果，这也会导致无法从HashSet集合中单独删除当前对象，造成内存泄露。
+
+GC Roots的对象包括：
+	1. 虚拟机栈(栈帧中的本地变量表)中引用的对象；
+	2. 方法区中类静态属性引用的对象；
+	3. 方法区中常量引用的对象；
+	4. 本地方法栈中JNI引用的对象；
+
+Saga模式的适用场景：
+	- 业务流程长、业务流程多；
+	- 参与者包含其他公司或遗留系统，无法提供TCC模式要求的三个接口；
+Saga模式的优势：
+	- 一阶段提交本地事务，无锁，高性能；
+	- 事件驱动架构，参与者可异步执行，高吞吐；
+	- 补偿服务易于实现；
+Saga模式的缺点：
+	- 不保证隔离性。
+
+目前Seata提供的Saga模式是基于状态机引擎来实现的，机制是：
+	1. 通过状态图定义服务调用的流程并生成json状态语言定义文件；
+	2. 状态图中一个节点可以是调用一个服务，节点可以配置它的补偿节点；
+	3. 状态图json由状态机引擎驱动执行，当出现异常时状态引擎反向执行已成功节点对应的补偿节点将事务回滚；(注意：异常发生时，是否进行补偿也可以由用户自定义决定)
+	4. 可以实现服务编排需求，支持单项选择、并发、子流程、参数转换、参数映射、服务执行状态判断、异常捕获等功能。
+-------------------------------------------
+Saga服务设计的实践经验：
+	1. 允许空补偿
+		- 空补偿：原服务未执行，补偿服务执行了；
+		- 出现原因：
+			- 原服务超时(丢包)
+			- Saga服务触发回滚
+			- 未收到原服务请求，先收到补偿请求
+		所以服务设计时需要允许空补偿，即没有找到要补偿的业务主键时返回补偿成功并将原业务主键记录下来；
+	2. 防悬挂控制
+		- 悬挂：补偿服务比原服务先执行
+		- 出现原因：
+			- 原服务超时(拥堵)
+			- Saga事务回滚，触发回滚
+			- 拥堵的原服务到达
+		所以要检查当前业务主键是否已经在空补偿记录下来的业务主键中存在，如果存在则要拒绝服务的执行。
+	3. 幂等控制
+		- 原服务与补偿服务都需要保证幂等性，由于网络可能超时，可以设置重试策略，重试发生时要通过幂等控制避开业务数据重复更新。
+缺乏隔离性的应对：
+	- 由于Saga事务不保证隔离性，在极端情况下可能由于脏写无法完成回滚操作，比如一个极端的例子，分布式事务内先给用户A充值，然后给用户B扣减余额，如果在给A充值成功，在事务提交以前，A用户把余额消费掉了，如果事务发生回滚，这时则没有办法进行补偿了。这就是缺乏隔离性造成的典型的问题，实践中一般的应对方法是：
+		- 业务流程设计遵循“宁可长款，不可短款”的原则，长款意思是客户少了钱机构多了钱，以机构信誉可以给客户退款，反之则是短款，少的钱可能追不回来。所以在业务流程设计上一定是先扣款。
+		- 有些业务场景可以允许让业务最终成功，在回滚布隆的情况下可以继续重试完成后面的流程，所以状态机引擎除了提供回滚能力还需要提供向前恢复上下文继续执行的能力，让业务最终执行成功，达到最终一致性的目的。
+-------------------------------------------
+Saga一般有两种实现，一种是基于状态机定义，比如apache camel saga, eventuate,一种是基于注解+拦截器实现，比如serviceComb saga，后者是不需要配置状态图的。由于Saga事务不保证隔离性，在极端情况下可能由于脏写无法完成回滚操作。比如举一个极端的例子, 分布式事务内先给用户A充值, 然后给用户B扣减余额, 如果在给A用户充值成功, 在事务提交以前, A用户把余额消费掉了, 如果事务发生回滚, 这时则没有办法进行补偿了，有些业务场景可以允许让业务最终成功, 在回滚不了的情况下可以继续重试完成后面的流程, 基于状态机引擎除了可以提供回滚能力外，还可以提供向前恢复上下文继续执行的能力，让业务最终指向成功，达到最终一致性的目的，所以在实际生产中基于状态机的实现应用更多。
+
+
+缓存的压测数据，指标：
+	1. 合适的压力源；必须能够可以压力到足够的数量/并发；
+	2. 合适的真实的压力源：从外网压测？内网压测？不同区域？不同运行商；
+	3. 足够真实的模拟用户行为；
+	4. 瞬时并发，平均并发，长时间稳定性高压；
+	5. TPS,响应时间，TP99响应时间，CPU,内存，swap区，磁盘IO，网络IO;
+	6. 网卡IO, 丢包情况，CPU的详细情况：是否多CPU使用。
+	7. 逐出策略生效情况；
+	8. 缓存穿透情况，缓存雪崩情况，缓存击穿情况
+	9. 超过压力后是否熔断，降级，限流等。
+	10. 高压力下，高可用方案验证：是否发生切换、热备是否生效、数据丢失情况、数据一致性情况。
+	11. 高压力下，网络连接情况。
+	12. 高压力下，是否发生系统故障的级联故障。
+	13. 高压力下，缓存分布是否均衡。
+	14. 高压力下，缓存的扩容方案是否生效。
+	15. GC情况，垃圾回收情况有没有造成系统卡顿，抖动。GC频率/FGC频率/FGC平均时长/FGC最大时长/堆使用率
+	16. 缓存的命中率；
+	17. 缓存的更新情况；
+
+从性能测试分析的角度来看，可以从如下几个维度来收集考察各项性能指标：
+	1. 系统性能指标
+	2. 资源性能指标
+	3. 中间件指标
+	4. 数据库指标
+	5. 稳定性指标
+	6. 可扩展性指标
+	7. 可靠性指标
+
+分布式缓存、本地缓存有没有做熔断降级
+
+Hystrix出现以下四种情况，都会调用fallback降级机制：
+	1. 断路器处于打开状态；
+	2. 资源池已满(线程池+信号量)
+	3. Hystrix调用各种接口/访问外部依赖，比如中间件kafka,Redis,MySQL等等，出现了任何异常；
+	4. 访问外部依赖的时候，访问超时，报了TimeoutException异常；
+
+--------------------------------
+Seata AT模式
+原理：
+	- 基于支持本地ACID事务的关系型数据库
+	- Java应用，通过JDBC访问数据库
+整体机制：
+	两阶段提交协议的演变：
+		- 一阶段：业务数据和回滚日志记录在同一个本地事务中提交，释放本地锁和连接资源
+		- 二阶段：
+			- 提交异步化，非常快速地完成；
+			- 回滚通过一阶段的回滚日志进行反向补偿；
+写隔离：
+	- 一阶段本地事务提交前，需要确保先拿到全局锁；
+	- 拿不到全局锁，不能提交本地事务；
+	- 拿全局锁的尝试被限制在一定范围内，超出范围将放弃，并回滚本地事务，释放本地锁。
+读隔离：
+	在数据库本地事务隔离级别为读已提交(Read Committed)或以上的基础上，Seata AT模式的默认全局隔离级别是读未提交(Read Uncommitted)。
+	如果应用在特定场景下，必须要求全局的读已提交，目前Seata的方式是通过select for update语句的代理。
+	select for update语句的执行会申请全局锁，如果全局锁被其他事务持有，则释放本地锁(回滚select for update语句的本地执行)并重试。这个过程中，查询是被block住的，直到全局锁拿到，即读取的相关数据是已提交的，才返回。
+	处于总体性能上的考虑，Seata目前的方案并没有堆所有的select语句都进行代理，仅针对for update的select语句。
+--------------------------------
+Saga模式是Seata提供的长事务解决方案，在Saga模式中，业务流程中每个参与者都提交本地事务，当出现某一个参与者失败则补偿前面已经成功的参与者，一阶段正向服务和二阶段补偿服务都由业务开发实现。
+
+怎样写一个程序，快速打满方法区：
+	1. 创建很多自定义ClassLoader，加载很多类；
+	2. Cglib动态代理很多类，比如各种匿名内部类；
+	3. Proxy.getProxyClass() JDK动态代理，创建很多匿名内部类
+
+Twemproxy
+
+热点Key出现造成集群访问倾斜：热点Key，指的是在一段时间内，该key的访问量远远高于其他的redis key，导致大部分的访问流量在经过proxy分片之后，都集中访问到某一个redis实例上。
+
+redis集群缓存数据不均衡怎么处理：
+	1. 一种情况是key的分布不均衡，可以采用一致性hash；采用虚节点填补不均衡；
+	2. 一种情况是热点Key；解决方案：
+		2.1 使用本地缓存；
+		2.2 利用分片算法的特性，对key进行打散处理；
+	3. big Key造成集群数据量倾斜；解决方案：对big key进行拆分。
+
+save 900 1
+save 300 10
+save 60 10000
+为什么需要配置这么多的规则：因为Redis每个时间的读写请求不均衡，为了平衡性能与数据安全，可以自由定制什么时候触发备份RDB。所以就是要根据自身Redis写入情况来进行合理配置。
+
+对于Redis的AOF文件的重写：
+#重写触发配置
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 64mb
+需要注意：
+	1. 在重写期间，由于主进程依然响应命令，为了保证最终备份的完整性；因此它依然会写入旧的AOF file中，如果重写失败，能够保证数据不丢失；
+	2. 为了把重写期间响应的写入信息也写入新的文件，因此也会为子进程保留一个buf，防止新写的file丢失数据。
+	3. 重写是直接把当前内存的数据生成对应命令，并不需要读取老的AOF文件进行分析、命令合并。
+	4. AOF文件直接采用的文本协议，主要是兼容性好、追加方便、可读性高、可人为修改修复。
+
+启动时会先检查AOF文件是否存在，如果不存在就尝试加载RDB。那么为什么会优先加载AOF呢？因为AOF保存的数据更完整，通过上面的分析可知AOF基本最多损失1秒的数据。
+
+Redis存储类型：String, List, Set, SortedSet, Hash, BitMap, HyperLogLog
+
+If a proxy class implements a non-public interface, then it will be defined in the same package as that interface. Otherwise, the package of a proxy class is also unspecified. Note that package sealing will not prevent a proxy class from being successfully defined in a particular package at runtime, and neither will classes already defined by the same class loader and the same package with particular signers.
+
+An invocation of the #hashCode, #equals, #toString methods declared in java.lang.Object on a proxy instance will be encoded and dispatched to the invocation handler's #invoke method in the same manner as interface method invocations are encoded and dispatched, as described above. The declaring class of the #Method object passed to #invoke will be java.lang.Object. Other public methods of a proxy instance inherited from java.lang.Object are not overridden by a proxy class, so invocation of those methods behave like they do for instances of java.lang.Object. 
+
+Therefore, when a duplicate method is invoked on a proxy instance, the #Method object for the method int the foremost interface that contains the method (either directly or inherited through a superinterface) in the proxy class's list of interfaces is passed to the invocation handler's #invoke method, regardless of the reference type through which the method invocation occurred. 
+
+/* Cache mapping pairs of (key, sub-key)-> value. Keys and values are weakly but sub-key are strongly referenced. Keys are passed directly to #get method which also takes a #parameter. Sub-keys are calculated from keys and parameters using the #subKeyFactory function passed to the constructor. Values are calculated from keys and parameters using the #valueFactory function passed to the constructor.
+	Keys can be null and are compared by identity while sub-keys returned by #subKeyFactory or values returned by #valueFactory can not be null. Sub-keys are compared using their #equals method. 
+	Entries are expunged from cache lazily on each invocation to #get, #containsValue or #size methods when the WeakReferences to keys are cleared. Cleared WeakReferences to individual values don't cause expunging, but such entries are logically treated as non-existent and trigger re-evaluation of #valueFactory on request for their key/subKey. 
+*/
+final class WeakCache<K, P, V> {
+	private final ReferenceQueue<K> refQueue = new ReferenceQueue<>();
+	// the key type is Object for supporting null key 
+	private final ConcurrentMap<Object, ConcurrentMap<Object, Supplier<V>> map = new ConcurrentHashMap<>();
+	private final ConcurrentMap<Supplier<V>, Boolean> reverseMap = new ConcurrentHashMap<>();
+	private final BiFunction<K, P, ?> subKeyFactory;
+	private final BiFunction<K, P, V> valueFactory;
+	
+	...
+}
+
+Returns the #java.lang.class object for a proxy class given a class loader and an array of interfaces. The proxy class will be defined by the specified class loader and will implement all of the supplied interfaces. If any of the given interfaces is non-public, the proxy class will be non-public. If a proxy class for the same permutation of interfaces has already been defined by the class loader, then the existing proxy class will be returned; otherwise, a proxy class for those interfaces will be generated dynamically and defined by the class loader.
+Note that the order of the specified proxy interfaces is significant: two requests for a proxy class with the same combination of interfaces but in a different order will result in two distinct proxy classes. 
+
+Note: @EnableAspectJAutoProxy applies to its local application context only, allowing for selective proxying of beans at different levels. Please redeclare @EnableAspectJAutoProxy in each individual context, e.g. the common root web application context and any separate #DispatcherServlet application contexts, if you need to apply its behavior at multiple levels. 
+
+public interface ImportBeanDefinitionRegistrar {
+	public void registerBeanDefinitions(AnnotationMetadata importingClassMetadata, 
+											BeanDefinitionRegistry registry);
+}
+
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Import(AspectJAutoProxyRegistrar.class)
+public @interface EnableAspectJAutoProxy {
+	boolean proxyTargetClass() default false;
+	boolean exposeProxy() default false;
+}
+
+class AspectJAutoProxyRegistrar implements ImportBeanDefinitionRegistrar {
+	@Override
+	public void registerBeanDefinitions(AnnotationMetadata importingClassMetadata, 
+											BeanDefinitionRegistry registry) {
+		AopConfigUtils.registerAspectJAnnotationAutoProxyCreatorIfNecessary(registry);
+		
+		AnnotationAttributes enableAspectJAutoProxy = AnnotationConfigUtils.attributesFor(
+											importingClassMetadata, EnableAspectJAutoProxy.class);
+		if (enableAspectJAutoProxy != null) {
+			if (enableAspectJAutoProxy.getBoolean("proxyTargetClass")) {
+				AopConfigUtils.forceAutoProxyCreatorToUseClassProxying(registry);
+			}
+			if (enableAspectJAutoProxy.getBoolean("exposeProxy") {
+				AopConfigUtils.forceAutoProxyCreatorToExposeProxy(registry);
+			}
+		}
+	}
+}
+
+public abstract class AopConfigUtils {
+	// The bean name of the internally managed auto-proxy creator.
+	public static final String AUTO_PROXY_CREATOR_BEAN_NAME 
+			= "org.springframework.aop.config.internalAutoProxyCreator";
+	
+	//Stores the auto proxy creator classes in escalation order.
+	private static final List<Class<?>> APC_PRIORITY_LIST = new ArrayList<>(3);
+	
+	static {
+		// Set up the escalation list...
+		APC_PRIORITY_LIST.add(InfrastructureAdvisorAutoProxyCreator.class);
+		APC_PRIORITY_LIST.add(AspectJAwareAdvisorAutoProxyCreator.class);
+		APC_PRIORITY_LIST.add(AnnotationAwareAspectJAutoProxyCreator.class);
+	}
+	...
+}
+
+IOC容器注入了一个internalAutoProxyCreator=AnnotationAwareAspectJAutoProxyCreator的bean，@EnableAspectJAutoProxy给容器注册了一个AnnotationAwareAspectJAutoProxyCreator。
+
+----------------------
+Aware
+BeanFactoryAware
+BeanClassLoaderAware
+Ordered
+ProxyConfig
+AopInfrastructureBean
+BeanPostProcessor
+InstantiationAwareBeanPostProcessor
+ProxyProcessorSupport
+SmartInstantiationAwareBeanPostProcessor
+AbstractAutoProxyCreator
+AbstractAdvisorAutoProxyCreator
+AspectJAwareAdvisorAutoProxyCreator 
+AnnotationAwareAspectJAutoProxyCreator 
+----------------------
+同步和异步是针对应用程序和内核的交互而言的，同步指的是用户进程触发IO操作并等待或轮询的去查IO操作是否就绪，而异步是指用户进程触发IO操作以后便开始做自己的事情，而当IO操作已经完成的时候会得到IO完成的通知。
+而阻塞和非阻塞是针对进程在访问数据的时候，根据IO操作的就绪状态来采取的不同方式，就是一种读取或者写入操作函数的实现方式，阻塞方式下读取或者写入函数将一直等待，而非阻塞方式下，读取或者写入会立即返回一个状态值。
+------------------------------------
+Spring Bean的生命周期：
+分为四个阶段和多个扩展点。扩展点又可以分为影响多个Bean和影响单个Bean。
+四个阶段：
+	- 实例化 Instantiation
+	- 属性赋值 Populate
+	- 初始化 Initialization 
+	- 销毁 Destruction
+多个扩展点：
+	- 影响多个Bean
+		- BeanPostProcessor 
+		- InstantiationAwareBeanPostProcessor 
+	- 影响单个Bean
+		- Aware 
+			- Aware组1
+				- BeanNameAware
+				- BeanClassLoaderAware
+				- BeanFactoryAware 
+			- Aware组2
+				- EnvironmentAware
+				- EmbeddedValueResolverAware 
+				- ApplicationContext(ResourceLoaderAware/ApplicationEventPublisherAware/MessageSorceAware)
+		- 生命周期 
+			- InitializingBean
+			- DisposableBean
+------------------------------------
+public abstract class AbstractAutowireCapableBeanFactory extends AbstractBeanFactory 
+		implements AutowireCapableBeanFactory {
+	...
+	protected Object doCreateBean(final String beanName, final RootBeanDefinition mbd, final @Nullable Object[] args) 
+		throws BeanCreationException {
+		// Instantiate the bean. 
+		BeanWrapper instanceWrapper = null;
+		if (mbd.isSingleton()) {
+			instanceWrapper = this.factoryBeanInstanceCache.remove(beanName);
+		}
+		if (instanceWrapper == null) {
+			instanceWrapper = createBeanInstance(beanName, mbd, args);
+		}
+		final Object bean = instanceWrapper.getWrappedInstance();
+		Class<?> beanType = instanceWrapper.getWrappedClass();
+		if (beanType != NullBean.class) {
+			mbd.resolvedTargetType = beanType;
+		}
+		
+		//Allow post-processors to modify the merged bean definition.
+		synchronized (mbd.postProcessingLock) {
+			if (!mbd.postProcessed) {
+				try {
+					applyMergedBeanDefinitionPostProcessors(mbd, beanType, beanName);
+				} catch(Throwable ex) {
+					throw new BeanCreationException(mbd.getResourceDescription(), beanName,
+							"Post-processing of merged bean definition failed", ex);
+				}
+				mbd.postProcessed = true;
+			}
+		}
+		
+		// Eagerly cache singletons to be able to resolve circular reference 
+		// even when triggered by lifecycle interfaces like BeanFactoryAware.
+		boolean earlySingletonExposure = (mbd.isSingleton() && this.allowCircularReferences && 
+									isSingletonCurrentlyInCreation(beanName));
+		if (earlySingletonExposure) {
+			if (logger.isTraceEnabled()) {
+				logger.trace("Eagerly caching bean '" + beanName +
+						"' to allow for resolving potential circular references");
+			}
+			addSingletonFactory(beanName, () -> getEarlyBeanReference(beanName, mbd, bean));
+		}
+		
+		// Initialize the bean instance.
+		Object exposedObject = bean;
+		try {
+			populateBean(beanName, mbd, instanceWrapper);
+			exposedObject = initializeBean(beanName, exposedObject, mbd);
+		} catch(Throwable ex) {
+			if (ex instanceof BeanCreationException && beanName.equals(((BeanCreationException) ex).getBeanName())) {
+				throw (BeanCreationException) ex;
+			}
+			else {
+				throw new BeanCreationException(
+						mbd.getResourceDescription(), beanName, "Initialization of bean failed", ex);
+			}
+		}
+		
+		if (earlySingletonExposure) {
+			Object earlySingletonReference = getSingleton(beanName, false);
+			if (earlySingletonReference != null) {
+				if (exposedObject == bean) {
+					exposedObject = earlySingletonReference;
+				} else if (!this.allowRawInjectionDespiteWrapping && hasDependentBean(beanName) {
+					String[] dependentBeans = getDependentBeans(beanName);
+					Set<String> actualDependentBeans = new LinkedHashSet<>(dependentBeans.length);
+					for (String dependentBean : dependentBeans) {
+						if (!removeSingletonIfCreatedForTypeCheckOnly(dependentBean)) {
+							actualDependentBeans.add(dependentBean);
+						}
+					}
+					if (!actualDependentBeans.isEmpty()) {
+						throw new BeanCurrentlyInCreationException(beanName,
+						"Bean with name '" + beanName + "' has been injected into other beans [" +
+						StringUtils.collectionToCommaDelimitedString(actualDependentBeans) +
+						"] in its raw version as part of a circular reference, but has eventually been " +
+						"wrapped. This means that said other beans do not use the final version of the " +
+						"bean. This is often the result of over-eager type matching - consider using " +
+						"'getBeanNamesOfType' with the 'allowEagerInit' flag turned off, for example.");
+					}
+				}
+			}
+		}
+		
+		// Register bean as disposable.
+		try {
+			registerDisposableBeanIfNecessary(beanName, bean, mbd);
+		} catch (BeanDefinitionValidationException ex) {
+			throw new BeanCreationException(
+				mbd.getResourceDescription(), beanName, "Invalid destruction signature", ex);
+		}
+		return exposedObject;
+	}
+}
+
+
+public interface InstantiationAwareBeanPostProcessor extends BeanPostProcessor {
+	@Nullable 
+	default Object postProcessBeforeInstantiation(Class<?> beanClass, String beanName) 
+		throws BeansException {
+		return null;
+	}
+	
+	default boolean postProcessAfterInstantiation(Object bean, String beanName)
+		throws BeansException {
+		return true;
+	}
+	
+	@Nullable
+	default PropertyValues postProcessProperties(PropertyValues pvs, Object bean, String beanName)
+		throws BeansException {
+		return null;
+	}
+}
+
+EmbeddedValueResolverAware实现该接口能够获取Spring EL解析器，用户的自定义注解需要支持SPEL表达式的时候可以使用，比较方便。
+
+public interface EmbeddedValueResolverAware extends Aware {
+	// Set the StringValueResolver to use for resolving embedded definition values.
+	void setEmbeddedValueResolver(StringValueResolver resolver);
+}
+---------------------------
+AOP, 拦截器, 过滤器：
+
+public interface Filter {
+	public void init(FilterConfig filterConfig) throws ServletException;
+	public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+				throws IOExecption, ServletException;
+	public void destroy();
+}
+
+/* Workflow interface that allows for customized handler execution chains.
+Applications can register any number of existing or custom interceptors for certain groups 
+of handlers, to add common preprocessing behavior without needing to modify eache handler implementation.
+
+A HandlerInterceptor gets called before the appropriate HandlerAdapter triggers the execution of 
+the handler itself. This mechanism can be used for a large field of preprocessing aspects, e.g. 
+for authorization checks, or common handler behavior like locale or theme changes. Its main purpose
+ is to allow for factoring out repetitive handler code.
+ 
+In an asynchronous processing scenario, the handler may be executed in a separate thread while the main 
+thread exits without rendering or invoking the #postHandle and #afterCompletion callbacks. When concurrent 
+handler execution completes, the request is dispatched back in order to proceed with rendering the model 
+and all methods of this contract are invoked again. For further options and details 
+see #AsyncHandlerInterceptor.
+
+Typically an interceptor chain is defined per HandlerMapping bean, sharing its granularity. To be able to 
+apply a certain interceptor chain to a group of handlers, one needs to map the desired handlers via one 
+HandlerMapping bean. The interceptors themselves are defined as beans in the application context, 
+referenced by the mapping bean definition via its "interceptors" property(in XML).
+
+HandlerInterceptor is basically similar to a Servlet Filter, but in contrast to the latter it just allows 
+custom pre-processing with the option of prohibiting the execution of the handler itself, and custom 
+post-processing. Filters are more powerful, for example they allow for exchanging the request and response 
+objects that are handed down the chain. Note that a filter gets configured in web.xml, a HandlerInterceptor 
+in the application context.
+
+As a basic guideline, fine-grained handler-related preprocessing tasks are 
+candidates for HandlerInterceptor implementations, especially for factored-out common handler code and 
+authorization checks. On the other hand, a Filter is well-suited for request content and view content 
+handling, like multipart forms and GZIP commpression. This typically shows when one needs to map the 
+filter to certain content types(e.g. images), or to all requests. 
+*/
+public interface HandlerInterceptor {
+	default boolean preHandler(HttpServletRequest request, HttpServletResponse response, Object Handler)
+		throws Exception {
+		return true;
+	}
+	
+	default void postHandler(HttpServeltRequest request, HttpServletResponse response, Object handler,
+			@Nullable ModelAndView modelAndView) throws Exception {}
+	
+	default void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler,
+			@Nullable Exception ex) throws Exception {}
+}
+Filter过滤器：拦截web访问url地址。 这个比拦截器范围广，过滤器是大集合，拦截器是大集合中的小集合。而且任何url是先经过过滤器后才进入拦截器的。
+Interceptor拦截器：拦截url以action结尾或者没有后缀的,没有后缀拦截器会认为是.action结尾。。 如：struts2拦截器、spring拦截器
+AOP拦截器：只能拦截Spring管理Bean的访问（业务层Service），就是说执行某个bean容器中方法时进行拦截，而不是对url。
+---------------------------
+Spring cloud组件:
+Spring Cloud Stream
+Spring Cloud Azure
+Spring Cloud Alibaba
+Spring Cloud for Amazon Web Services
+Spring Cloud Bus
+Spring Cloud CLI
+Spring Cloud for Cloud Foundry
+Spring Cloud - Cloud Foundry Service Broker
+Spring Cloud Cluster
+Spring Cloud Commons
+Spring Cloud Config
+Spring Cloud Connectors
+Spring Cloud Consul
+Spring Cloud Contract
+Spring Cloud Function
+Spring Cloud Gateway
+Spring Cloud GCP
+Spring Cloud Netflix
+Spring Cloud Open Service Broker 
+Spring Cloud Pipelines
+Spring Cloud Schema Registry
+Spring Cloud Security
+Spring Cloud Sleuth
+Spring Cloud Stream Applications
+Spring Cloud Stream App Starters
+Spring Cloud Task
+Spring Cloud Task App Starters 
+Spring Cloud Vault
+Spring Cloud Zookeeper
+Spring Cloud App Broker
+Spring Cloud Circuit Breaker
+Spring Cloud Kubernetes
+Spring Cloud OpenFeign
+---------------------------
+微服务改造考虑点：
+	1. 业务模块拆分和重建；
+	2. 重构不等于重写
+	3. 通用服务/模块的下沉；
+	4. 相关支撑系统/中间件：分布式调度，分布式缓存，消息中间件，搜索引擎，日志系统，配置；
+	5. 循序渐进：适配器模式，门面模式，先共用DB后期单独DB；
+	6. 测试驱动开发；
+	7. 面向失败设计：服务降级/流量控制/接口熔断/分布式事务；
+	8. 灰度发布；
+	9. 日志聚合和全链路监控
+---------------------------
+MySQL优化的几个维度：硬件，系统配置，数据库表结构，SQL及索引。
+
+不使用swap分区：/proc/sys/vm/swappiness内容改成0(永久)，/etc/sysctl.conf上添加vm.swappiness=0(永久)
+
+修改MySQL的配置参数innodb_flush_method，开启O_DIRECT模式：这种情况下，InnoDB的buffer pool会直接绕过文件系统cache来访问磁盘，但是redo log依旧会使用文件系统cache。
+值得注意的是，Redo log是覆写模式，即使使用了文件系统的cache，也不会占用太多。
+
+thread_concurrency: #并发线程数量个数
+sort_buffer_size: #排序缓存
+read_buffer_size: #顺序读取缓存
+read_rnd_buffer_size: #随机读取缓存
+key_buffer_size: #索引缓存
+thread_cache_size: #
+innodb_flush_log_at_trx_commit: #1最安全，0性能最高，2折中
+innodb_max_dirty_pages_pct #达到百分之75的时候刷新内存脏页到磁盘
+
+1. explain
+2. SQL语句中in包含的值不应过多
+3. select语句务必指定字段名称；
+4. 当只需要一条数据时，使用limit 1
+5. 如果排序字段没有用到索引，就尽量少排序或应用层来排序；
+6. 如果限制条件中其他字段没有索引，尽量少用or；
+7. 尽量用union all替换union;
+8. 不使用order by rand();
+9. 区分in, exists, not in和not exists；
+10. 使用合理的分页方式以提高分页的效率；
+11. 分段查询；
+12. 避免在where子句中对字段进行null值判断；
+13. 不建议使用%前缀模糊查询；
+14. 避免在where子句对字段进行表达式操作；
+15. 避免隐式类型转换；
+16. 对于联合索引来说，遵守最左前缀法则；
+17. 必要时，可以使用force index来强制查询走某个索引；
+18. 注意范围查询语句；
+19. join优化；
+---------------------------
+区分in和exists主要造成了驱动顺序的改变(这是性能变化的关键)，如果是exists，那么以外层表为驱动表，先被访问。如果是in,那么先执行子查询。所以in适合于外表大而内表小的情况；exists适合于外表小而内表大的情况。
+关于not in和not exists，推荐使用not exists，不仅仅效率问题，not in可能存在逻辑问题。
+straight_join来强制连接顺序，在straight_join左边的表名是驱动表，右边则是被驱动表。在使用straight_join有一个前提，也就是inner join，其他连接不推荐使用straight_join，否则可能造成查询结果不准确。
+
+InnoDB的意向锁的作用：
+	1. 提高了是否可以加锁的判断效率；
+	2. 实现了行锁和表锁的多粒度锁机制，使得行锁和表锁可以共存。且满足事务隔离性的要求。
+
+不可重复读重点在同一个事务多次读取同一条记录的时候，出现读到的数据不一致的情况。InnoDB通过MVCC的方式避免了不可重复读，即一致性的非锁定读。
+幻读重点在同一个事务多次执行相同的SQL，可能返回之前不存在的行，或者之前存在的行之后不存在了。InnoDB使用Next-key Lock算法避免了幻读，即一致性的锁定读。
+默认情况下，InnoDB使用一致性的非锁定读，即读取不会被阻塞。然后有些情况下用户希望通过锁定读取的方式保证数据的一致性，可以通过lock in share mode或for update主动对读取进行加锁操作，这种方式为一致性的锁定读。
+
+锁相关的运维操作：
+	1. show engine innodb status;
+	2. select r.trx_id waiting_trx_id, r.trx_mysql_thread_id waiting thread, r.trx_query waiting_query, b.trx_id blocking_trx_id, b.trx_mysql_thread_id blocking_thread, b.trx_query blocking_query from information_schema.innodb_lock_waits w inner join information_schema.innodb_trx b on b.trx_id = w.blocking_trx_id inner join information_schema.innodb_trx r on r.trx_id = w.requesting_trx_id;
+
+间隙锁(Gap Lock)是InnoDB在可重复读提交下为了解决幻读问题时引入的锁机制。
+
+public calss DefaultSingletonBeanRegistry extends SimpleAliaisRegistry implements SingletonBeanRegistry {
+	// Cache of singleton objects : bean name to bean instance.
+	private final Map<String, Object> singletonObjects = new ConcurrentHashMap<>(256);
+	// Cache of singleton factories: bean name to ObjectFactory.
+	private final Map<String, ObjectFactory<?>> singletonFactories = new HashMap<>(16);
+	// Cache of early singleton objects: bean name to bean instance.
+	private final Map<String, Object> earlySingletonObjects = new HashMap<>(16);
+	// Set of registered singletons, containing the bean names in registration order.
+	private final Set<String> registeredSingletons = new LinkedHashSet<>(256);
+	// Names of beans that are currently in creation.
+	private final Set<String> singletonsCurrentlyInCreation = 
+						Collections.newSetFromMap(new ConcurrentHashMap<>(16));
+	// Names of beans currently excluded from in creation checks.
+	private final Set<String> inCreationCheckExclusions = 
+						Collections.newSetFromMap(new ConcurrentHashMap<>(16));
+	// List of suppressed Exceptions, available for associating related causes.
+	@Nullable
+	private Set<Exception> suppressedExceptions;
+	// Flag that indicates wheher we're currently within destroySingletons.
+	private boolean singletonsCurrentlyInDestruction = false;
+	// Disposable bean instances: bean name to disposable instance.
+	private final Map<String, Object> disposableBeans = new LinkedHashMap<>();
+	// Map between containing bean names: bean name to Set of bean names that the bean contains.
+	private final Map<String, Set<String>> containedBeanMap = new ConcurrentHashMap<>(16);
+	// Map between dependent bean names: bean name to Set of dependent bean names.
+	private final Map<String, Set<String>> dependentBeanMap = new ConcurrentHashMap<>(64);
+	// Map between depending bean names: bean name to Set of bean names for the bean's dependencies.
+	private final Map<String, Set<String>> dependenciesForBeanMap = new ConcurrentHashMap<>(64);
+	...
+}
+
+Spring不能解决构造器的循环依赖：Spring解决循环依赖主要依赖三级缓存，但是在调用构造器之前还未将其放入三级缓存之中，因此后续的依赖调用构造方法的时候，并不能从三级缓存中获取到依赖的Bean，因此不能解决；
+Spring为什么不能解决Prototyp的循环依赖：多实例Bean是每次调用一次getBean都会执行一次构造器并且为属性赋值，根本没有三级缓存，因此无法解决三级缓存。
+
+public abstract class AbstractBeanFactory extends FactoryBeanRegistrySupport 
+		implements ConfigurableBeanFactory {
+	...
+	// Names of beans that are currently in creation.
+	private final ThreadLocal<Object> prototypesCurrentlyInCreation = 
+			new NamedThreadLocal<>("Prototype beans currently in creation");
+	...
+}
+
+java堆外内存回收：
+涉及java.lang.ref.Reference<T>, java.nio.DirectByteBuffer, java.nio.DirectByteBuffer$Deallocator,sun.misc.Cleaner
+
+java NIO包是通过sun.misc.Cleaner和PhantomReference来实现堆外内存的自动释放。
+Cleaner.create()需要两个参数：需要监控的内存对象和程序释放资源的回调。当JVM进行GC时，如果发现监控的对象，不存在强引用(Cleaner对象对他的引用是幽灵引用)，就会调用第二个参数的run()方法逻辑，执行完run()方法时(此时已经释放了堆外内存)，JVM会自动释放堆内存中我们监控的对象。
+
+JDK中使用DirectByteBuffer对象来表示堆外内存，可以通过-XX:MaxDirectMemorySize来指定最大的堆外内存，每个DirectByteBuffer对象在初始化时，都会创建一个对应的Cleaner对象，在Cleaner对象回收的时候回收这部分堆外内存。
+Cleaner对象是PhantomReference的子类，当GC发现除了PhantomReference外已不可达(持有它的DirectByteBuffer失效了)，就会把它放进Reference类的pending list静态变量里。有另外一个ReferenceHandler线程，名字叫做"Reference Handler"，关注着这个pending list，如果看到有对象类型是Cleaner，就会执行它的clean()，最终在里面执行Unsafe的free接口来释放DirectByteBuffer对应的堆外内存。
+public class sun.misc.Cleaner extends java.lang.ref.PhantomReference {
+	...
+}
+
+// Access to bits, native and otherwise.
+class Bits {
+	private Bits() {}   // package-private
+	...
+	//   -- Direct memory management --
+	// A user-settable upper limit on the maximum amount of allocatable
+    // direct buffer memory.  This value may be changed during VM
+    // initialization if it is launched with "-XX:MaxDirectMemorySize=<size>".
+    private static volatile long maxMemory = VM.maxDirectMemory();
+    private static final AtomicLong reservedMemory = new AtomicLong();
+    private static final AtomicLong totalCapacity = new AtomicLong();
+    private static final AtomicLong count = new AtomicLong();
+    private static volatile boolean memoryLimitSet = false;
+    // max. number of sleeps during try-reserving with exponentially
+    // increasing delay before throwing OutOfMemoryError:
+    // 1, 2, 4, 8, 16, 32, 64, 128, 256 (total 511 ms ~ 0.5 s)
+    // which means that OOME will be thrown after 0.5 s of trying
+    private static final int MAX_SLEEPS = 9;
+
+    // These methods should be called whenever direct memory is allocated or
+    // freed.  They allow the user to control the amount of direct memory
+    // which a process may access.  All sizes are specified in bytes.
+    static void reserveMemory(long size, int cap) {
+
+        if (!memoryLimitSet && VM.isBooted()) {
+            maxMemory = VM.maxDirectMemory();
+            memoryLimitSet = true;
+        }
+
+        // optimist!
+        if (tryReserveMemory(size, cap)) {
+            return;
+        }
+
+        final JavaLangRefAccess jlra = SharedSecrets.getJavaLangRefAccess();
+
+        // retry while helping enqueue pending Reference objects
+        // which includes executing pending Cleaner(s) which includes
+        // Cleaner(s) that free direct buffer memory
+        while (jlra.tryHandlePendingReference()) {
+            if (tryReserveMemory(size, cap)) {
+                return;
+            }
+        }
+
+        // trigger VM's Reference processing
+        System.gc();
+
+        // a retry loop with exponential back-off delays
+        // (this gives VM some time to do it's job)
+        boolean interrupted = false;
+        try {
+            long sleepTime = 1;
+            int sleeps = 0;
+            while (true) {
+                if (tryReserveMemory(size, cap)) {
+                    return;
+                }
+                if (sleeps >= MAX_SLEEPS) {
+                    break;
+                }
+                if (!jlra.tryHandlePendingReference()) {
+                    try {
+                        Thread.sleep(sleepTime);
+                        sleepTime <<= 1;
+                        sleeps++;
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    }
+                }
+            }
+
+            // no luck
+            throw new OutOfMemoryError("Direct buffer memory");
+
+        } finally {
+            if (interrupted) {
+                // don't swallow interrupts
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+	...
+}
+
+负载均衡
+集群容错
+服务路由
+
+Dubbo中，先通过路由，从多个Provider中按照路由规则，选出一个子集。再根据负载均衡从子集中选出一个Provider进行本次调用。如果调用失败了，根据集群容错策略，进行重试或定时重发或快速失败等。可以看出Dubbo中的路由，负载均衡和集群容错发生在一次RPC调用的不同阶段。最先是路由，然后是负载均衡，最后是集群容错。
+Dubbo内置了4种负载均衡策略：
+	1. RandomLoadBalance:随机负载均衡。随机的选择一个。是Dubbo的默认负载均衡策略。
+	2. RoundRobinLoadBalance:轮询负载均衡。轮询选择一个；
+	3. LeastActiveLoadBalance:最小活跃调用数，相同活跃数的随机。活跃数指调用前后计数差。使慢的Provider收到更少请求，因为越慢的Provider的调用前后计数差会越大。
+	4. ConsistentHashLoadBalance: 一致性哈希负载均衡。相同参数的请求总是落在同一台机器上。
+
+Dubbo中的随机负载均衡策略是基于权重的负载均衡算法。
+轮询负载均衡，就是依次的调用所有的Provider。和随机负载均衡策略一样，轮询负载均衡策略也有权重的概念。轮询负载均衡算法可以让RPC调用严格按照我们设置的比例来分配。不管是少量的调用还是大量的调用。但是轮询负载均衡算法也有不足的地方，存在慢的Provider累积请求的问题，比如：第二台机器很慢，但没挂，当请求调到第二台时就卡在那里，久而久之，所有请求都卡在第二台上，导致整个系统变慢。
+
+最少活跃调用数：相同活跃的随机，活跃数指调用前后计数差，使慢的机器收到更少。
+Dubbo: 如果不指定负载均衡，默认使用随机负载均衡。我们也可以根据自己的需要，显式指定一个负载均衡。 可以在多个地方类来配置负载均衡，比如 Provider 端，Consumer端，服务级别，方法级别等。
+
+Spring Boot引用的配置文件参数除了@Value还有哪些方式可以获取：Property values can be injected directly into your beans using the @Value annotation, accessed via Spring's Environment abstraction or bound to structured objects via @ConfigurationProperties.
+
+Spring Boot uses a very particular #ProperySource order that is designed to allow sensible overriding of values.
+
+The RandomValuePropertySource is useful for injecting random values(e.g. into secrets or test cases). It can produce integers, longs, uuids or strings, e.g.
+
+Spring Framework provides two convenient classes that can be used to load YAML documents. The YamlPropertiesFactoryBean will load YAML as Properties and the YamlMapFactoryBean will load YAML as a Map. 
+Exposing YAML as properties in the Spring Environment.
+The YamlPropertySourceLoader class can be used to expose YAML as a PropertySource in the Spring #Environment. This allows you to use the familiar @Value annotation with placeholders syntax to access YAML properties. 
+-------------------------------
+@ConfigurationProperties PK @Value 
+@Value is a core container feature and it does not provide the same features as type-safe Configuration Properties. 下表总结了两者的Features:
+Feature				@ConfigurationProperties		@Value 
+Relaxed binding		Yes								No 
+Meta-data support 	Yes 							No 
+SpEL evaluation 	No 								Yes 
+
+If you define a set of configuration keys for your own components, we recommend you to group them in a POJO annotated with @ConfigurationPropertis. Please also be aware that since @Value does not support relaxed binding, it isn't a candidate if you need to provide the value using environment variables.
+Finally, while you can write a SpEL expression in @Value, such expressions are not processed from Applicatin property files.
+-------------------------------
+/*BeanFactoryPostProcessor used for bootstrapping processing of @Configuration classes.
+	Registered by default when using <context:annotation-config/> or <context:component-scan/>. Otherwise, may be declared manually as with any other BeanFactoryPostProcessor. 
+	This post processor is Ordered#HIGHEST_PRECEDENCE as it is important that any #Bean methods declared in Configuration classes have their respective bean definitions registered before any other BeanFactoryPostProcessor executes.
+*/
+public class ConfigurationClassPostProcessor implements BeanDefinitionRegistryPostProcessor,
+		PriorityOrdered, ResourceLoaderAware, BeanClassLoaderAware, EnvironmentAware {
+	...
+	/* Prepare the Configuration classes for servicing bean requests at runtime by 
+		replacing them with CGLIB-enhanced subclasses.
+	*/
+	@Override
+	public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
+		int factoryId = System.identityHashCode(beanFactory);
+		if (this.factoriesPostProcessed.contains(factoryId)) {
+			throw new IllegalStateException(
+			"postProcessBeanFactory already called on this post-processor against " + beanFactory);
+		}
+		this.factriesPostProcessed.add(factoryId);
+		if (!this.registerPostProcessed.contains(factoryId)) {
+			// BeanDefinitionRegistryPostProcessor hook apparently not supported...
+			// Simply call processConfigurationClasses lazily at this point then.
+			processConfigBeanDefinitions((BeanDifinitionRegistry) beanFactory);
+		}
+		
+		enhanceConfigurationClasses(beanFactory);
+		beanFactory.addBeanPostProcessor(new ImportAwareBeanPostProcessor(beanFactory));
+	}
+	...
+}
+
+/* Parses a #Configuration class definition, populating a collection of #ConfigurationClass objects (parsing a single Configuration class may result in any number of ConfigurationClass objects because one Configuration class may import another using #Import annotation).
+
+This class helps separate the concern of parsing the structure of a Configuration class from the concern of registering BeanDefinition objects based on the content of that model (with the exception of @ComponentScan annotations which need to be registered immediately).
+
+This ASM-based implementation avoids reflection and eager class loading in order to interoperate effectively with lazy class loading in a Spring ApplicationContext.
+*/
+class ConfigurationClassParser {
+	...
+	/* Apply processing and build a complete #ConfigurationClass by reading the annotations, members and methods from the source class. This method can be called multiple times as relevant sources are discovered
+	*/
+	protected final SourceClass doProcessConfigurationClass(ConfigurationClass configClass, 
+			SourceClass sourceClass) throws IOExecption {
+		// Recursively process any member (nested) classes first
+		processMemberClasses(configClass, sourceClass);
+		
+		// Process any @PropertySource annotations 
+		for (AnnotationAttributes propertySource : AnnotationConfigUtils.attributesForRepeatable(
+				sourceClass.getMetadata(), PropertySources.class,
+				org.springframework.context.annotation.PropertySource.class)) {
+			if (this.environment instanceof ConfigurableEnvironment) {
+				processPropertySource(propertySource);
+			} else {
+				logger.warn("Ignoring @ProperySource annotation on [" + sourceClas.getMetadata()
+				.getClassName() + "]. Reason: Environment must implement ConfigurableEnvironment");
+			}
+		}
+		...
+	}
+	...
+}
+
+ConfigurationClassBeanDefinitionReader
+
+Dubbo目前所支持的协议包括Dubbo, Rest, Thrift, gRPC, JsonRPC, Hessian等，基本涵盖了主流的RPC通信协议。
+Dubbo官方目前支持的注册中心实现有：consul, default, etcd3, eureka, multicast, multiple, nacos, redis,sofa, zookeeper。
+当前Dubbo的服务注册/发现模型是以接口为粒度的，而从2.7.5版本开始，Dubbo新引入了应用粒度的服务注册/发现模型。这一方面有助于优化Dubbo当前服务发现机制、提升服务容量，另一方面对于连通以SpringCloud为代表的微服务体系也非常重要。
+
+HTTP2的特性：保留了Http/1的所有语义，在保持兼容的同时，在通信模型和传输效率上做了很大的改进。
+	1. 支持单条链路上的Multiplexing,相比于Request-Response独占链路，基于Frame实现更高效利用链路；
+	2. Request-Stream语义，原生支持Server Push和Stream数据传输；
+	3. Flow Control,单条Stream粒度和整个链路粒度的流量控制；
+	4. 头部压缩HPACK;
+	5. Binary Frame;
+	6. 原生TLS支持；
+
+-----------------------------------
+相比于Dubbo构建于TCP传输层之上，Google选择将gRPC直接定义在HTTP/2协议之上。gRPC设计目的的特性如下：
+	1. Coverage & Simplicity, 协议设计和框架实现要足够通用和简单，能运行在任何设备之上，甚至一些资源如IoT, Mobile等设备；
+	2. Interoperablity & Reach，要构建在更通用的协议之上，协议本身要能被网络上几乎所有的基础设施所支持；
+	3. General Purpose & Performant, 要在场景和性能间做好平衡，首先协议本身适用于各种场景，同时也要尽量有高的性能；
+	4. Payload Agnostic, 协议上传输的负载要保持语言和平台中立；
+	5. Streaming,要支持Request-Response, Request-Stream, Bi-Stream等通信模型；
+	6.Flow Control,协议自身具备流量感知和限制的能力；
+	7. Metadata Exchange，在RPC服务定义之外，提高额外附加数据传输的能力。
+总的来说，在这种设计理念下，gRPC最终被设计为一个跨语言、跨平台、通用、高性能、基于HTTP/2的RPC协议和框架。
+-----------------------------------
+dto.domain.model: 用来做数据传输的轻量级领域对象
+dto.domain.event: 用来做数据传输的领域事件
+Bounded Context之间的协作：如何实现不同域之间的协作，同时又要保证各自领域的概念的完整性是有一套方法论的。总体来说，大概有两种方式：共享内核(Shared Kernel)和防腐层(ACL, Anti-Corruption Layer)。
+-----------------------------------
+微服务拆分原则：
+	1. 康威定律；
+	2. 领域模型；
+	3. 伸缩需求；
+	4. 修改相关性；
+	5. 部署频率；
+	6. 避免分布式事务；
+
+康威定律简单来说就是系统设计(产品结构)等同组织形式，每个设计系统的组织，其产生的设计等同于组织之间的沟通结构。如果单个服务由不同组织管理，需求无法达成统一，面临着令出多头、需求干扰的风险。
+伸缩需求：同一个进程之内的不同业务功能，有时在业务量方面会出现较大的差异，具体要求的进程数量会有较大差别，这样的模块锁定在同一个进程之内，势必会造成资源的浪费。
+部署频率：同一个交付物内不同的组件有着不同的上线频率，会大大的提高上线的发生频率，会造成较大的人员浪费。
+修改相关性：如果同一个交付物内的不同组件，经常会被同步修改，这可能说明，如果发生拆分，这两个模块应该是在一起的。
+领域建模：针对业务领域，引入限界上下文(Bounded Context)和上下文映射(Context Map)对业务领域进行合理的分解，识别出核心领域(Core Domain)与子领域(Sub Domain)，并确定领域的边界以及它们之间的关系。根据核心领域和子域划分微服务边界。
+
+对于一个单体应用，拆分过程应该是循序渐进、逐步拆分、有简到繁、由粗到细，是一个渐进的过程。例如先将有明显边界的业务拆分为独立服务，无法明细边界的先混在一起，等业务需求逐步清晰后再拆。拆分时先拆分为几个相对较粗粒度的服务，根据业务需求情况，逐步将粗粒度的服务中相对稳定，可以沉淀的业务拆分为独立服务。在这个过程中，原有的单体应用也可以承担部分兼容能力，在改造完成前，不对外系统造成过大的影响。
+微服务的拆分是跟业务需求强相关，如果业务需求变更不多、相对稳定，处理的请求并发量不高，单体应用的稳定性和可维护性更好，更加适用。
+-----------------------------------
+Seata: Simple Extensible Autonomous Transaction Architecture
+在实际开发中会进行取舍，对于更多的金融核心以上的业务系统可以采用补偿事务，补偿事务处理在30年前就提出了Saga理论，随着微服务的发展，逐步受到关注。目前业界比较公认Saga是作为长事务的解决方案。
+社区和业界的Saga方案：
+	1. Apache Camel Saga;
+	2. Eventuate Tram Saga;
+	3. Apache ServiceComb Saga;
+	4. Seata Saga;
+
+
+补偿事务的方案，基本上是两种：
+	1. 一种是当一个服务在失败时需要"重试"或"补偿"时，在执行服务前在数据库插入一条记录，记录状态，当异常时通过定时任务去查询数据库记录并进行"重试"或"补偿"，当业务流程执行成功则删除记录；
+	2. 另一种设计一个状态机引擎和简单的DSL，编排业务流程和记录业务状态，状态机引擎可以定义"补偿服务"，当异常时由状态机引擎反向调用"补偿服务"进行回滚，同时还会有一个"差错守护"平台，监控那些执行失败或补偿失败的业务流水，并不断进行"补偿"或"重试"。
+	
+社区和业界的解决方案一般有两种，一种基于状态机或流程引擎通过DSL方式编排流程和补偿定义，一种是基于Java注解+拦截器实现补偿，优缺点如下：
+1. 状态机+DSL
+	优点：
+		1. 可以用可视化工具来定义业务流程，标准化，可读性高，可实现服务编排的功能；
+		2. 提高业务分析人员与程序开发人员的沟通效率；
+		3. 业务状态管理：流程本质就是一个状态机，可以很好的反应业务状态的流转；
+		4. 提高异常处理灵活性：可以实现宕机恢复后的"向前重试"或"向后补偿"；
+		5. 天然可以使用Actor模型或SEDA架构等异步处理引擎来执行，提高整体吞吐率；
+	缺点：
+		1. 业务流程实际是由JAVA与DSL配置组成，程序与配置分离，开发起来比较繁琐；
+		2. 如果是改造现有业务，对业务侵入性高；
+		3. 引擎实现成本高；
+2. 拦截器+java注解：
+	优点：
+		1. 程序与注解在一起，开发简单，学习成本低；
+		2. 方便接入现有业务；
+		3. 基于动态代理拦截器，框架实现成本低；
+	缺点： 
+		1. 框架无法提供Actor模型或SEDA架构等异步处理模式来提高系统吞吐量；
+		2. 框架无法提供业务状态管理；
+		3. 难以实现宕机恢复后的"向前重试"，因为无法恢复线程上下文；
+
+阿里内部有安全生产三板斧概念：可灰度、可观测、可回滚。必须要掌握发布系统的灰度、观测和回滚功能如何使用。
+
+灰度发布的几种策略：
+	1. 蓝绿发布：通过部署两套环境来解决新老版本的发布问题。如果新版本( New Version )发生问题要进行回滚的时候，直接通过切流将流量全部切到老版本( Old Version )上。
+		优点：升级切换和回退比发布回滚迅速；
+		缺点：成本较高，需要部署两套环境。如果新版本中基础服务出现问题，会瞬间影响全网用户；如果新版本有问题也会影响全网用户；
+	2. 金丝雀发布：
+		优点：灵活，策略自定义，可以按照流量或具体的内容进行灰度(比如不同账号、不同参数)，出现问题不会影响全网用户；
+		缺点：没有覆盖到所有的用户导致出现问题不好排查；
+	3. 滚动发布：金丝雀发布的一种变化。通过分批发布的方式进行多批发布(比如一共 9 个实例，分 3 批，每次 3 个实例发布)，适合大规模应用发布。
+		优点：出现问题不会影响全网用户，适合大规模应用发布；
+		缺点：发布和回滚周期较长。
+
+Advice, Interceptor, ConstructorInterceptor, MethodInterceptor, JoinPoint, Invocation, MethodInvocation, ConstructorInvocation;
+
+public interface AopProxyFactory {
+	AopProxy createAopProxy(AdvisedSupport config) throws AopConfigException;
+}
+Spring AOP核心接口和类：
+TargetClassAware
+Advised
+TargetSource
+ProxyConfig 
+AdvisedSupport 
+ProxyCreatorSupport
+ProxyFactory
+AopProxy 
+CglibAopProxy
+JDKDynamicAopProxy
+ObjenesisCglibAopProxy
+AopProxyFactory 
+DefaultAopProxyFactory
+AdvisorChainFactory
+DefaultAdvisorChainFactory
+Advisor 
+PointcutAdvisor
+Pointcut 
+ClassFilter
+MethodMatcher

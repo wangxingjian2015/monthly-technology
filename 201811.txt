@@ -1,0 +1,1184 @@
+ZAB协议是为分布式协调服务Zookeeper专门设计的一种支持崩溃恢复和原子广播协议。
+ZAB让整个Zookeeper集群在两个模式之间转换：消息广播和崩溃恢复，消息广播可以说是一个简化版本的2PC，通过崩溃恢复解决了2PC的单点问题，通过队列解决了2PC的同步阻塞问题。而支持崩溃恢复后数据准确性的就是数据同步了，数据同步基于事务的ZXID的唯一性来保证。通过+1操作可以辨别事务的先后顺序。
+
+两阶段2PC两阶段提交协议并不完美，而且存在数据不一致、同步阻塞、单点等问题。
+Zookeeper使用改进的两阶段提交协议来保证节点的事务一致性。
+可靠提交由ZAB的事务一致性协议保证；全局有序由TCP协议保证；因果有序由follower的历史队列(history queue)保证。
+
+当leader在commit之后但在发送commit消息之前宕机，即只有老leader自己commit了，而其他follower都没有收到commit消息，新的leader也必须保证这个proposal被提交(新的leader会重新发送该proposal的commit消息).
+当leader产生某个proposal之后但在发出消息之前宕机，即只有老leader自己有这个proposal，当老的leader重启后(此时作为follower)，新的leader必须保证老的leader丢弃这个proposal(新的leader会通知上线后的老leader截断其epoch对应的最后一个commit的位置)。
+
+BeanPostProcessors operate on bean(or object) instances;that is to say, the Spring IoC container instantiates a bean instance and then BeanPostProcessor do their work.
+BeanPostProcessors are scoped per-container. This is only relevant if you are using container hierarchies. If you define a BeanPostProcessor in one container, it will only post-process the beans in that container. In other words, beans that are defined in one container are not post-processed by a BeanPostProcessor defined in another container, even if both containers are part of the same hierarchy. 
+To change the actual bean definition, you instead need to use a BeanFactoryPostProcessor.
+
+PropertyPlaceholderConfigurer
+Kafka为什么不支持减少分区：
+	1. 按照Kafka现有的代码逻辑而言，此功能完全可以实现，不过也会使得代码的复杂度急剧增大。实现此功能需要考虑的因素很多，比如删除掉的分区中的消息该作何处理？如果随着分区一起消失则消息的可靠性得不到保障；如果需要保留则又需要考虑如何保留。直接存储到现有分区的尾部，消息的时间戳就不会递增，如此对于Spark、Flink这类需要消息时间戳（事件时间）的组件将会受到影响；如果分散插入到现有的分区中，那么在消息量很大的时候，内部的数据复制会占用很大的资源，而且在复制期间，此主题的可用性又如何得到保障？与此同时，顺序性问题、事务性问题、以及分区和副本的状态机切换问题都是不得不面对的。反观这个功能的收益点却是很低，如果真的需要实现此类的功能，完全可以重新创建一个分区数较小的主题，然后将现有主题中的消息按照既定的逻辑复制过去即可。
+	2. 虽然分区数不可用减少，但是分区对应的副本是可以减少的，这个很好理解，关闭一个副本时就相当于副本数减少了。不过正规的做法是使用kafka-reassign-partition.sh脚本来实现。
+
+几个注意点：
+	1. 调用wait方法和notifyAll方法必须被同步，并且调用的对象必须是当前锁对象，否则IllegalMonitorStateException;
+		如果不在同步方法或代码块中执行notify和wait方法，假设这种情况下，等待方判断不满足条件后准备调用wait时，发生上下文切换，此时通知方改变条件调用notifyAll方法，但是等待方并没有调用wait方法，那么等待方就错过了这次通知唤醒。这就是lost wake up问题，所以这2个方法必须要被包在同一个对象锁住的同步方法里。
+	2. 通知方尽量使用notifyAll而不是notify，否则会出现假死；
+		notify方法是随机将等待队列中的一个等待线程唤醒；notifyAll方法是将等待队列中的所有等待线程唤醒；当有多个等待方和通知方时，通知方如果调用notify方法，有可能会通知错。
+	3. 判断条件是否满足，要用while循环，而不是直接一次if判断。
+		因为如果此时有2个等待方A和B,它们同时调用wait方法进入等待，当通知方C调用notifyAll方法后，此时A和B并不是立即恢复执行，而是要去争夺锁资源，假设A先获得锁，它从wait方法返回，执行了后续的逻辑，并将满足的条件改变成不满足。此时B获得锁资源，从wait方法返回后，虽然此时条件已经不满足，但B依然继续执行。因为我们使用了if，而不是while循环判断。
+	4. wait会立即释放当前锁，notifyAll不会立即释放当前对象锁。
+		wait被调用后会释放当前锁并进入对象锁的等待队列中，而sleep会一直占用锁资源；调用notifyAll会将当前同步代码块的剩余部分执行完才会释放锁。
+使用等待/通知机制，实现生产者消费者模式
+其实Thread中的join方法也用到了等待/通知机制：如果线程A调用了B.join()，那么线程A会一直等待B线程执行完毕才会继续执行。和wait()一样，它们都有wait(long millis), join(long millis)重载方法，表示等待指定的时间。join源码如下：
+publi class Thread implements Runnable {
+	...
+	/* Waits at most millis millisconds for this thread to die. A timeout of 0 means to wait forever.
+	This implementation uses a loop of this.wait calls conditioned on this.isAlive. As a thread terminates the this.notifyAll method is invoked. It is recommended that applications not use wait, notify, or notifyAll on Thread instances.
+	*/
+	public final synchronized void join(long millis) {
+		long base = System.currentTimeMillis();
+		long now = 0;
+		if (millis < 0) {
+			throw new IllegalArgumentException("timeout value is negative");
+		}
+		
+		if (millis == 0) {
+			while (isAlive()) {
+				wait(0);
+			}
+		} else {
+			while (isAlive()) {
+				long delay = millis - now;
+				if (delay <= 0) {
+					break;
+				}
+				wait(delay);
+				now = System.currentTimeMillis() - base;
+			}
+		}
+	}
+	...
+}
+根据上述方法：如果线程A调用了B.join()，那么线程A会获得B对象的锁，并且判断释放满足条件(isAlive()方法为本地方法)，然后调用B对象的wait方法，进入到B对象的等待队列，当B线程终止时，会调用自身的notifyAll方法通知所有等待在该线程对象上的线程。此时，线程A被唤醒并继续执行。可见，join方法实现原理和等待/通知机制一样，并且因为join方法调用的也是wait方法，所以也会释放当前对象锁。
+
+Safepoints in HotSpot JVM:
+Term Stop-the-World pause is usually associated with garbage collection. Indeed GC is a major contributor to STW pauses, but not the only one. 
+Safepoints: In HotSpot JVM Stop-the-World pause mechanism is called safepoint. During safepoint all threads running java code are suspended. Threads running native code may continue to run as long as they do not interact with JVM(attempt to access Java objects via JNI, call Java method or return from native to java, will suspend thread unit end of safepoint). 
+Stopping all threads are required to ensure what safepoint initiator have exclusive access to JVM data structures and can do crazy things like moving objects in heap or replacing code of method which is currently running(On-Stack-Replacement). 
+When safepoints are used?
+Below are few reasons for HotSpot JVM to initiate a safepoint:
+	- Garbage collection pauses
+	- Code deoptimization
+	- Flushing code cache
+	- Class redefinition(e.g. hot swap or instrumentation)
+	- Biased lock revocation
+	- Various debug operation(e.g. deadlock check or stacktrace dump)
+
+Trouble shooting safepoints:
+Normally safepoints just work. Thus, you can care less about them(most of them, except GC ones, are extremely quick). But if something can break it will break eventually, so here is useful diagnostic:
+	-XX:+PrintGCApplicationStoppedTime - this will actually report pause time for all safepoints(GC related or not). Unfortunately output from this option lacks timestamps, but it is still useful to narrow down problem to safepoints.
+	-XX:+PrintSafepointStatistics -XX:PrintSafepointStatisticesCount=1 this two options will force JVM to report reason and timings after each safepoint(it will be reported to stdout, not GC log)
+
+
+/* ThreadPool used to executed HystrixCommand#run() on separate threads when configured to do so with HystrixCommandProperties#executionIsolationStrategy().
+Typically each HystrixCommandGroupKey has its own thread-pool so that any one group of commands can not starve others from being able to run. 
+A HystrixCommand can be configured with a thread-pool explicitly by injecting a HystrixThreadPoolKey or via the HystrixCommandProperties#executionIsolationThreadPoolKeyOverride() otherwise it will derive a HystrixThreadPoolKey from the injected HystrixCommandGroupKey. 
+The pool should be sized large enough to handle normal healthy traffic but small enough that it will constrain concurrent execution if backend calls become latent. 
+*/
+public interface HystrixThreadPool {
+	...
+}
+
+MyBatis的优点：
+	1. 基于SQL语句编程，相当灵活，不会对应用程序或者数据库的现有设计造成任何影响，SQL写在XML里，接触SQL与程序代码的耦合，便于统一管理；提供XML标签，支持编写动态SQL语句，并可重用。
+	2. 与JDBC相比，减少了50%以上的代码，消除了JDBC大量冗余的代码，不需要手动开关连接。
+	3. 很好的与各种数据库兼容(因为MyBatis使用JDBC来连接数据库，所以只要JDBC支持的数据库MyBatis就支持)
+	4. 能够与Spring很好的集成。
+	5. 提供映射标签，支持对象与数据库的ORM字段关系映射。提供对象关系映射标签，支持对象关系组件维护。
+MyBatis的缺点：
+	1. SQL语句编写工作量较大，尤其字段多、关联表多时，对开发人员编写SQL的功底有要求；
+	2. SQL语句依赖具体数据库，导致数据库移植性差，不能随意更换数据库。
+MyBatis的#{}和${}的区别：
+	1. #{}是预编译处理，${}是字符串替换。
+	2. MyBatis在处理#{}时，会将SQL中的#{}替换为?，调用PreparedStatement的set方法来赋值；
+	3. MyBatis在处理${}时，就是把${}替换成变量的值。
+	4. 使用#{}可以有效的防止SQL注入，提供系统安全性。
+MyBatis如何获取自动生成的主键值：insert方法总是返回一个int，表示插入的行数。如果采用自增长策略，自动生成的键值在insert方法执行完后可以被设置到传入的参数对象中。
+<insert id="xxx", usegeneratedkeys="true" keyproperty="id">
+	insert into names(name) values(#{name})
+</insert>
+
+Hibernate属于全自动ORM映射工具，使用Hibernate查询关联对象或者关联集合对象时，可以根据对象关系模型直接获取，所以它是全自动的。而MyBatis在查询关联对象或关联集合对象时，需要手动编写SQL来完成，所以称之为半自动ORM映射工具。
+
+MyBatis是否支持延迟加载，实现原理：MyBatis仅支持association关联对象和collection关联集合对象的延迟加载，association指的是一对一，collection指的是一对多查询。在Mybatis配置文件中，可以配置是否启用延迟加载lazyLoadingEnabled=true|false。
+它的原理是，使用CGLIB创建目标对象的代理对象，当调用目标方法时，进入拦截器方法，比如调用a.getB().getName()，拦截器invoke()方法发现a.getB()为NULL，那么就会单独发送实现保存好的查询关联B对象的SQL，把B查询出来，然后调用a.setB(b)，于是a的对象b属性就有值了，接着完成a.getB().getName()方法的调用。这就是延迟加载的基本原理。
+
+MyBatis仅可以针对ParameterHandler,ResultSetHandler,StatementHandler,Executor这4种接口的插件，MyBatis使用JDK的动态代理，为需要拦截的接口生成代理对象以实现接口方法拦截功能，每当执行这4个接口对象的方法时，就会进入拦截方法，具体就是InvocationHandler的invoke()方法，当然只会拦截你指定需要拦截的方法。
+编写插件：实现MyBatis的Interceptor接口并复写intercept()方法，然后再给插件编写注解，指定要拦截哪个接口的哪些方法即可。最后，在配置文件配置编写的插件。
+
+BeanFactory 
+ListableBeanFactory
+HierarchicalBeanFactory
+AutowireCapableBeanFactory
+ConfigurableBeanFactory
+ConfigurableListableBeanFactory
+AbstracAutowireCapableBeanFactory
+DefaultListableBeanFactory
+最终的默认实现类是DefaultListableBeanFactory，它实现了所有的接口。
+Spring IOC容器管理了定义的各种Bean对象以及互相之间的关系，Bean对象在Spring实现中是以BeanDefinition来描述的。BeanDefinition定义了Bean的数据结构，用来存储Bean。
+AttributeAccessor
+BeanMetadataElement
+AttributeAccessorSupport
+BeanDefinition 
+BeanMetadataAttributeAccessor
+AbstractBeanDefinition
+RootBeanDefinition 
+
+BeanDefinitionReader
+EnvironmentCapable
+AbstractBeanDefinitionReader
+XmlBeanDefinitionReader
+
+----------------------------------------------------
+JDK8对CAS机制的优化：
+普通的CAS(AtomicInteger等)在高并发下，比如大量线程同时并发修改一个AtomicInteger，可能有很多线程会不停的自旋，进入一个无限重复的循环中。这些线程不停地获取值，然后发起CAS操作，但是发现这个值已经被修改，于是再次进入下一个循环，获取值，发起CAS操作又失败了，再次进入下一个循环。
+在大量线程高并发更新AtomicInteger的时候，这种问题会比较明显，导致大量线程空循环，自旋转，性能和效率大大降低。
+JDK8推出一个新类:LongAdder，尝试使用分段CAS以及自动分段迁移的方式来大幅度提升多线程高并发执行CAS操作的性能。
+在LongAdder的底层实现中，首先有一个base值，刚开始多线程来不停的累加数值，都是对base进行累加，。
+接着如果发现并发更新的线程数量过多，就会开始实施分段CAS的机制，也就是内部搞一个Cell数值，每个数值是一个数值分段。这时，让大量的线程分别对不同Cell内部的value值进行CAS累加操作，这样就把CAS计算压力分散到不同Cell分段数值中了。
+这样就可以大幅度的降低多线程并发更新一个数值出现的无限循环的问题，大幅度提升了多线程并发更新数值的性能和效率。
+而且内部实现了自动分段迁移的机制，也就是如果某个Cell的value执行CAS失败了，那么就会自动去找另外一个Cell分段内的value值进行CAS操作。
+这样解决了线程空旋转、自旋不停等待执行CAS操作的问题，让一个线程执行CAS尽快的完成。
+最后，如果要从LongAdder获取当前累加的总值，就会把base值和所有Cell分段数值加在一起返回。
+----------------------------------------------------
+消费者和分区的关系：
+	1. 一个消费者可以消费一个到全部分区数据；
+	2. 分组消费，同一个分组内所有消费者消费一份完整的数据，此时一个分区数据只能被一个消费者消费，而一个消费者可以消费多个分区数据；
+	3. 同一个消费组内，消费者数目大于分区数目后，消费者会有空余=分区数-消费者数；
+
+当一个group中，有consumer加入或离开时，会触发partitions均衡partition.assignment.strategy,决定了partition分配给消费者的分配策略，默认有两种分配策略：
+	1. RangeAssignor: 默认采用的是这种再平衡方式，这种方式分配只是针对消费者订阅的topic的单个topic所有分区再分配。
+	2. RoundRobinAssignor: 这种分配策略是针对消费者消费的所有topic的所有分区进行分配。当有新的消费者加入或者消费者退出时，就会触发rebalance。这种方式有两点要求：A): 在实例化每个消费者时给每个topic指定相同的流数；B): 每个消费者实例订阅的topic必须相同。
+	3. Sticky:这种分区策略是最新版本中新增的一种策略，主要实现了两个目的：
+		A:将现有的分区尽可能均衡的分配给各个consumer，存在此目的的原因在于Round Robin和Range分配策略实际上都会导致某几个consumer承载过多分区，从而导致消费压力不均衡；
+		B:如果发生再平衡，那么重新分配之后在前一点的基础上会尽力保证当前未宕机的consumer所消费的分区不会被分配给其他的consumer上。
+
+	Kafka引入协调器有其历史过程，原来consumer信息依赖于Zookeeper存储，当代理或者消费者发生变化时，引发消费者平衡，此时消费者之间是互不透明的，每个消费者和Zookeeper单独通信，容易造成羊群效应和脑裂问题。
+	为了解决这些问题，Kafka引入了协调器。服务端引入组协调器(GroupCoordinator)，消费者端引入消费者协调器(ConsumerCoordinator)。每个broker启动的时候，都会创建GroupCoordinator实例，管理部分消费组(集群负载均衡)和组下每个消费者消费的偏移量(offset)。每个Consumer实例化时，同时实例化一个ConsumerCoordinator对象，负责同一个消费组下各个消费组和服务器组协调器之间的通信。
+消费者协调器主要负责如下工作：
+	1. 更新消费者缓存的Metadata
+	2. 向组协调器申请加入组
+	3. 消费者加入组后的相应处理
+	4. 请求离开消费组
+	5. 向组协调器提交offset
+	6. 通过心跳，保持组协调器的连接感知
+	7. 被组协调器选为leader的消费者协调器，负责消费者分区分配。分配结果发给组协调器。
+	8. 非leader的消费者，通过消费者协调器和组协调器同步分配结果。
+组协调器在broker启动的时候实例化，每个组协调器负责一部分消费组的管理。组协调器负责处理消费者协调器发过来的各种请求，它主要提供如下功能：
+	1. 在与之连接的消费者中选举出消费者leader；
+	2. 下发leader消费者返回的消费者分区分配结果给所有的消费者
+	3. 管理消费者的消费位移提交，保存在kafka的内部主题中
+	4. 和消费者心跳保持，知道哪些消费者已经宕机，组中存活的消费者是哪些。
+
+有哪些情形会造成重复消费：
+	1. 在没有事务支持时，producer重试发送消息；
+	2. consumer先处理消息，后提交offset：处理消息后，出现异常，没有提交offset。
+	3. consumer自动提交offset，在max.poll.interval.ms时间内，有新的消费者加入/退出，导致consumer rebalance，新的消费者再次poll到已经消费过的数据。
+	4. consumer每次拉取的数据过大(max.partition.fetch.bytes)，导致消费时间大于session.timeout.ms，无法和broker保持心跳，导致broker认为退出，发生rebalance。
+	
+Redis的并发竞争问题:多个系统/线程同时对一个Key进行操作，造成最终结果和期望结果不一致的问题。
+如何解决:
+	1. 消息队列；将相关操作放在队列，利用队列的有序性，进行串行处理。即并行处理变成串行化。
+	2. 在客户端进行加锁：分布式锁+时间戳；
+	3. 利用redis自带的incr命令或者decr命令；
+	4. 使用乐观锁;利用redis的watch命令；如下：
+		watch price
+		get price $price 
+		$price = $price + 10
+		multi
+		set price $price 
+		exec 
+	5. 利用redis的setnx实现内置的锁：要设置超时时间，防止抢占到锁的客户端因为失败、崩溃或其他原因没有办法释放锁而造成死锁。
+	
+Kafka从0.8.x版本开始引入副本机制，这样可以极大的提高集群的可靠性和稳定性。通常情况下，Kafka中的每个分区partition都会分配多个副本replica，具体的副本数量由broker级别参数default.replication.factor(默认为1)指定，也可以在创建topic的时候通过--replication-factor <num>显式指定副本的数量(副本因子)。一般情况下，将前者default.replication.factor设置为大于1的值，这样在参数auto.create.topic.enable为true的时候，自动创建的topic会根据default.replication.factor的值来创建副本；或者更加通用的做法是使用后者而指定大于1的副本数。
+每个分区的多个副本称之为AR(assigned replicas)，包含至多一个leader副本和多个follower副本。与AR对应的是ISR(in-sync replicas)，ISR指与leader副本保持同步状态的副本集合，当然leader副本也是这个集合中的一员。而ISR之外，也就是处于同步失败或者失效状态的副本，副本对应的分区也称为同步失效分区，即under-replicated分区。
+怎么样判定一个分区是否有副本是处于同步失效状态的呢？从Kafka 0.9.x版本开始通过唯一的一个参数replica.lag.time.max.ms（默认大小为10,000）来控制，当ISR中的一个follower副本滞后leader副本的时间超过参数replica.lag.time.max.ms指定的值时即判定为副本失效，需要将此follower副本剔出除ISR之外。
+
+过多的使用索引将会造成滥用。因此索引也会有缺点: 虽然索引大大提高了查询速度，同时却降低了更新表的速度，如表进行insert, update和delete。因为更新表时，MySQL不仅要保存数据，还要保存索引文件。建立索引占用磁盘空间的索引文件。
+查看MySQL慢查询日志: mysqldumpslow -s at -a /usr/local/var/mysql.Macbook-Pro-3-slow.log 
+MySQL索引分类：
+	1. Normal普通索引
+	2. Unique唯一索引: 表示唯一的，不允许重复的索引。Unique和Primary key为列或列组合提供了唯一性的保证，primary key是拥有自动定义的Unique约束，但是每个表中可以有多个Unique约束，但是只能有一个Primary key约束。
+	3. Full Text全文索引:全文索引可以在varchar, char, text类型的列上创建。MyISM支持全文索引，InnoDB在MySQL5.6之后支持了全文索引。Full Text用于搜索很长文字时候，效果最好。用在比较短的文本，比如一两行的，普通的index也可以。
+	4. Spatial 空间索引：空间索引是对空间数据类型的字段建立的索引，MySQL中空间数据类型有4种：geometry(几何), poin(点), lineString(线), polygon(多边形)。MySQL使用Spatial关键字进行扩展，使得能够用于创建正规索引类型的语法创建空间索引。创建空间索引的列，必须将其声明为not null，空间索引只能在存储引擎为MyISAM的表中创建。
+
+在InnoDB中有一个特殊的功能:自适应哈希索引，当它发现某些索引值被使用的非常频繁时，它会在内存中基于B+树索引之上，再创建一个hash索引，加快数据的查找速度。
+MySQL创建索引的语法:
+create [unique|fulltext|spatial] index index_name [using index_type] on table_name(index_col_name, ...);
+index_type:表示索引的具体实现方式，在MySQL中有两种不同形式的索引:BTREE索引和HASH索引。在存储引擎为MyISAM和InnoDB的表中只能使用BTREE,其默认值就是BTREE。在存储引擎为Memory或者Heap的表中可以使用HASH或者BTREE两种类型的索引，其默认值是HASH。
+
+消费者提交消费位移时提交的是当前消费到的最新消息的offset还是offset+1: offset+1
+The committed offset should always be the offset of the next message that your application will read. Thus, when calling commitSync(offset) you should add one of the offset of the last message processed. 
+
+对于Kafka Consumer的手动提交，支持异步提交和同步提交。建议两者进行组合使用，不同场景使用不同的方式：
+一般情况下，针对偶尔出现的提交失败，不进行重试不会有太大问题，因为如果提交失败是因为临时问题导致的，那么后续的提交总会有成功的。但如果这是发生在关闭消费者或者再均衡前的最后一次提交，就要确保能够提交成功。因此，在消费者关闭前一般会组合使用commitAsync()和commitSync。使用commitAsync()方式来做每条消费消息的提交(因为这种方式速度更快)，最后再使用commitSync()方式来做位移提交最后的保证。
+
+鉴于日志留存log-retention和日志删除实际上是一个问题的两个方面，待删除的是日志段，即LogSegment，以.log结尾的一个个文件，而非整个目录。另外还有一点：当前日志段(active logsegment)是永远不会被删除的，不管配置了哪种留存机制。Kafka log retention留存机制共有3种：
+	1. 基于空间维度；
+	2. 基于时间维度；
+	3. 基于起始位移维度；
+Kafka将消息存储在磁盘中，为了控制磁盘占用空间的不断增加就需要对消息做一定的清理操作。Kafka中每一个分区partition都对应一个日志文件，而日志文件又可以分为多个日志分段文件，这样也便于日志的清理操作。Kafka提供了两种日志清理策略：
+	1. 日志删除(Log Deletion): 按照一定的保留策略来直接删除不符合条件的日志分段；
+	2. 日志压缩(Log Compaction): 针对每个消息的key进行整合，对于有相同key的不同value值，只保留最后一个版本。
+
+异常分类: Throwable包括Error和Exception。
+	Error:
+		1. VirtualMachineError
+			1.1 StackOverFlowError
+			1.2 OutOfMemoryError
+		2. AWTError
+	Exception:
+		1. IOException
+			1.1 EOFException
+			1.2 FileNotFoundException
+		2. RuntimeException
+			2.1 ArithmeticException
+			2.2 MissingResouceException
+			2.3 ClassNotFoundException
+			2.4 NullPointerException
+			2.5 IllegalArgumentException
+			2.6 ArrayIndexOutOfBoundsException
+			2.7 UnknownTypeException
+
+-Xmx -xms 
+在OutOfMemoryError之前有可能系统会提前报下列关键字: java.lang.OutOfMemoryError: GC over head limit exceeded 
+这种情况是当系统处于高频的GC状态，而且回收的效果依然不佳的情况。
+java.lang.OutOfMemoryError: PermGen space 
+-XX:PermSize -XX:MaxPermSize 
+java.lang.OutOfMemoryError: Direct buffer memory 
+-XX:MaxDirectMemorySize 
+java.lang.StackOverflowError 
+-Xss
+java.lang.OutOfMemoryError:unable to create new native thread 
+java.lang.OutOfMemoryError: request {} byte for {} out of swap 
+-XX:+PrintFlagsFinal 
+Thread Local Allocation Buffer，简称TLAB，即内存本地持有的buffer。
+-XX:+UseTLAB 启用
+-XX:TLABSize=<size in kb>设置大小，也就是本地线程中的私有区域大小(只有这个区域放不下才会到Eden中申请)
+-XX:+ResizeTLAB 是否启动动态修改
+-XX:+PrintTLAB 输出TLAB的内容
+TLAB这些参数在多CPU下非常有用。
+-XX:+UseParNewGC
+-XX:+UseParallelOldGC
+-XX:+UseSerialGC
+-XX:+UseConcMarkSweepGC 
+-XX:+UseParallelGC 
+-XX:ParallelGCThread=12
+-Xmn 
+-XX:NewSize
+-XX:MaxNewSize 
+-XX:NewRatio 
+-XX:SurvivorRatio
+-XX:InitialSurivivorRatio 
+-XX:MaxTenuringThreshold=15
+-XX:MinHeapFreeRatio=40
+-XX:MaxHeapFreeRatio=70
+-XX:+UseAdaptiveSizePolicy
+-XX:+PrintAdaptiveSizePolicy
+-XX:MaxDirectMemorySize 
+-XX:+ScavengeBeforeFullGC,默认开启状态，在FGC前先进行Minor GC
+-XX:+UseLargePages
+-XX:LargePageSizeInBytes 
+-Djava.io.tmpdir 
+-XX:-HandlePromotionFailure 
+-XX:PretenureSizeThreshold
+-XX:GCTimeRatio
+-XX:MaxGCPauseMillis
+-XX:GCTimeLimit 
+-XX:+PrintGCApplicationStoppedTime 
+-XX:+DisableExplicitGC 
+-XX:+HeapDumpOnOutOfMemoryError 
+-XX:+UseFastAccessorMethods 
+-XX:+PrintHeapUsageOverTime 
+-XX:+UseCompressedOops 
+-XX:+BackgroudCompilation 
+-XX:-TraceClassLoading
+-XX:-TraceClasssUnloading
+-XX:+UseConcMarkSweepGC 
+-XX:+CMSIncrementalMode 
+-XX:+CMSParallelRemarkEnabled 
+-XX:ParallelCMSThreads 
+-XX:CMSInitiatingOccupancyFraction=70
+-XX:CMSInitiatingPermOccupancyFraction
+-XX:+PrintCMSInitiationStatistics 
+-XX:+UseCMSInitiatingOccupancyOnly 
+-XX:+UseCMSCompactAtFullCollection
+-XX:CMSFullGCsBeforeCompaction
+-XX:CMSMaxAbortablePrecleanTime
+
+对账补送 
+
+
+/* One or more variables that together maintain an initially zero long sum. When updates (method #add) are contended across threads, the set of variables may grow dynamically to reduce contention. Method #sum (or equivalently, #longValue) returns the current total combined across the variables maintaining the sum.
+This class is usually preferable to AtomicLong when multiple threads update a common sum that is used for purposes such as collecting statistics, not for fine-grained synchronization control. Under low update contention, expected throughput of this class is significantly higher, at the expense of higher space consumption.
+LongAdders can be used with a ConcurrentHashMap to maintain a scalable frequency map (a form of histogram or multiset). For example, to add a count to a ConcurrentHashMap<String, LongAdder> freqs, initializing if not already present, you can use freqs.computeIfAbsent(k -> new LongAdder()).increment();
+This class extends Number, but does not define methods such as equals, hashCode and compareTo because instances are expected to be mutated, and so are not useful as collection keys. 
+*/
+public class LongAdder extends Striped64 implements Serializable {
+	private static final long serialVersionUID = 7249069246863182397L;
+	public LongAdder() {}
+	public void add(long x) {
+		Cell[] as; 
+		long b, v; 
+		int m;
+		Cell a;
+		if ((as = cells) ！= null || !casBase(b = base, b + x)) {
+			boolean uncontended = true;
+			if (as == null || (m = as.length - 1) < 0 ||
+				(a = as[getProbe() & m]) == null ||
+				!(uncontended = a.cas(v = a.value, v+x))) {
+				longAccumulate(x, null, uncontended);
+			}
+		}
+	}
+	
+	public void inrement() {
+		add(1L);
+	}
+	public void decrement() {
+		add(-1L);
+	}
+	public long sum() {
+		Cell[] as = cells;
+		Cell a;
+		long sum = base;
+		if (as != null) {
+			for (int i = 0;i < as.length; ++i) {
+				if ((a = as[i]) != null) {
+					sum += a.value;
+				}
+			}
+		}
+		return sum;
+	}
+	public void reset() {
+        Cell[] as = cells; Cell a;
+        base = 0L;
+        if (as != null) {
+            for (int i = 0; i < as.length; ++i) {
+                if ((a = as[i]) != null)
+                    a.value = 0L;
+            }
+        }
+    }
+	public long sumThenReset() {
+        Cell[] as = cells; Cell a;
+        long sum = base;
+        base = 0L;
+        if (as != null) {
+            for (int i = 0; i < as.length; ++i) {
+                if ((a = as[i]) != null) {
+                    sum += a.value;
+                    a.value = 0L;
+                }
+            }
+        }
+        return sum;
+    }
+	public String toString() {
+        return Long.toString(sum());
+    }
+    public long longValue() {
+        return sum();
+    }
+    public int intValue() {
+        return (int)sum();
+    }
+    public float floatValue() {
+        return (float)sum();
+    }
+    public double doubleValue() {
+        return (double)sum();
+    }
+	
+	/* Serialization proxy, used to avoid reference to the non-public Striped64 superclass in serialized forms.
+	*/
+	private static class SerializationProxy implements Serializable {
+		private static final long serialVersionUID = 7249069246863182397L;
+		private final long value;
+		SerializationProxy(LongAdder a) {
+			value = a.sum();
+		}
+		private Object readResolve() {
+			LongAdder a = new LongAdder();
+			a.base = value;
+			return a;
+		}
+	}
+	
+	private Object writeReplace() {
+		return new SerializationProxy(this);
+	}
+	private void readObject(java.io.ObjectInputStream s) throws java.io.InvalidObjectException {
+		throw new java.io.InvalidObjectException("Proxy required");
+	}
+}
+
+最经典的缓存+数据库读写的模式：Cache Aside Pattern。
+	- 读的时候，先读缓存，缓存没有的话，就读数据库，然后取出数据后放入缓存，同时返回响应；
+	- 更新的时候，先更新数据库，然后删除缓存；
+
+最初级的缓存不一致问题：先修改数据库，再删除缓存。如果缓存删除失败了，那么数据库是新数据，缓存是旧数据，出现数据不一致。解决思路：先删除缓存，再修改数据库。如果数据库修改失败了，那么数据库是旧数据，缓存是空的，不会出现数据不一致问题。
+比较复杂的数据不一致问题：数据发生了变更，先删除缓存，然后要去修改数据库，此时还没修改；请求到达，读取缓存，查询到了旧的数据，放入缓存。随后数据变更的程序完成了数据库的修改；这样出现了数据不一致。
+
+Kubernetes中service是一组提供相同功能的Pods的抽象，并为它们提供一个统一的入口。借助Service，应用可以方便的实现服务发现于负载均衡，并实现应用的零宕机升级。Service通过spce.selector来选取后端服务，一般配合ReplicationController或者Deployment来保证后端容器的正常运行。
+Kubernetes的Service能够提供负载均衡的能力，但是在使用上有以下限制：
+	1. 只提供4层负载均衡能力，而没有7层，但有时需要更多的匹配规则来转发请求，这点上4层负载均衡是不支持的；
+	2. 使用NodePort类型的Service时，需要在集群外部部署外部的负载均衡器；
+	3. 使用LoadBalancer类型的Service时，Kubernetes必须运行在特定的云服务上。
+Kubernetes的Service的类型：
+	1. ClusterIP: 默认类型，自动分配一个仅Cluster内部可以访问的虚拟IP；
+	2. NodePort: 在ClusterIP基础上为Service在每台机器上绑定一个端口，这样就可以通过<NodeIP>:<NodePort>来访问该服务；
+	3. LoadBalancer: 在NodePort的基础上，借助Cloud provider创建一个外部负载均衡器，并将请求转发到<NodeIP>:<NodePort>
+	4. ExternalName: 把集群外部的服务引入到集群内部来，在集群内部直接使用。没有任何类型代理被创建，这只有Kubernetes1.7或者更高版本的kube-dns才支持。
+ClusterIP:主要在每个node节点使用iptables, 将发往ClusterIP对应端口的数据，转发到kube-proxy中。然后kueb-proxy自己内部实现有负载均衡方法，并可以查询到这个Service下对应Pod的地址和端口，进而把数据转发给对应的pod地址和端口。
+NodePort: 原理在于在Node上开了一个端口，将向该端口的流量导入到kube-proxy，然后由kube-proxy进一步到给对应的pod；
+LoadBalancer: 和NodePort其实是同一种方式。区别在于LoaderBalancer比NodePort多了一步，就是可以调用Cloud provider去创建LB来向节点导流。
+
+Redis缓存穿透:是指查询一个数据库中一定不存在的数据。解决方法：
+	1. 缓存不存在的值，但将缓存的过期时间设置的短一些；
+	2. Key值合法性校验：首先前端按照约定的算法校验传入的值是否合法，不合法直接拒绝；后端同样进行值的合法性校验，校验失败直接返回，否则从缓存获取；另外为了更好的灵活性，可支持配置先从缓存获取后校验，或者先校验后缓存获取。支持两种情况：非法情况下先校验后缓存；正常情况先缓存后校验；
+	3. 布隆过滤器：将数据库中所有Key值放入布隆过滤器，当查询Key值时，先经过布隆过滤器进行检查，如果不存在，直接丢弃，否则继续进行；将缓存穿透控制在可容忍的范围内。
+	4. 
+
+Redis缓存崩溃：某段时间缓存集中过期失效。解决方法：	
+	1. 设置随机缓存过期时间。对于热门Key值，设置时间长一些；对于冷门Key值设置时间短一些；
+	2. 在缓存失效后，通过加锁或者队列来控制读DB的线程数；比如漏桶/令牌桶
+	3. 预先缓存reload，在缓存失效前，主动进行缓存的更新和缓存时间续约；
+	4. 做二级缓存或双缓存策略。
+	
+Redis缓存击穿: 指一个Key非常热点，在不停的扛着大并发，当这个热点Key失效的瞬间，持续的大并发就穿破缓存，直接请求DB。解决方法：
+	1. 设置永久不过期的缓存时间；
+	2. 在失效前，进行预先构建缓存；
+	3. 使用互斥锁：一个线程构建缓存，其他线程等待构建完毕后，再获取数据；
+	4. 
+新服务刚上线时，记得需要进行缓存预热/预加载。
+
+__consumer_offsets: Every consumer group maintains its offset per topic partitions. Since v0.9 the information of committed offsets for every consumer group is stored in this internal topic(prior to v0.9 this information was stored on Zookeeper). When the offset manager receives an OffsetCommitRequest, it appends the request to a special compacted Kafka topic named __consumer_offsets. Finally, the offset manager will send a successful offset commit response to the consumer, only when all the replicas of the offsets topic receive the offsets. 
+_schema: This is an internal topic used by the Schema Registry, which is a distributed storage layer for Avro schemas. All the information which is relevant to schema, subject (with its corresponding version), metadata and compatibility configuration is appended to this topic. The schema registry in turn, produces(e.g. when a new schema is registered under a subject) and consumer data form this topic).
+__transaction_state: 内部topic，所有事务状态信息会持久化到这个topic,TransactionCoordinator在做故障恢复时，也是从这个topic中恢复数据。
+-------串行/并行/并发---------------
+串行: 单个线程执行垃圾回收，并且此时用户线程仍然处于等待状态；
+并行：多个线程执行垃圾回收，但此时用户线程仍然处于等待状态；
+并发：指用户线程与垃圾收集线程同时执行(但不一定是并行的，可能会交替执行)，用户程序在继续执行，而垃圾收集程序运行于另外一个CPU上。
+----------------------
+新生代回收器：SerialGC, ParNewGC, ParallelScavengeGC 
+名称				串行/并行/并发	回收算法	适用场景			是否可与CMS配合 
+SerialGC			串行 			复制		单CPU				是 
+ParNewGC			并行 			复制 		多CPU				是
+ParallelScavengeGC	并行 			复制		多CPU且关注吞吐量	否
+------------------------------
+Serial(串行GC)收集器：
+	Serial收集器是一个新生代收集器，单线程执行，使用复制算法。它在进行垃圾收集时，必须暂停其他所有的工作线程(用户线程)。是JVM Client模式下默认的新生代收集器。对于限定单个CPU的环境来说，Serial收集器由于没有线程交互的开销，专心做垃圾收集可以获得最高的单线程收集效率，适用于单CPU机器的场景。在用户桌面应用场景中，即Client模式下是一个很好的选择。
+ParNew(并行GC)收集器：
+	ParNew收集器其实是Serial收集器的多线程版本，除了使用多线程进行垃圾收集外，其余行为与Serial收集器一样。它是许多运行在Server模式下的JVM首选的新生代收集器。其中一个与性能无关但很重要的原因：除了Serial收集器外，目前只有它能与CMS收集器配合工作。ParNew在单CPU环境下绝对不会比Serial收集器更好的效果，甚至由于存在线程切换的开销，该收集器在通过超线程技术实现的两个CPU环境中都不能百分百保证可以超越Serial收集器。当然，随着CPU的增加，它对GC时系统资源的有效利用还是很有好处的。
+ParallelScavenge(并行回收GC)收集器：
+	ParallelScavenge收集器也是一个新生代收集器，也是使用复制算法的收集器，又是并行多线程收集器。ParallelScavenge收集器的特点是它的关注点与其他收集器不同，CMS收集器关注点是尽可能缩短垃圾收集时用户线程的停顿时间，而ParallelScavenge收集器的目标则是达到一个可控制的吞吐量。吞吐量=程序运行时间/(程序运行时间+垃圾收集时间)。因此ParallelScavenge也经常被称为“吞吐量优先”收集器。ParallelScavenge收集器有一个参数-XX:UseAdaptiveSizePolicy，当参数启用时，JVM会根据当前系统的运行状况收集性能监控信息，动态调整一些如新生代大小、Eden与Survivor区的比例等细节参数。这种自适应调节策略也是ParallelScavenge收集器与ParNew收集器的一个重要区别。
+--------------------------
+三种老年代收集器：SerialOldGC, ParNewOldGC, CMS 
+名称			串行/并行/并发				回收算法	适用场景
+SerialOldGC		串行 						标记整理	单CPU 
+ParNewOldGC		并行						标记整理 	多CPU 
+CMS				并发，几乎不会暂停用户线程	标记清除	多CPU且与用户线程共存
+------------------------
+SerialOld(串行GC)收集器：
+	SerialOld是Serial收集器的老年代版本，同样使用一个线程执行收集，使用"标记-整理"算法。主要使用在Client模式下的JVM。如果在Server模式下，它有两个用途：一种用途是JDK1.5以及之前的版本与ParallelScavenge收集器搭配使用；另一种用途是作为CMS的后备预案，在Concurrent Mode Failure时使用。
+ParallelOld(并行GC)收集器： 
+	ParalleOld是ParallelScavenge收集器的老年代版本，使用多线程和"标记-整理"算法。在注重吞吐量以及CPU资源敏感的场合，都可以优先考虑ParallelScavenge收集器加ParallelOld收集器。
+CMS(并发GC)收集器:
+	CMS(Concurrent Mark Sweep)收集器是一种以获取最短停顿时间为目标的收集器，适用于集中在网站/BS系统的服务端应用。CMS收集器基于"标记-清除"算法实现，整个收集过程大致分为4个步骤：
+	1. 初始标记-initial mark 
+	2. 并发标记-concurrent mark 
+	3. 重新标记-remark
+	4. 并发清除-concurrent sweep 
+	其中初始标记、重新标记这两个步骤需要停顿用户线程。初始标记仅仅只是标记出GC Roots能直接关联的对象，速度很快，并发标记阶段是进行GC Roots根搜索算法阶段，会判定对象是否存活。而重新标记阶段则是为了修正并发标记期间，因用户线程继续运行而导致产生变动的那部分对象的标记记录，这个阶段的停顿时间会比初始标记阶段稍长，但比并发标记阶段要短。
+	由于整个过程中耗时最长的并发标记和并发清除过程中，收集器线程都可以与用户线程一起工作，所以整体来说，CMS收集器的内存回收过程是与用户线程一起并发执行的。
+	CMS收集器的优点：并发收集、停顿低。但是CMS有三个显著缺点：CPU敏感、浮动垃圾、空间碎片。
+	CMS收集器对CPU资源非常敏感。在并发阶段，虽然不会导致用户线程停顿，但是会占用CPU资源而导致用户程序变慢，总吞吐量下降。CMS默认启动的回收线程数是：(CPU数量+3)/4。
+	CMS收集器无法处理浮动垃圾，可能出现"Concurrent Mode Failure"，失败后而导致另一次FGC的产生。由于CMS并发清理阶段用户线程还在运行，伴随程序的运行自然会有新的垃圾不断产生，这部分垃圾出现在标记过程之后，CMS无法在本次收集中处理，只好留到下次GC清理。这部分垃圾称为"浮动垃圾"。也是由于在垃圾收集阶段用户线程还需要运行，即需要预留足够的内存空间给用户线程使用，因此CMS不能像其他收集器一样等待老年代几乎完全被填满再进行收集，需要预留一部分内存空间提供给并发收集时的程序运行使用。可以通过参数-XX:CMSInitiatingOccupancyFraction的值来提供触发百分比，以降低内存回收次数提供性能。如果CMS运行期间预留的内存无法满足程序其他线程使用，就会出现"Concurrent Mode Failure"失败，这时会启动后备预案：临时使用SerialOld收集器来重新进行老年代收集，这样停顿时间就很长了。所以说参数-XX:CMSInitiatingOccupancyFraction设置的过高将会很容易导致“Concurrent Mode Failure”失败，性能反而降低。
+	最后一个缺点：CMS是基于"标记-清除"算法实现的收集器，使用"标记-清除"算法收集后，会产生大量碎片。空间碎片太多时，将会给对象分配带来很多麻烦，比如大对象，内存空间找不到连续的空间来分配不得不提前触发一次FGC。为了解决这个问题，CMS提供了一个-XX:UseCMSCompactAtFullCollection开关参数，用于FGC后增加一个碎片整理过程，还可以通过-XX:CMSFullGCBeforeCompaction参数设置执行多少次不压缩的FGC之后，跟着来一次碎片整理过程。
+
+G1(Garbage First)收集器是JDK7提供的一个新收集器，G1是面向服务端应用的垃圾收集器。与其他收集器相比，G1具备如下特点：
+	1. 并行与并发：G1能充分利用多CPU、多核环境下的硬件优势，使用多CPU来缩短STW停顿时间，部分其他收集器原本需要停顿Java线程执行的GC动作，G1仍然通过并发的方式让Java程序继续运行。
+	2. 分代收集：与其他收集器一样，分代依然得以保留。虽然G1可以不需要其他收集器配合就能单独管理整个GC堆，但它能够采用不同的方式去处理新创建的对象和已经存活了一段时间、熬过多次GC的旧对象已获得更好的收集效果。
+	3. 空间整合：与CMS的"标记-清除"算法不同，G1整体上看是基于标记-整理算法实现的，从局部(两个Region之间)上看是基于"复制"算法实现的，但无论如何，这两种算法都意味着G1运行期间不会产生内存空间碎片，收集后能提供规整的可用内存。这种特性有利于程序的长时间运行，分配大对象时不会无法找到连续内存空间而提前触发下一次GC。
+	4. 可预测的停顿：降低停顿时间是G1和CMS共同的关注点，但G1除了追求低停顿外，还能建立可预测的停顿时间模型，能让使用者明确指定在一个长度M毫秒内消耗在垃圾收集上的时间不能超过N毫秒，这几乎是实时Java(RTSJ)的垃圾收集器的特征了。
+region介绍：大小一致，在1M到32M之间的一个2的幂指数，JVM会尽量划分2048个左右、同等大小的region。当然这个数值既可以手动调整，也会根据堆大小自动进行调整。
+在G1实现中，一部分region是作为Eden,一部分作为Surivor，除了意料之中的Old region，G1会将超过Region 50%大小的对象归类为Humongous对象，并放置在相应的region中。逻辑上，Humongous region算是老年代的一部分，因为复制这样的大对象是很昂贵的操作，并不适合新生代GC的复制算法。
+G1的缺点：region大小和大对象很难保证一致，这会导致空间浪费。特别大的对象可能会占用超过一个region。并且，region太小不合适，会在分配大对象时更难找到连续空间。
+
+G1选择的是复合算法：在新生代，G1采用的仍然是并行的复制算法，所以同样会发生STW的暂停。新生代的清理会带上Old区已标记好的region。在老年代，大部分情况下都是并发标记，而整理(Compact)则是和新生代GC时捎带进行，而且不是整体性的整理，而是增量进行的。
+Humonous对象的分配和回收：Humongous region 作为老年代的一部分，通常认为它会在并发标记结束后才进行回收，但是在新版G1中，Humongous 对象回收采取了更加激进的策略。G1记录了老年代region间对象引用，Humongous 对象数量有限，所以能够快速的知道是否有老年代对象引用它。如果没有，能够阻止它被回收的唯一可能，就是新生代是否有对象引用了它，但这个信息是可以在Young GC时就知道的，所以完全可以在Young GC中就进行Humongous 对象的回收，不用像其他老年代对象那样，等待并发标记结束。
+
+JDK11增加了两种全新的GC方式：
+	1. Epsilon GC: 简单说就是不做垃圾收集的GC，有些情况下，例如在进行性能测试的时候，可能需要明确判断GC本身产生了多大的开销，这就是典型的应用场景。
+	2. ZGC: Oracle开源的一个超级GC。具备很大的扩展能力，支持T级别的堆大小，并且保证据大部分情况下，延迟都不会超过10ms。
+
+ConcurrentHashMap：
+// Nodes for use in TreeBins
+static final class TreeNode<K, V> extends Node<K, V> {
+	TreeNode<K, V> parent;   // red-black tree links
+	TreeNode<K, V> left;
+	TreeNode<K, V> right;
+	TreeNode<K, V> prev;   // needed to unlink next upon deletion 
+	boolean read;
+	...
+}
+
+/* TreeNodes used at the heads of bins. TreeBin do not hold user keys or values, but instead point to list of TreeNodes and their root. They also maintain a parasitic read-write lock forcing writers (who hold bin lock) to wait for readers (who do not) to complete before tree restructuring operations. 
+*/
+static final class TreeBin<K, V> extends Node<K, V> {
+	TreeNode<K, V> root;
+	volatile TreeNode<K, V> first;
+	volatile Thread waiter;
+	volatile int lockState;
+	// values for lockState 
+	static final int WRITER = 1;   //set while holding write lock 
+	static final int WAITER = 2;   //set when waiting for write lock 
+	static final int READER = 4;   //increment value for setting read lock 
+	...
+	
+	private static final sun.misc.Unsafe U;
+	private static final long LOCKSTATE;
+	static {
+		try {
+			U = sun.misc.Unsafe.getUnsafe();
+			Class<?> k = TreeBin.class;
+			LOCKSTATE = U.objectFieldOffset(
+				k.getDelaredField("lockState"));
+		} catch (Exception e) {
+			throw new Error(e);
+		}
+	}
+}
+
+JDK8 update20引入一个优化就是G1的字符串去重(String deduplication). 由于字符串(包括它们内部的char[]数组)占用了大多数的堆空间，这项新的优化旨在使得G1能识别出堆中那些重复出现的字符串并将它们指向同一个内部的char[]数组，以避免同一个字符串的多份拷贝，这样堆的使用效率会很高。可以使用-XX:+UseStringDeduplication来启用。
+
+
+ForkJoin 
+ForkJoinTask
+ForkJoinPool 
+ForkJoinTask的一个子类: CountedCompleter: 直译为计数的完成器
+工作线程: ForkJointWorkerThread 
+CountedCompleter是一个特殊的ForkJoinTask，它会触发完成动作时，检查有没有挂起action，若没有则执行一个完成动作。
+public abstract class CountedCompleter<T> extends ForkJoinTask<T> {
+	... 
+}
+
+最左前缀匹配原则：MySQL优化器会合适的调整顺序，使其尽量走索引。
+为什么要使用联合索引？
+	1. 减少开销；
+	2. 覆盖索引；
+	3. 效率高；
+对于explain的两种type类型: index和ref。
+index: 这种类型表示MySQL会对整个索引进行扫描。要想用到这种类型的索引，对这个索引并无特别要求，只要是索引，或者某个联合索引的一部分，MySQL都可能会采用index类型的方式扫描。但是缺点是效率不高，MySQL会从索引中的第一个数据查找到最后一个数据，直到找到符合条件的某个索引。
+ref:这种类型表示MySQL会根据特点的算法快速查找某个符合条件的索引，而不是对索引中的所有数据进行扫描。要想实现这种查找，索引是有要求的，要实现这种能快速查找的算法，索引就要满足特定的数据结构。简单说，索引字段的数据必须是有序的，才能实现这种类型的查找，才能利用到索引。
+
+MySQL查询优化器会判断纠正SQL该以什么样的顺序执行效率最高，最后才生成真正的执行计划。
+Dubbo的服务请求失败怎么处理：在集群调用失败时，Dubbo提供了多种容错方案，缺省为failover重试。
+	1. 可以自行扩展集群容错策略。(扩展接口: org.apache.dubbo.rpc.cluster.Cluster)
+	2. Failover Cluster: 失败自动切换，当出现失败，重试其他服务器。通常用于读操作，但重试会带来更长延迟。可通过retries=2来设置重试次数(不含第一次)；
+	3. Failfast Cluster:快速失败，只发起一次调用，失败立即报错。通常用于非幂等性的写操作，如新增记录。
+	4. Failsafe Cluster:失败安全，出现异常时，直接忽略。通常用于写入审计日志等操作。
+	5. Failback Cluster：失败自动恢复，后台记录失败请求，定时重发。通常用于消息通知操作。
+	6. Forking Cluster: 并行调用多个服务器，只要一个成功即返回。通常用于实时性要求较高的读操作，但需要浪费更多服务资源。可通过forks=2来设置最大并行数。
+	7. Broadcast Cluster: 广播所有提供者，逐个调用，任意一台报错则报错。通常用于通知所有提供者更新缓存或者日志等本地资源信息。
+synchronized和lock有什么区别：
+	1. synchronized是Java语言内置关键字。Lock是接口，通过这个接口的实现可以实现同步访问；
+	2. synchronized无需手动释放锁；Lock需要手动释放锁。
+	3. synchronized既可以加在方法上也可以加载特定代码块上，括号表示需要锁的对象。
+	4. 性能：资源竞争激励的情况下，lock性能会比synchronize好，竞争不激励的情况下，synchronize比lock性能好，synchronize会根据锁的竞争情况，从偏向锁-->轻量级锁-->重量级锁升级，而且编程更简单。
+	5. 锁的机制：synchronized是在JVM层面实现的，系统会监控锁的释放与否。Lock是JDK代码实现的，需要手动释放，在finally块中释放。可以采用非阻塞方式获取锁。
+	6. 公平锁：synchronized是非公平锁，Lock支持公平锁和非公平锁；
+	7. 可中断锁：ReentrantLock提供了lockInterruptibly()的功能，可以中断争夺锁的操作，抢锁的时候会检查是否被中断，中断直接抛出异常，退出抢锁。而synchronized只有抢锁的过程，不可干预，直到抢锁以后，才可以编码控制锁的释放；
+	8. 快速反馈：ReentrantLock提供了tryLock()和tryLock(timeout)功能，不等待或者限定时间等待获取锁，更灵活，可以避免死锁的发生。
+	9. 读写锁：ReentrantReadWriteLock类实现了读写锁的功能；而synchronized是独占锁；
+	10. Condition: ReentrantLock提供了比Sync更精准的线程调度工具，Condition，一个lock可以有多个Condition，比如在生产消费的业务下，一个锁通过控制生产Condition和消费Condition精准控制。
+
+TCP通过维护一个拥塞窗口来进行拥塞控制，拥塞控制的原则是：只要网络中没有出现拥塞，拥塞窗口的值就可以再增大一些，以便把更多的数据包发送出去，但只要网络出现拥塞，拥塞窗口的值就应该减小一些，以减少注入到网络中的数据包数。
+TCP拥塞控制算法出现了几种不同的思路：
+	1. 基于丢包的拥塞控制：将丢包视为出现拥塞，采取缓慢探测的方式，逐渐增大拥塞窗口，当出现丢包时，将拥塞窗口减小，如Reno,Cubic等。
+	2. 基于时延的拥塞控制：将时延增加视为出现拥塞，延时增加时增大拥塞窗口，延时减小时减小拥塞窗口，如Vegas,FastTCP等。
+	3. 基于链路容量的拥塞控制：实时测量网络带宽和时延，认为网络上报文总量大于带宽时延乘积时出现了拥塞，如BBR。
+	4. 基于学习的拥塞控制：没有特定的拥塞信号，而是借助评价函数，基于训练数据，使用机器学习的方法形成一个控制策略，如Remy。
+
+滑动窗口计数有很多使用场景，比如限流防止系统雪崩。相比较计数实现，滑动窗口实现会更加平滑，能自动消除毛刺。滑动窗口原理是在每次有访问进来时，先判断前N个单位时间内的总访问量是否超过设置的阈值，并对当前时间片上的请求数加一操作。但由于访问量的不可预见性，会发生单位时间内的前半段大量请求涌入，而后半段则拒绝所有请求的情况(通常，需要可以将单位时间切的足够小来缓解)；其次，很难确定这个阈值设置在多少比较合适，只能通过经验或者模拟（如压测）来进行估计，即使是压测也很难估计的准确。集群部署中每台机器的硬件参数不同，可能导致需要对每台机器的阈值设置的都不尽相同。同一台机子在不同的时间点的系统压力也不一样（比如晚上还有一些任务，或其他的一些业务操作的影响），能够承受的最大阈值也不尽相同，无法考虑的周全。
+滑动窗口模式适用于对某一资源的保护的需求上，如对DB的保护，对某一服务的调用的控制上。
+
+Redis的命令: set <key> <value> nx px 30000; 这个命令的含义是将一个value设置到一个key中，如果不存在将会赋值并且设置超时时间为30。
+-------------Redis的计数器实现限流控制---------------------------------------------
+Lua脚本:
+local val = redis.call('incr', KEYS[1])
+local ttl = redis.call('ttl', KEYS[1])
+
+redis.log(redis.LOG_NOTICE, 'incr '..KEYS[1]..' '..val)
+if val == 1 then
+	redis.call('expire', KEYS[1], tonumber(ARGV[1]))
+else 
+	if ttl == -1 then 
+		redis.call('expire', KEYS[1], tonumber(ARGV[1]))
+	end 
+end 
+
+if val > tonumber(ARGV[2]) then 
+	return 0
+end 
+return 1
+对传入的key做incr操作，如果key首次生成，设置超时时间ARGV[1]；
+ttl是为防止某些key在未设置超时时间并长时间已经存在的情况下做的保护的判断；
+判断当前key的val是否超过限制次数ARGV[2]。
+Redis客户端：
+public long limit(String key) {
+	return redisClient.eval(key, expire, reqCount);
+}
+加载lua脚本，并对外提供Redis调用的接口
+注解:
+@Target({ElementType.METHOD})
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+public @interface RateLimit {
+	String value() default "";
+}
+AOP拦截：
+@Before("@annotation(com.x.y.z.RateLimit)")
+public void before(JoinPoint jp) throws Throwable {
+	Signature sig = jp.getSignature();
+	if (! (sig instanceof MethodSignature)) {
+		throw new IllegArgumentException("annotation must use in method");
+	}
+	
+	MethodSignature msig = (MethodSignature)sig;
+	String methodName = jp.getTarget().getClass().getName() + "." + msig.getName();
+	String limitKey = Md5Utils.encrypt(methodName);
+	if (rateLimiter.limit(limitKey) != 1) {
+		throw new OverLimitException("Over Limit!!");
+	}
+}
+
+统一异常处理：
+@ControllerAdvice
+public class GlobalExceptionHandler {
+	@ExceptionHandler(OverLimitException.class)
+	@ResponseBody
+	public String overLimitExceptionHandler(OverLimitException ex) {
+		return ex.getMessage();
+	}
+}
+----------------------------------------------------------
+redis实现滑动窗口：
+	1. 可以基于Redis的zset数据结构：每次当请求进来时，value固定为UUID，而score也为当前时间戳。因为score可以用来计算当前时间戳之内有多少个请求数量。而zset数据结构也提供了range方法轻易获取2个时间戳内有多少请求。另外定时或者每次调用时，清理score低于特定时间戳的记录。代码如下：
+	public boolean limitFlow() {
+		long currentTime = System.currentTimeMillis();
+		if (redisTemplate.hasKey("limit")) {
+			Integer count = redisTemplate.opsForZSet().rangeByScore("limit", currentTime - intervalTime, currentTime);
+			//清理老的，避免zset过大
+			redisTemplate.opsForZset.removeRangeByScore("limit", 0, currentTime - intervalTime);
+			if (count != null && count > 100) {
+				return false;
+			}
+		}
+		redisTemplate.opsForZSet().add("limit", UUID.randomUUID().toString(), currentTime);
+		return true;
+	}
+	2. 基于Redis的令牌桶算法: 可以采用List。一个定时任务往:redisTemplate.opsForList().rightPush("key", UUID);具体的限流函数:redisTemplate.opsForList().leftPop("key");
+	
+Spring Bean的生命周期(共12个步骤)：
+	1. Bean实例化
+	2. Bean属性注入
+	3. 调用BeanNameAware#setBeanName(String name)
+	4. 调用BeanFactoryAware#setBeanFactory(BeanFactory beanFactory)
+	5. 调用ApplicationContextAware#setApplicationContext(ApplicationContext applicationContext)
+	6. 调用BeanPostProcessor#postProcessBeforeInitialization(Object bean, String beanName)
+	(6). 调用注解@PostConstruct的自定义初始化方法
+	7. 调用InitializingBean#afterPropertiesSet()
+	8. 调用自定义初始化方法: initMethod 
+	9. 调用BeanPostProcessor#postProcessAfterInitialization(Object bean, String beanName)
+	10. 正常业务使用Bean
+	(10). 调用注解@PreDestroy的自定义销毁函数
+	11. 调用DisposableBean#destroy()
+	12. 调用自定义销毁函数: destroyMethod
+务必注意: 使用配置(init-method)或者@Bean注解中的initMethod的初始化方法和使用注解@PostConstruct的初始化方法的执行顺序，一个在InitializingBean#afterProperties()之前，一个在之后。同样，也要注意自定义销毁方法。
+
+真正完整的Bean生命周期如下：
+	1. Bean实例化 
+	2. Bean属性注入
+	3. 调用BeanNameAware#setBeanName()
+	4. 调用BeanClassLoaderAware#setBeanClassLoader()
+	5. 调用BeanFactoryAware#setBeanFactory()
+	6. 调用EnvironmentAware#setEnvironment()
+	7. 调用EmbeddedValueResolverAware#setEmbeddedValueResolver()
+	8. 调用ResourceLoaderAware#setResourceLoader()
+	9. 调用ApplicationEventPublisherAware#setApplicationEventPublisher()
+	10. 调用MessageSourceAware#setMessageSource()
+	11. 调用ApplicationContextAware#setApplicationContext
+	12. 如果是WebApplication，则调用ServletContextAware#setServletContext()
+	13. 调用BeanPostProcessor#postProcessBeforeInitialization
+	14. 调用注解@PostConstruct的自定义初始化方法
+	15. 调用InitializingBean#afterPropertiesSet
+	16. 调用自定义初始化方法(在配置文件或者@Bean中)
+	17. 调用BeanPostProcessor#postProcessAfterInitialization
+	18. 正常业务使用Bean
+	19. 调用@PreDestroy的自定义销毁函数
+	20. 调用DisposableBean#destroy
+	21. 调用自定义销毁函数
+
+Spring的生命周期有四个阶段，以及每个阶段的扩展点。
+实例化，属性赋值对应构造方法和setter方法注入。
+初始化和销毁是用户能自定义扩展的两个阶段
+实例化: Instantiation
+属性赋值：Populate
+初始化: Initialization
+销毁: Destruction
+
+/* Subinterface of BeanPostProcessor that adds a before-instantiation callback, and a callback after instantiation but before explicit properties are set or autowiring occurs.
+Typically used to suppress default instantiation for specific target beans, for examples to create proxies with special TargetSources(pooling targets, lazily initializing targets, etc), or to implement additional injection strategies such as field injection.
+NOTE: This interface is a special purpose interface, mainly for internal use within the framework. It is recommended to implement the plain BeanPostProcessor interface as far as possible, or to derive from InstantiationAwareBeanPostProcessorAdapter in order to be shielded from extensions to this interface. 
+*/
+public interface InstantiationAwareBeanPostProcessor extends BeanPostProcessor {
+	Object postProcessBeforeInstantiation(Class<?> beanClass, String beanName) throws BeansException;
+	boolean postProcessAfterInstantiation(Object bean, String beanName) throws BeansException;
+	PropertyValues postProcessPropertyValues(PropertyValues, pvs, PropertyDescriptor[] pds, 
+												Object bean, String beanName) throws BeansException;
+}
+
+Aware类型的接口的作用就是让我们能够拿到Spring容器中的一些资源。基本都能够见名知意，Aware之前的名字就是可以拿到什么资源，例如BeanNameAware可以拿到BeanName，以此类推。调用时机需要注意：所有的Aware方法都是在初始化阶段之前调用的！
+--------------------------------------------------------------------------------------
+EasyTransaction: 
+A distributed transaction solution unified the usage of TCC, SAGA, FMT(seata/fescar AutoCompensation), reliable message, compensate and so on. 
+柔性事务，分布式事务，TCC，SAGA，可靠消息，最大努力交付消息，事务消息，补偿，全局事务，soft transaction, distribute transaction, compensation, 自动补偿。 
+EasyTransaction可一站式解决分布式SOA(包括微服务)的事务问题。
+EasyTransaction意在解决对于每个分布式事务场景中都自行重复设计中间状态、幂等实现及重试逻辑的状况。
+采纳EasyTransaction后能解决现有已发现的所有分布式事务场景，减少设计开发工作量，提高开发效率，并统一保证事务实现的可靠性。
+特性如下：
+	1. 引入jar即用，无需独立部署协调者，无需独立部署ZK(使用extensionsuite-database-starter时);
+	2. 一个框架包括多种事务形态，一个框架搞定所有类型的事务；
+	3. 多种事务形态可混合使用；
+	4. 高性能，大多数业务系统瓶颈在业务数据库，若不启用框架的幂等功能，对业务数据库的额外消耗仅为25字节；
+	5. 框架自带幂等实现及调用错乱次序处理，大幅减轻业务开发工作量，但启用的同时会在业务数据库增加一条幂等控制行；
+	6. 业务代码可实现完全无侵入；
+	7. 支持嵌套事务；
+	8. 分布式事务ID可关联业务ID，业务类型，APPID，便于监控各个业务的分布式事务执行情况；
+	9. 整合Seata的AT模式，改造行锁使其存储到本地，改造集中式TC为ET的分布式协调。
+--------------------------------------------------------------------------------------
+ByteTCC:
+ByteTCC is a distributed transaction manager based on the TCC(Try/Confirm/Cancel) mechanism. It is compatible with JTA specification. 
+Features:
+	- support declarative transaction management.
+	- support normal transaction, TCC transaction, compensating service transaction.
+	- support distributed transaction scenarios. e.g. multi-database, cross-applications and cross-servers transaction.
+	- support long live transaction.
+	- support dubbo framework.
+	- support Spring Cloud.
+	- provide solutions for service idempotence in framework layer. 
+--------------------------------------------------------------------------------------
+Hmily: 高性能异步分布式事务TCC框架。
+Modules:
+	- hmily-admin
+	- hmily-annotation
+	- hmily-apache-dubbo
+	- hmily-common 
+	- hmily-core
+	- hmily-dashboard
+	- hmily-dubbo
+	- hmily-motan
+	- hmily-springcloud
+	- hmily-spring-boot-starter
+Features:
+	- All Spring version are supported and Seamlessintegration.
+	- Provides support for the spring-cloud, dubbo, motan RPC framework.
+	- Provides integration of the spring boot starter.
+	- Support Nested transaction.
+	- Local transaction storage support: redis, mongodb, zookeeper, file, mysql.
+	- Transaction log serialization support: java, hessian, kryo, protostuff
+	- Spi extension: Users can customize the storage of serialization and transaction logs
+Hmily为什么这么高性能?
+	1. 采用disruptor进行事务日志的异步读写(disruptor是一个无锁，无GC的并发编程框架)
+	2. 异步支持confirm/cancel方法；
+	3. ThreadLocal缓存的使用
+	4. GuavaCache的使用
+--------------------------------------------------------------------------------------
+TCC-Transaction:
+
+--------------------------------------------------------------------------------------
+TX-LCN：定位于一款事务协调性框架，框架本身并不操作事务，而是基于对事务的协调从而达到事务一致性的效果。
+TC-LCN主要有两个模块：Tx-Client(TC)和Tx-Manager(TM)。TC作为微服务下的依赖，TM是独立的服务。
+TxClient作为模块的依赖框架，提供TX-LCN的标准支持，TxManager作为分布式事务的控制方。
+事务发起方或者参与方都由TxClient端来控制。
+LCN事务模式：
+	1. 原理介绍：LCN模式是通过代理Connection的方式实现对本地事务的操作，然后再由TxManager统一协调控制事务。当本地事务提交回滚或者关闭连接时将会执行假操作，该代理的连接将由LCN连接池管理。
+	2. 模式特点：
+		- 该模式对代码的嵌入式为低；
+		- 该模式仅限于本地存在连接对象且可通过连接对象控制事务的模块；
+		- 该模式下的事务提交与回滚是由本地事务方控制，对于数据一致性上有较高的保障；
+		- 该模式缺陷在于代理的连接需要随事务发起方一同释放连接，增加了连接占用的时间；
+TCC模式：
+	1. 原理介绍：TCC事务机制相对于传统事务机制(X/Open XA Two-Phase-Commit)，其特征在于它不依赖资源管理器(RM)对XA的支持，而是通过对(由业务系统提供的)业务逻辑的调度来实现分布式事务。主要由三步操作，Try: 尝试执行业务、 Confirm:确认执行业务、 Cancel: 取消执行业务。
+	2. 模式特点：
+		- 该模式对代码的嵌入性高，要求每个业务需要写三种步骤的操作；
+		- 该模式对有无本地事务控制都可以支持使用面广；
+		- 数据一致性控制几乎完全由开发者控制，对业务开发难度要求高；
+TXC模式：
+	1. 原理介绍：TXC模式来源于淘宝，实现原理是在执行SQL之前，先查询SQL的影响数据，然后保存支持的SQL快照信息和创建锁。当需要回滚的时候就采用这些记录回滚数据库，目前锁实现依赖Redis分布式锁控制。
+	2. 模式特点：
+		- 同样对代码的嵌入性低；
+		- 仅限于对支持SQL方式的模块支持；
+		- 该模式由于每次执行SQL前需要先查询影响数据，因此相比LCN模式消耗资源与时间更多；
+		- 该模式不好占用数据库的连接资源；
+
+--------------------------------------------------------------------------------------
+TCC-Transaction, hmily, ByteTCC, EasyTransaction, tx-lcn比对:
+从关注度来看:
+	1. TCC-Transaction: Github 4.2K Stars
+	2. Hmily: Github 2.6K Stars
+	3. ByteTCC: Github 2.1K Stars 
+	4. EasyTransaction: Github 1.9K Stars 
+	5. tx-lcn: Github 3K Stars 
+从幂等性支持：
+	1. EasyTransaction: 支持, 业务可选择启用（框架支持情况下影响性能）
+	2. ByteTCC: provide solutions for service idempotence in framework layer. 
+	3. Hmily: 不支持；
+	4. TCC-Transaction: 不支持；
+	5. tx-lcn: 不支持；
+	
+从嵌套调用支持:
+	1. EasyTransaction: 支持嵌套事务 
+	2. ByteTCC: 不支持
+	3. Hmily: Support Nested transaction;
+	4. TCC-Transaction: 不支持；
+	5. tx-lcn: 不支持；
+从RPC框架支持:
+	1. EasyTransaction: Dubbo, Spring Cloud ribbon/eureka，支持可扩展
+	2. ByteTCC: Dubbo, Spring Cloud
+	3. Hmily: Dubbo, SpringCloud, Motan
+	4. TCC-Transaction: 不和底层使用的RPC框架耦合，即使用dubbo, thrift, web service, http都可。但提供tcc-tansaction-dubbo.jar方便dubbo框架的集成。
+	5. tx-lcn: Dubbo, Spring Cloud。支持可扩展。
+从事务日志存储方式:
+	1. EasyTransaction: 支持关系数据库, Redis。支持可扩展
+	2. ByteTCC: File，最新版本支持MongoDB
+	3. Hmily: Redis, MongoDB, Zookeeper, MySQL, File
+	4. TCC-Transaction: FileSystemTransactionRepository, SpringJdbcTransactionRepository, RedisTransactionRepository, ZookeeperTransactionRepository.
+	5. tx-lcn: MySQL。
+从性能角度: 
+	1. EasyTransaction: 第三方测试，优于很多框架
+	2. ByteTCC: 一般 
+	3. Hmily: 非常高
+	4. TCC-Transaction: 比较低 
+	5. tx-lcn: 比较低
+事务崩溃恢复支持情况：
+	1. EasyTransaction: 支持；有后台线程负责crash恢复，其根据"在执行分布式调用前写入的WriteAheadLog获取可能已经调用的业务"以及"跟随业务一起提交的一条框架记录以确认的业务最终提交状态"来进行最终的crash具体操作(如TCC的Confirm或者Rollback)
+	2. ByteTCC: 支持。
+	3. Hmily: ? 
+	4. TCC-Transaction: 定期异步恢复事务，有相关参数可供设置。
+	5. tx-lcn: 超时后自动补偿机制会自动修复在分布式事务时间后系统存在的可修复异常。
+	
+--------------------------------------------------------------------------------------
+Kubernetes-Ingress: 管理对集群中的服务(通常是HTTP)的外部访问的API对象。Ingress可以提供负载均衡、SSL终端和基于名称的虚拟主机。
+
+分布式事务常见解决方案：
+	1. TCC方案
+	2. 2PC
+	3. 3PC 
+	4. 本地消息表 
+	5. 可靠消息最终一致性
+	6. 最大努力通知 
+	7. saga事务 
+
+CQRS:命令查询责任分离是一种分离写入(命令)和读取(查询)的方式。可以专门有一个数据库用来管理写入部分。查询和读部分(也称为视图或者投影)虽然源自写入部分，但是由另外一个或多个数据库进行专门管理。大多数情况下，读部分的查询是异步计算的，这意味着两部分都不是严格一致的。
+CQRS背后的思想之一是：必须承认单单依靠一个数据库几乎不可能同时有效管理读取和写入两种操作。为了侧重读操作和写操作，可以选择不同的软件供应商，对应用的数据库进行调整等措施。例如，Apache Cassandra在保存/写入数据方面是有效的，而Elasticsearch非常适合搜索的。使用CQRS实际上是一种利用解决方案优势而不是依赖唯一单一数据库的方法。
+
+类实例化的顺序：
+	1. 父类静态成员和静态代码块，按在代码中出现的顺序依次执行；
+	2. 子类静态成员和静态代码块，按在代码中出现的顺序依次执行；
+	3. 父类实例成员和实例初始化块，按在代码中出现的顺序依次执行；
+	4. 父类构造方法；
+	5. 子类实例成员和实例初始化块，按在代码中出现的顺序依次执行；
+	6. 子类构造方法；
+结论：对象初始化顺序：先静态，再实例成员，最后构造方法；每个都是先父类再子类。
+
+/* The Void class is an uninstantiable placeholder class to hold a reference to the Class object representing the Java keyword void. 
+*/
+public final class Void {
+	// The Class object representing the pseudo-type corresponding to the keyword void.
+	@SuppressWarnings("unchecked")
+	public static final Class<Void> TYPE = (Class<Void>) Class.getPrimitiveClass("void");
+	// The Void class cannot be instantiated.
+	private Void() {}
+}
+
+/* A recursive resultless ForkJoinTask. This class establishes conventions to parameterize resultless actions as Void ForkJoinTasks. Because null is the only valid value of type Void, methods such as join always return null upon completion. 
+*/
+public abstract class RecursiveAction extends ForkJoinTask<Void> {
+	private static final long serialVersionUID = 5232453952276485070L;
+	protected abstract void compute();
+	public final Void getRawResult() { return null; }
+	protected final void setRawResult(Void mustBeNull) {}
+	protected final boolean exec() {
+		compute();
+		return true;
+	}
+}
+
+切记：算法中的除以2, 4, 8...，要使用无符号右移 >>> 2的幂次
+
+Eureka有什么问题:
+	1. 安全性: 服务注册中心的安全性需要考虑，应该对服务注册和发现的请求进行鉴权，来确保服务的安全性。Eureka天生不支持，需要额外扩展。
+	2. 新注册服务的快速发现问题: Eureka因为缓存设计的原因，使得服务注册之后，最迟需要120秒才能倍发现。
+	3. Eureka默认注册的是hostname，对于docker环境来说不适用，需要设置eureka.instance.prefer-ip-address=true。
+	4. Eureka只是一个AP。为了保证高可用性，分布式部署时，由于数据同步比较慢，导致一致性比较差。
+	5. 不支持事件通知：只支持拉模式，不支持推送模式。
+	6. 集群部署，并且注册实例很多时，Eureka服务端之间的信息同步会占用大量网络资源。
+
+/* An array of object references in which elements may be updated atomically. See the JUC.atomic package specification for description of the properties of atomic variables. 
+*/
+public class AtomicReferenceArray<E> implements java.io.Serializable {
+	private static final long serialVersionUID = -6209656149925076980L;
+	
+	private static final Unsafe unsafe;
+	private static final int base;
+	private static final int shift;
+	private static final long arrayFieldOffset;
+	private final Object[] array;   // must have exact type Object[]
+	
+	static {
+		try {
+			unsafe = Unsafe.getUnsafe();
+			arrayFieldOffset = unsafe.objectFieldOffset(
+						AtomicReferenceArray.class.getDeclaredFiled("array"));
+			base = unsafe.arrayBaseOffset(Object[].class);
+			int scale = unsafe.arrayIndexScale(Object[].class);
+			if ((scale & (scale - 1)) != 0)
+				throw new Error("data type scale not a power of two");
+			shift = 31 - Integer.numberOfLeadingZeros(scale);
+		} catch (Exception e) {
+			throw new Error(e);
+		}
+	}
+	
+	private long checkedByteOffset(int i) {
+		if (i < 0 || i >= array.length)
+			throw new IndexOutOfBoundsException("index " + i);
+		return byteOffset(i);
+	}
+	
+	private static long byteOffset(int i) {
+		return ((long)i << shift) + base;
+	}
+	
+	public AtomicReferenceArray(int length) {
+		array = new Object[length];
+	}
+	public AtomicReferenceArray(E[] array) {
+		this.array = Arrays.copyOf(array, array.length, Object[].class);
+	}
+	public final int length() {
+        return array.length;
+    }
+	public final E get(int i) {
+		return getRaw(checkedByteOffset(i));
+	}
+	@SuppressWarnings("unchecked")
+	private E getRaw(long offset) {
+		return (E) unsafe.getObjectVolatile(array, offset);
+	}
+	public final void set(int i, E newValue) {
+		unsafe.putObjectVolatile(array, checkedByteOffset(i), newValue);
+	}
+	public final void lazySet(int i, E newValue) {
+		unsafe.putOrderedObject(array, checkedByteOffset(i), newValue);
+	}
+	@SuppressWarnings("unchecked")
+	public final E getAndSet(int i, E newValue) {
+		return (E) unsafe.getAndSetObject(array, checkedByteOffset(i), newValue);
+	}
+	    /**
+     * Atomically sets the element at position {@code i} to the given
+     * updated value if the current value {@code ==} the expected value.
+     *
+     * @param i the index
+     * @param expect the expected value
+     * @param update the new value
+     * @return {@code true} if successful. False return indicates that
+     * the actual value was not equal to the expected value.
+     */
+    public final boolean compareAndSet(int i, E expect, E update) {
+        return compareAndSetRaw(checkedByteOffset(i), expect, update);
+    }
+
+    private boolean compareAndSetRaw(long offset, E expect, E update) {
+        return unsafe.compareAndSwapObject(array, offset, expect, update);
+    }
+
+    /**
+     * Atomically sets the element at position {@code i} to the given
+     * updated value if the current value {@code ==} the expected value.
+     *
+     * <p><a href="package-summary.html#weakCompareAndSet">May fail
+     * spuriously and does not provide ordering guarantees</a>, so is
+     * only rarely an appropriate alternative to {@code compareAndSet}.
+     *
+     * @param i the index
+     * @param expect the expected value
+     * @param update the new value
+     * @return {@code true} if successful
+     */
+    public final boolean weakCompareAndSet(int i, E expect, E update) {
+        return compareAndSet(i, expect, update);
+    }
+
+    /**
+     * Atomically updates the element at index {@code i} with the results
+     * of applying the given function, returning the previous value. The
+     * function should be side-effect-free, since it may be re-applied
+     * when attempted updates fail due to contention among threads.
+     *
+     * @param i the index
+     * @param updateFunction a side-effect-free function
+     * @return the previous value
+     * @since 1.8
+     */
+    public final E getAndUpdate(int i, UnaryOperator<E> updateFunction) {
+        long offset = checkedByteOffset(i);
+        E prev, next;
+        do {
+            prev = getRaw(offset);
+            next = updateFunction.apply(prev);
+        } while (!compareAndSetRaw(offset, prev, next));
+        return prev;
+    }
+
+    /**
+     * Atomically updates the element at index {@code i} with the results
+     * of applying the given function, returning the updated value. The
+     * function should be side-effect-free, since it may be re-applied
+     * when attempted updates fail due to contention among threads.
+     *
+     * @param i the index
+     * @param updateFunction a side-effect-free function
+     * @return the updated value
+     * @since 1.8
+     */
+    public final E updateAndGet(int i, UnaryOperator<E> updateFunction) {
+        long offset = checkedByteOffset(i);
+        E prev, next;
+        do {
+            prev = getRaw(offset);
+            next = updateFunction.apply(prev);
+        } while (!compareAndSetRaw(offset, prev, next));
+        return next;
+    }
+
+    /**
+     * Atomically updates the element at index {@code i} with the
+     * results of applying the given function to the current and
+     * given values, returning the previous value. The function should
+     * be side-effect-free, since it may be re-applied when attempted
+     * updates fail due to contention among threads.  The function is
+     * applied with the current value at index {@code i} as its first
+     * argument, and the given update as the second argument.
+     *
+     * @param i the index
+     * @param x the update value
+     * @param accumulatorFunction a side-effect-free function of two arguments
+     * @return the previous value
+     * @since 1.8
+     */
+    public final E getAndAccumulate(int i, E x,
+                                    BinaryOperator<E> accumulatorFunction) {
+        long offset = checkedByteOffset(i);
+        E prev, next;
+        do {
+            prev = getRaw(offset);
+            next = accumulatorFunction.apply(prev, x);
+        } while (!compareAndSetRaw(offset, prev, next));
+        return prev;
+    }
+
+    /**
+     * Atomically updates the element at index {@code i} with the
+     * results of applying the given function to the current and
+     * given values, returning the updated value. The function should
+     * be side-effect-free, since it may be re-applied when attempted
+     * updates fail due to contention among threads.  The function is
+     * applied with the current value at index {@code i} as its first
+     * argument, and the given update as the second argument.
+     *
+     * @param i the index
+     * @param x the update value
+     * @param accumulatorFunction a side-effect-free function of two arguments
+     * @return the updated value
+     * @since 1.8
+     */
+    public final E accumulateAndGet(int i, E x,
+                                    BinaryOperator<E> accumulatorFunction) {
+        long offset = checkedByteOffset(i);
+        E prev, next;
+        do {
+            prev = getRaw(offset);
+            next = accumulatorFunction.apply(prev, x);
+        } while (!compareAndSetRaw(offset, prev, next));
+        return next;
+    }
+
+    /**
+     * Returns the String representation of the current values of array.
+     * @return the String representation of the current values of array
+     */
+    public String toString() {
+        int iMax = array.length - 1;
+        if (iMax == -1)
+            return "[]";
+
+        StringBuilder b = new StringBuilder();
+        b.append('[');
+        for (int i = 0; ; i++) {
+            b.append(getRaw(byteOffset(i)));
+            if (i == iMax)
+                return b.append(']').toString();
+            b.append(',').append(' ');
+        }
+    }
+
+    /**
+     * Reconstitutes the instance from a stream (that is, deserializes it).
+     */
+    private void readObject(java.io.ObjectInputStream s)
+        throws java.io.IOException, ClassNotFoundException,
+        java.io.InvalidObjectException {
+        // Note: This must be changed if any additional fields are defined
+        Object a = s.readFields().get("array", null);
+        if (a == null || !a.getClass().isArray())
+            throw new java.io.InvalidObjectException("Not array type");
+        if (a.getClass() != Object[].class)
+            a = Arrays.copyOf((Object[])a, Array.getLength(a), Object[].class);
+        unsafe.putObjectVolatile(this, arrayFieldOffset, a);
+    }
+}
+
+跨语言的微服务：
+	1. K8S
+	2. Istio
+	3. gRPC
+	4. 不同语言对注册中心/熔断/发现/配置中心的适配
+	5. Service Mesh, SideCar 
+	6. Motan 
+	
+解决跨语言调用的思路无非两种：
+	1. 寻找一个通用的协议；
+	2. 使用agent完成协议的适配；
+
+微服务架构的缺点：
+	1. 微服务强调了服务大小，但实际上这并没有一个统一的标准：业务逻辑应该按照什么规则划分为微服务，这本身就是一个经验工程。有些开发者主张 10-100 行代码就应该建立一个微服务。虽然建立小型服务是微服务架构崇尚的，但要记住，微服务是达到目的的手段，而不是目标。微服务的目标是充分分解应用程序，以促进敏捷开发和持续集成部署。
+	2. 微服务的分布式特点带来的复杂性：开发人员需要基于 RPC 或者消息实现微服务之间的调用和通信，而这就使得服务之间的发现、服务调用链的跟踪和质量问题变得的相当棘手。
+	3. 分区的数据库体系和分布式事务：更新多个业务实体的业务交易相当普遍，不同服务可能拥有不同的数据库。CAP 原理的约束，使得我们不得不放弃传统的强一致性，而转而追求最终一致性，这个对开发人员来说是一个挑战。
+	4. 测试挑战：传统的单体WEB应用只需测试单一的 REST API 即可，而对微服务进行测试，需要启动它依赖的所有其他服务。这种复杂性不可低估。
+	5. 跨多个服务的更改：比如在传统单体应用中，若有 A、B、C 三个服务需要更改，A 依赖 B，B 依赖 C。我们只需更改相应的模块，然后一次性部署即可。但是在微服务架构中，我们需要仔细规划和协调每个服务的变更部署。我们需要先更新 C，然后更新 B，最后更新 A。
+	6. 部署复杂：微服务由不同的大量服务构成。每种服务可能拥有自己的配置、应用实例数量以及基础服务地址。这里就需要不同的配置、部署、扩展和监控组件。此外，我们还需要服务发现机制，以便服务可以发现与其通信的其他服务的地址。因此，成功部署微服务应用需要开发人员有更好地部署策略和高度自动化的水平。
+总的来说（问题和挑战）：API Gateway、服务间调用、服务发现、服务容错、服务部署、数据调用以及测试。

@@ -1,0 +1,1048 @@
+可以看出MyISM的索引文件仅仅保存数据记录的地址，在MyISM中，主索引和辅助索引(Secondary Index)在结构上没有任何区别，只是主索引要求key是唯一的，而辅助索引的key可以重复。
+因为InnoDB的数据文件本身要按主键聚集，所以InnoDB要求表必须有主键(MyISM可以没有)，如果没有显式指定，则MySQL会自动选择一个可以唯一标识数据记录的列作为主键，如果不存在这种列，自动为InnoDB表生成一个隐含字段作为主键，这个字段的长度为6个字节，类型为长整型。
+
+Eureka：
+	1. EurekaServer默认有两个缓存，一个是ReadWriteMap, 另一个是ReadOnlyMap。有服务提供者注册服务或者维持心跳时，会修改ReadWriteMap。当有服务调用者查询实例列表时，默认会从ReadOnlyMap读取(这个在原生Eureka可以配置，SpringCloud Eureka中不能配置，一定会启用ReadOnlyMap读取)，这样可以减少ReadWriteMap读写锁的争用，增大吞吐量。EurekaServer定时把数据从ReadWriteMap更新到ReadOnlyMap中。
+	ReadWriteMap是一个Guava Cache，过期时间是可以配置的。
+	2. 服务提供者注册服务后，会定时心跳。这个根据服务提供者的Eureka配置中的服务刷新时间决定。还有个配置是服务过期时间，这个配置在服务提供者配置但是在EurekaServer使用，但是默认配置EurekaServer不会启用这个字段。需要配置好EurekaServer的扫描失效时间，才会启用EurekaServer的主动失效机制。在这个机制启用下：每个服务提供者会发送自己服务过期时间上去，EurekaServer会定时检查每个服务过期时间和上次心跳时间，如果在过期时间内没有收到任何一次心跳，同时没有处于保护模式下，则会将这个实例从ReadWriteMap中去掉。
+	3. 在默认没有启用EurekaServer主动失效服务实例的情况下，服务过期是利用ReadWriteMap超时缓存失效实现的，只有发送心跳的实例缓存不会失效。
+	4. 服务调用者有本地缓存，定时从Eureka服务器上增量拉取所有服务实例列表。
+
+服务提供者和服务调用者配置不够灵敏，总是服务提供者在停掉很久之后，服务调用者很长时间并没有感知到变化的原因:EurekaServer自己的ReadWriteMap缓存失效延迟，刷新到ReadOnlyMap的延迟，服务调用者自己本地刷新的延迟。
+
+服务已经注册上去了，但是服务调用方很长时间还是调用不到，发现不了这个服务：刷新到ReadOnlyMap的延迟，服务调用者自己本地缓存刷新的延迟。
+---------------------------------------------------
+# eureka server刷新readCacheMap的时间，注意:client读取的是readCacheMap,这个时间决定了多久会把readWriteCacheMap的缓存更新到readCacheMap上
+#默认30S
+eureka.server.responseCacheUpdateIntervalMs=3000
+#eureka server缓存readWriteCacheMap失效时间，这个只有在这个时间过去后缓存才会失效，失效前不会更新，过期后从registry重新读取注册服务信息，registry是一个ConcurrentHashMap。
+#由于启用了evict其实就用不太上改这个配置了
+#默认180秒
+eureka.server.responseCacheAutoExpirationInSeconds=180
+
+#启用主动失效，并且每次主动失效检测间隔为3秒
+eureka.server.eviction-interval-timer-in-ms=3000
+
+#服务过期时间配置，超过这个时间没有接收到心跳EurekaServer就会将这个实例剔除
+#注意，EurekaServer一定要设置eureka.server.evition-interval-timer-in-ms否则这个配置无效，这个配置一般为服务刷新时间配置的三倍
+#默认90秒
+eureka.instance.lease-expiration-duration-in-seconds=15
+#服务刷新时间配置，每隔这个时间会主动心跳一次
+#默认30秒 
+eureka.instance.lease-renewal-interval-in-seconds=5
+
+#eureka client刷新本地缓存时间
+#默认30秒 
+eureka.client.registryFetchIntervalSeconds=5
+#eureka客户端ribbon刷新时间
+#默认30秒 
+ribbon.ServerListRefreshInterval=5000
+---------------------------------------------------
+public final class String implements java.io.Serializable,
+	Comparable<String>, CharSequence {
+	...
+	/* Returns a canonical representation for the string object.
+		A pool of strings, initially empty, is maintained privately by the 
+		class #String.
+		When the intern method is invoked, if the pool already contains 
+		a string equals to this #String object as determined by the 
+		#equals(Object) method, then th string from the pool is returned.
+		Otherwise, this #String object is added to the pool and a reference to 
+		this #String object is returned.
+		It follows that for any two strings #s and #t, s.intern() == t.intern() is 
+		#true if and only if #s.equals(t) is true.
+		All literal strings and string-valued constant expressions are interned. 
+		String literals are defined in section 3.10.5 of Java Specification.
+	*/
+	public native String intern();
+}
+
+判断字符串是否被缓存到常量池的两大要素：
+	1. 编译期间：字符串连接中没有使用变量或者调用方法(没有直接new)；
+	2. 是否使用了intern()：使用了该方法的字符串变量的值如果不存在常量池，则放在常量池中。
+
+javap/jad
+Sting对象的不可变性的好处：
+	1. 保证String对象的安全性。假设String对象是可变的，那么String对象将可能被恶意修改。
+	2. 保证hash属性值不会频繁变更，确保了唯一性，使得类似HashMap容器才能实现相应的key-value缓存功能。
+	3. 可以实现字符串常量池。
+	
+String str = new String(“abc”) 这种方式，首先在编译类文件时，"abc"常量字符串将会放入到常量结构中，在类加载时，“abc"将会在常量池中创建；其次，在调用 new 时，JVM 命令将会调用 String 的构造函数，同时引用常量池中的"abc” 字符串，在堆内存中创建一个 String 对象；最后，str 将引用 String 对象。	
+	
+
+Netty的ByteBuf API的优点：
+	1. 可以被用户自定义的缓冲区类型扩展；
+	2. 通过内置的复合缓冲区类型实现了透明的零拷贝；
+	3. 容量可以按需增长(类似于JDK的StringBuilder)；
+	4. 在读和写两种模式之间切换不需要调用ByteBuffer的flip()方法；
+	5. 读和写使用了不同的索引；
+	6. 支持方法的链式调用；
+	7. 支持引用计数；
+	8. 支持池化。
+
+ByteBuf是一个抽象类，内部全部是抽象的函数接口，AbstractByteBuf这个抽象类基本实现了ByteBuf。
+ByteBuf都是基于字节序列的，类似于一个字节数组。在AbstractByteBuf里面定义了下面5个变量：
+int readerIndex;
+int writerIndex;
+private int markedReaderIndex;
+private int markedWriterIndex;
+private int maxCapacity;
+ByteBuf与JDK中的ByteBuffer最大区别就是：
+	1. Netty的ByteBuf采用读写索引分离，一个初始化的ByteBuf的readerIndex和writerIndex都处于0位置。
+	2. 当读索引和写索引处于同一位置时，如果继续读取，会抛出IndexOutOfBoundsException。
+	3. 对于ByteBuf的任何读写操作都会单独维护读索引和写索引。maxCapacity最大容量是Integer.MAX_VALUE。
+
+Netty中对于IO通信线程中读写缓存时建议使用DirectByteBuffer，因为涉及大量的IO数据读写。对于后端的业务消息的编解码模块使用HeapByteBuffer。
+
+
+使用ThreadLocal时要注意什么？
+	1. 一般需要声明为private static final。
+	2. 在线程池环境下，由于线程一直存在，使用ThreadLocal可能看到之前Runnable的变量值；解决方法：当前任务执行完后将ThreadLocal进行remove或设置为初始值。
+	3. 内存泄漏。解决方法：显式remove
+
+public class CopyOnWriteArrayList<E> implements List<E>, RandomAccess,
+		Cloneable, java.io.Serializable {
+	private static final long serialVersionUID = 8673264195747942595L;
+	// The lock protecting all mutators 
+	final transient ReentrantLock lock = new ReentrantLock();
+	// The array, accessed only via getArray/setArray
+	private transient volatile Object[] array;
+	...
+	public E set(int index, E element) {
+		final ReentrantLock lock = this.lock;
+		lock.lock();
+		try {
+			Object[] elements = getArray();
+			E oldValue = get(elements, index);
+			if (oldValue != element) {
+				int len = elements.length;
+				Object[] newElements = Arrays.copyOf(elements, len);
+				newElements[index] = element;
+				setArray(newElements);
+			} else {
+				// Not quite a no-op; ensures volatile write semantics
+				setArray(elements);
+			}
+			return oldValue;
+		} finally {
+			lock.unlock();
+		}
+	}
+	...
+}
+
+CopyOnWriteArrayList在删除操作时，可能会存在线程不安全问题：当一个线程打算读取最后一个元素，但另外一个线程删除了最后一个元素，此时数组元素个数减少，发生数组越界异常。
+
+RegisterChannelFuture/NioEventLoop
+Netty是一个异步事件驱动的网络应用程序框架，用于快速开发可维护的高性能协议服务器和客户端。
+
+Channel, ChannelPipeline, ChannelHandler, ChannelEvent, ServerBootstrap,
+NioServerSocketChannelFactory, ChannelPipelineFactory, ChannelPipeline,Channels,
+SimpleChannelUpstreamHandler, ChannelHandlerContext, MessageEvent, ChannelBuffer,
+
+JDK原生NIO程序的问题：
+	1. NIO的类库和API繁杂，使用麻烦，需要熟悉:Selector, ServerSocketChannel, SocketChannel, ByteBuffer等。
+	2. 需要具备其他额外技能。例如熟悉Java多线程编程，因为NIO涉及Reactor模式，必须对多线程和网络编程非常熟悉，才能编写出高质量的NIO程序。
+	3. 可靠性能力补齐，开发工作量和难度都非常大。例如客户端面临断连重连、网络闪断、半包读写、失败缓存、网络拥塞和异常码流的处理。
+
+Netty作为异步事件驱动的网络，高性能主要来自于IO模型和线程处理模型，前者决定如何收发数据，后者决定如何处理数据。
+NioEventLoop 
+----------------------------
+事件驱动模型，主要包括4个基本组件：
+	1. 事件队列(event queue):接收事件的入口，存储待处理事件；
+	2. 分发器(event mediator): 将不同的事件分发到不同的业务逻辑单元；
+	3. 事件通道(event channel)： 分发器和处理器之间的联系渠道；
+	4. 事件处理器(event processor)：实现业务逻辑，处理完成后会发出事件，触发下一步操作。
+可以看出，相对于传统轮询模式，事件驱动有如下优点：
+	1. 可扩展性好，分布式的异步架构，事件处理器之间高度解耦，可以方便扩展事件处理逻辑。
+	2. 高性能，基于队列暂存事件，能方便并行异步处理事件。
+----------------------------
+取决于Reactor的数量和Handler线程数量的不同，Reactor模型有3个变种：
+	1. 单Reactor单线程;
+	2. 单Reactor多线程;
+	3. 主从Reactor多线程;
+Netty主要基于主从Reactor多线程模型做了一定的修改，其中主从Reactor多线程模型有多个Reactor：
+	1. MainReactor负责客户端的连接请求，并将请求转交给SubReactor；
+	2. SubReactor负责相应通道的IO读写请求；
+	3. 非IO请求(具体逻辑处理)的任务会直接写入队列，等待worker threads进行处理。
+特别说明：虽然Netty的线程模型基于主从Reactor多线程，借用了MainReactor和SubReactor的结构。但是实际实现上SubReactor和Worker线程在同一个线程池中。
+Netty中的IO操作是异步的，包括bind,write,connect等操作会简单的返回一个ChannelFuture。调用者并不能立刻获得结果，而是通过Future-Listener机制，可以方便的主动获取或者通过通知机制获得IO操作结果。
+NioSocketChannel, NioServerSocketChannel, NioDatagramChannel, NioSctpChannel, NioSctpServerChannel
+NioEventLoop中维护了一个线程和任务队列，支持异步提交执行任务，线程启动时会调用NioEventLoop的run方法，执行IO任务和非IO任务：
+	IO任务，即selectionKey中的ready事件，如accept,connect,read,write等，由processSelectedKeys方法触发。
+	非IO任务，添加到taskQueue中的任务，如register0,bind0等任务，由runAllTasks方法触发。
+两种任务的执行时间由变量ioRatio控制，默认为50，则表示非IO任务执行的时间和IO任务的执行时间相等。
+NioEventLoopGroup，主要管理eventLoop的生命周期，可以理解为一个线程池，内部维护了一组线程，每个线程(NioEventLoop)负责处理多个Channel上的事件，而一个Channel只对应一个线程。
+ChannelHandler, ChannelInboundHandler, ChannelOutboundHandler, ChannelInboundHanderAdapter,
+ChannelOutboundHandlerAdapter, ChannelDuplexHandler
+ChannelHandlerContext ChannelPipelin 
+
+unclean.leader.election.enable设置为false，表明，当存在最新一条记录的replication宕机的时候，Kafka自己会选举出一个主节点，如果默认允许还未同步最新数据的replication所在的节点被选举为主节点的话，你的数据为丢失，因此应该按需将参数设置为false；
+auto.offset.reset参数设置为earlist避免出现offset丢失的时候，跳过需要消费的数据情况，准确来说这里并非丢失，即使因为参数配置问题出现跳过的情况，也可以通过前置offset找回历史消息。
+
+从Kafka 0.11版本开始，生产者就支持两种额外的发送模式：幂等发送(The idempotent producer)和事务发送(The transactional producer)，可以说是Kafka在支持EOS(exactly-once semantics)上的重要功能。
+为了实现Producer的幂等性，Kafka引入了Producer ID(即PID)和Sequence Number。
+PID：当Producer在初始化的时候，会分配一个唯一的PID,这个PID对用户是不可见的。
+Sequence Number:对于每个PID，该Producer发送数据的每个<Topic, Partition>都对应一个从0开始单调递增的Sequence Number。
+Broker端在缓存中保存了Sequenc Number，对于接收的每条消息，如果其序号比Broker缓存中序号大于1则接受，否则将其丢弃。这样就可以实现了消息重复提交了。但是，只能保证单个Producer对于同一个<Topic,Partition>的EOS，不能保证同一个Producer一个topic不同partition幂等。
+
+目前比较新版本的Kafka正式替换了Scala版本的old producer，使用了由java重写的producer，新版本的producer采用异步发送机制，KafkaProducer.send(ProducerRecord)方法仅仅是把这条消息放入一个缓存中（即RecordAccumulator,本质上使用队列来缓存记录），同时后台的IO线程会不断扫描该缓存区，将满足条件的消息封装到某个batch中然后发送出去，显然，这个过程中就有一个数据丢失的窗口：若IO线程发送之前client端挂掉了，累积在accumulator中的数据的确有可能会丢失。
+
+Producer的另一个问题是消息乱序问题，假设客户端代码依次执行下面的语句将两条消息发到相同的分区
+producer.send(record1);
+producer.send(record2);
+如果此时由于某些原因（比如瞬间的网络抖动）导致record1没有成功发送，同时kafka又配置了重试机制和max.in.flight.requests.per.connection大于1(默认值是5，本来就是大于1的)，那么重试record1成功后，record1在分区中就在record2之后，从而造成消息的乱序，很多某些要求强顺序保证的场景是不允许出现这种情况的。发送之后重发就会丢失顺序
+max.in.flight.requests.per.connection=1:限制客户端在单个连接上能够发送的未响应请求的个数，设置此值为1表示Kafka Broker在响应请求之前Client不能再向同一个Broker发送请求，注意：设置此参数是为了避免消息乱序。
+
+BKA是指在表连接的过程中为了提升join性能而使用的一种join buffer，其作用是在读取被join表的记录的时候使用顺序IO，BKA被使用的标识是执行计划的extr信息中会有"Batched Key Access"信息。
+使用BKA的表的join过程如下：
+	1. 连接表将满足条件的记录放入JOIN_CACHE，并将两表连接的字段放入一个 DYNAMIC_ARRAY ranges 中，此过程类似于 MRR 操作的过程，且在内存中使用的是同样的结构体 DsMrr_impl；
+	2. 在进行表的过接过程中，会将 ranges 相关的信息传入 DsMrr_impl::dsmrr_fill_buffer，并进行被连接表主建的查找及排序等操作操作，这个过程比较复杂，包括需要判断使用的 key、key 是主建时的特殊操作等；
+	3. JOIN_CACHE_BKA::join_matching_records 会调用过程2中产生的有序主建，然后顺序读取数据并进入下一步的操作（evaluate_join_record 等）；
+	4. 当缓冲区的数据被读完后，会重复进行过程2，3, 直到记录被读取完。
+由上面的分析可以看出，BKA将有序主键投递到存储引擎是通过MRR的接口的调用来实现的(DsMrr_impl::dsmrr_next)，所以BKA依赖MRR，如果要使用BKA，MRR是需要打开的，另外batched_key_access是默认关闭的，如果要使用，需要打开此选项。
+
+Netty的零拷贝：
+	1. 使用FileChannel.transfer避免在用户态和内核态之间的拷贝操作；
+	2. 通过CompositeByteBuf组合多个ByteBuffer；
+	3. 通过slice获取ByteBuffer的切片；
+	4. 通过wrapper把普通ByteBuffer封装成netty.ByteBuf。
+----------------------------------------------------
+数据库隔离怎么实现的(原理)：
+read_uncommited的原理：
+	- 事务对当前被读取的数据不加锁；
+	- 事务在更新某数据的瞬间(就是发生更新的瞬间)，必须先对其加行级共享锁，直到事务结束才释放。
+read_commited的原理：
+	- 事务对当前被读取的数据加行级共享锁(当读到时才加锁)，一旦读完该行，立即释放该行级共享锁；
+	- 事务在更新某数据的瞬间(就是发生更新的瞬间)，必须先对其加行级排它锁，直到事务结束才释放。 
+repeatable_read的原理:
+	- 事务在读取某数据的瞬间(就是开始读取的瞬间)，必须对其加行级共享锁，直到事务结束才释放；
+	- 事务更新某数据的瞬间(就是发生更新的瞬间)，必须对其加行级排它锁，直到事务结束才释放。
+serializable的原理：
+	- 事务在读取数据时，必须先对其加表级共享锁，直到事务结束才释放；
+	- 事务在更新数据时，必须先对其加表级排它锁，直到事务结束才释放。
+----------------------------------------------------
+数据库事务有不同的隔离级别，不同的隔离级别对锁的使用是不同的，锁的应用最终导致不同事务的隔离级别。
+MySQL的repeatable_read可重复读可以通过MVCC解决幻读问题，但不能解决下面的问题：A,B两个事务，A事务开始，B事务开始，A事务插入一条记录，A事务提交，B事务插入同一条记录，B事务提交。最终导致主键冲突。这种情况只能在serializable隔离级别下才能解决。
+MySQL和其他数据库不一样，它可以在可重复读范围内解决幻读问题。
+
+select机制的问题：
+	1. 每次调用select，都需要把fd_set集合从用户态拷贝到内核态，如果fd_set集合很大时，那么开销很大；
+	2. 每次调用select都需要遍历从内核传递过来的所有fd_set，如果fd_set集合很大时，那么开销很大；
+	3. 为了减少数据拷贝带来的性能损失，内核对被监控的fd_set集合大小做了限制，并且这个是通过宏控制的，大小不可改变(限制为1024).
+poll的机制与select类似，与select本质上没有多大差别，管理多个描述符也是进行轮询，根据描述符的状态进行处理，但是poll没有最大文件描述符数量的限制。也就是，poll只解决了上面的问题3，并没有解决问题1，2的性能开销问题。
+epoll在Linux2.6内核正式提出，是基于事件驱动的IO方式，相对于select来说，epoll没有描述符个数限制，使用一个文件描述符管理多个描述符，将用户关心的文件描述符的事件存放在内核的一个事件表中，这样在用户空间和内核空间的copy只需一次。
+epoll是Linux内核为处理大批量文件描述符而改进的poll，是Linux下多路复用IO接口select/poll的增强版本，它能显著提高程序在大量并发连接中只有少量活跃的情况下系统CPU利用率。原因就是获取事件的时候，它无需遍历真个被侦听的描述符集，只要遍历那些被内核IO事件异步唤醒而加入Ready队列的描述符集合就行了。
+epoll除了提供select/poll那种IO事件的水平触发(Level Triggered)外，还提供了边缘触发(Edge Triggered)，这就使得用户空间程序有可能缓存IO状态，减少epoll_wait/epoll_pwait的调用，提高应用程序效率。
+水平触发(LT)：默认工作模式，即当epoll_wait检测到某描述符事件就绪并通知应用程序时，应用程序可以不立即处理该事件；下次调用epoll_wait时，会再次通知此事件。
+边缘触发(ET): 当epoll_wait检测到某描述符事件就绪并通知应用程序时，应用程序立即处理该事件。如果不处理，下次调用epoll_wait时，不会再次通知此事件(直到你做了某些操作导致该描述符变成未就绪状态了，也就是说边缘触发只在状态由未就绪变为就绪时，只通知一次)。
+ET模式很大程度上减少了epoll事件的触发次数，因此效率比LT模式下高。
+
+Active Record(活动记录)，是一种领域模型模式，特点是一个模型类对应关系型数据库中的一个表，而模型类的一个实例对应表中的一行记录。
+
+MyBatis的#{}和${}的区别：
+	1. #是预编译的方式，$是直接拼接；
+	2. #不需要关注数据类型，MyBatis实现自动数据类型转换；$不做数据类型转换，需要自行判断类型；
+	3. #可以防止SQL注入，$无法防止SQL注入；
+	4. 如果parameterType只有一个参数，默认情况下，#{}中可以写任意的名字；${}只能用value来接收。
+	5. 因为预编译语句可以缓存PreparedStatement对象，MyBatis会预编译，#{}性能相对会高一些。
+在某些场景下，只能用${}，比如order by后的排序字段、表名、列名等，因为需要替换为不变的常量
+
+Record Locks:行锁，该锁是对索引记录进行加锁。锁是加在索引上而不是行上。
+Gap Locks:间隙锁，是对索引的间隙加锁，其目的只有一个，防止其他事务插入数据。在Read Committed隔离级别下，不会使用间隙锁。隔离级别比Read Committed低的情况下，也不会使用间隙锁，如隔离级别为Read Uncommitted时，也不存在间隙锁。当隔离级别为Repeatable Read和Serializable时，就会存在间隙锁。
+
+begin/start transaction命令并不是一个事务的起点，在执行到它们之后的第一个操作InnoDB表的语句(第一个快照读语句)，事务才真正启动。如果想要马上启动一个事务，可以使用start transaction with consistent snapshot这个命令。
+
+在MySQL中，有两个"视图"的概念：
+	1. 一个是view。它是一个用查询语句定义的虚拟表，在调用的时候执行查询语句并生成结果。创建视图的语法是create view ...，而它的查询方法与表一样。
+	2. 另一个是InnoDB在实现MVCC时用到的一致性读视图，即consistent read view,用于支持RC和RR隔离级别的实现。
+
+在实现上，InnoDB为每个事务构造了一个数组，用来保存这个事务启动瞬间，当前正在"活跃"的所有事务ID。"活跃"指的是：启动了但还没提交。
+数组里事务ID的最小值为低水位，当前系统里面已经创建过的事务ID的最大值加1记为高水位。
+这个视图数组和高水位，就组成了当前事务的一致性视图(read-view)。而数据版本的可见性规则，就是基于数据的row trx_id和这个一致性视图的比对结果得到的。
+一条规则：更新数据都是先读后写，而这个读，只能读当前的值，称为"当前读"(current read)。
+其实，除了update语句外，select语句如果加锁，也是当前读。所以，如果select * from t where id=1，加上lock in share mode或for update，也都可以读到版本号是最新的值。
+可重复读的核心就是一致性读(consistent read)；而事务更新数据的时候，只能用当前读。如果当前的记录的行锁被其他事务占用的话，就需要进入锁等待。
+而读提交(RC)和可重复读的逻辑类似，它们最主要的区别是：
+	1. 在可重复读隔离级别下，只需要事务开始的时候创建一致性视图，之后事务里的其他查询都共用这个一致性视图；
+	2. 在读提交隔离级别下，每一个语句执行前都会重新算出一个新的视图。
+
+消息队列具有以下优势：
+	1. 削峰填谷(主要解决瞬时写压力大于应用服务器能力导致消息丢失、系统崩溃等问题);
+	2. 系统解耦(解决不同重要程度、不同能力级别系统之间依赖导致系统同生共死)；
+	3. 提升性能(当存在一对多调用时，可以发一条消息给消息系统，让消息系统通知相关系统);
+	4. 蓄流压测(线上有些链路不好压测，可以通过堆积一定量消息再放开来压测)
+RocketMQ相比于RabbitMQ,Kafak具有的优势：
+	1. 支持事务型消息(消息发送和DB操作保持两方的最终一致性，RabbitMQ和Kafka不支持);
+	2. 支持结合RocketMQ的多个系统之间数据最终一致性(多方事务、二方事务是前提)；
+	3. 支持18个级别的延迟消息(RabbitMQ和Kafka不支持)；
+	4. 支持指定次数和时间间隔的失败消息重发(Kafka不支持，RabbitMQ需要手动确认)；
+	5. 支持Consumer端tag过滤，减少不必要的网络传输(RabbitMQ和Kafka不支持);
+	6. 支持重复消费(RabbitMQ不支持，Kafka支持).
+
+LOCK_REC_NOT_GAP：锁带上这个flag时，表示这个锁对象只是单纯的锁在记录上，不会锁记录之前的gap。在RC隔离级别下一般加的都是该类型的记录锁(但唯一二级索引上的duplicate key检查除外，总是加LOCK_ORDINARY类型的锁)。
+LOCK_GAP:表示只锁住一段范围，不锁记录本身，通常表示两个索引记录之间，或者索引上的第一个记录之前，或者最后一条记录之后的锁。可以理解为一种区间锁，一般在RR隔离级别下会使用到GAP锁。
+可以通过切换到RC隔离级别，或者开启选项innodb_locks_unsafe_for_binlog来避免GAP锁。这时候只有在检查外键约束或者duplicate key检查时才会使用到GAP LOCK。
+LOCK_ORDINARY(Next-Key Lock):即next-key锁，包括记录本身及记录之前的GAP。当前MySQL默认情况下使用RR的隔离级别，而Next-key Lock正是为了解决RR隔离级别下的幻读问题。所谓幻读就是一个事务内执行相同的查询，会看到不同的行记录。在RR隔离级别下这是不允许的。
+
+大多数情况下，事务锁都是在事务提交时释放，但有两种意外：
+	1. Auto-inc锁在SQL结束时直接释放；
+	2. 在RC隔离级别下执行DML语句时，从引擎层返回到Server层的记录，如果不满足where条件，则需要立刻unlock掉。
+除了这两种情况外，其他的事务都是在事务提交时释放的。事务持有的所有锁都维护在链表trx_t::lock.trx_locks上，依次遍历释放即可。
+
+Redis底层数据结构：
+简单动态字符串
+链表
+字典
+跳跃表
+整数集合
+压缩列表
+对象 
+
+SDS与传统C字符串的区别：
+	1. 获取字符串长度SDS是O(1),C字符串O(n)；
+	2. 杜绝缓冲区溢出；Redis中SDS的空间分配策略完全杜绝了发生缓冲区溢出的可能性:当需要对SDS进行修改时候，Redis会在执行拼接操作之前，预先检查给定SDS空间是否足够，如果不够，会先扩容。
+	3. 减少修改字符串时带来的内存重分配次数；
+	4. 惰性空间释放；
+	5. 二进制安全；C字符串的字符必须符合某种编码，并且除了字符串的末尾之外，字符串里面不能包含空字符，否则最先被程序读入的空字符将被误认为是字符串末尾，这些限制使得C字符串只能保存文本数据，而不能保存图片、音频、视频、压缩文件这样的二进制数据。但是在Redis中，不是靠空字符来判断字符串末尾的，而是通过len属性。即便中间出现了空字符对于SDS来说，读取该字符仍然是可以的。
+	6. 兼容部分C字符串函数。
+链表的特性：
+	1. 双端：链表节点带有prev和next指针，获取某个节点的前置节点和后置节点的时间复杂度是O(1);
+	2. 无环：表头节点的prev指针和表尾节点的next都是NULL。
+	3. 表头和表尾：因为链表带有head指针和tail指针，程序获取链表头节点和尾节点的时间复杂度是O(1);
+	4. 长度计数器：链表中存有链表长度的属性len；
+	5. 多态：链表节点使用void*指针来保存节点值，并且可以通过list结构的dup,free,match三个属性为节点值设置类型特定函数。
+
+如果一个hashmap有一亿条数据怎么实现高效查找; 
+答：可以考虑优化hash函数减少碰撞(事后大佬指点分布不均匀的话更好的应该是进行分层)
+
+mybatis的dao接口跟xml文件里面的sql是如何建立关系的:
+	1. SqlSource以及动态标签SqlNode;
+	2. MappedStatement对象；
+	3. Spring工厂Bean以及动态代理；
+	4. SqlSession以及执行器；
+
+磁盘到内核空间属于DMA拷贝，用户空间与内核空间之间的数据传输并没有类似DMA这种可以不需要CPU参与的传输方式，因此用户空间与内核空间之间的数据传输是需要CPU全程参与的。DMA拷贝即直接内存存取，原理是外部设备不通过CPU而直接与系统内存交换数据。所以也就有了使用零拷贝技术，避免不必要的CPU数据拷贝过程。
+使用NIO零拷贝，流程简化为两步：
+	1. transferTo方法调用触发DMA引擎将文件上下文信息拷贝到内核读缓冲区，接着内核将数据从内核缓冲区拷贝到与套接字相关的缓冲区；
+	2. DMA引擎将数据从内核套接字缓冲区传输到协议引擎(第三次数据拷贝)；
+相比较传统IO，使用NIO零拷贝后改进的地方：
+	1. 已经上下文切换次数从4次减少到2次；
+	2. 将数据拷贝从4次减少到了3次(其中只有1次涉及了CPU，另外两次是DMA直接存取)；
+如果底层NIC(网络接口卡)支持gather操作，可以进一步减少内核中的数据拷贝。在Linux2.4以及更高版本的内核中，socket缓冲区描述符已被修改用来适应这个需求。这种方式不但减少上下文切换，同时消除了需要CPU参与的重复的数据拷贝。
+用户这边的使用方式不变，依旧通过transferTo方法，但是方法的内部实现发生了变化：
+	1. transfterTo方法调用触发DMA引擎将文件上下文信息拷贝到内核缓冲区；
+	2. 数据不会被拷贝到套接字缓冲区，只有数据的描述符(包括数据位置和长度)被拷贝到套接字缓冲区。DMA引擎直接将数据从内核缓冲区拷贝到协议引擎，这样减少了最后一次需要消耗CPU的拷贝操作。
+NIO零拷贝适用于下列场景：
+	1. 文件较大，读写较慢，追求速度；
+	2. JVM内存不足，不能加载太大数据；
+	3. 内存带宽不够，即存在其他程序或线程存在大量的IO操作，导致带宽本来就小。
+
+Linux提供的mmap系统调用，它可以将一段用户空间内存映射到内核空间，当映射成功后，用户对这段内存区域的修改可以直接反映到内核空间；同样地，内核空间对这段区域的修改也直接反映用户空间。正因为有这样的映射关系，就不需要在用户态(user-space)和内核态(kernel-space)之间拷贝数据，提高了数据传输的效率，这就是内存直接映射技术。
+使用直接内存的原因：
+	1. 对垃圾回收停顿的改善。因为FGC时，垃圾收集器会对所有分配的堆内内存进行扫描，垃圾收集对Java应用造成的影响，跟堆的大小是成正比的。过大的堆会影响Java应用的性能。如果使用堆外内存的话，堆外内存是直接受操作系统管理。这样做的结果就是能保持一个较小的JVM堆内存，以减少垃圾收集对应用的影响(FGC时会触发堆外空闲内存的回收)。
+	2. 减少了数据从JVM拷贝到Native堆的次数，在某些场景下可以提升程序IO性能；
+	3. 可以突破JVM内存限制，操作更多的物理内存。(当直接内存不足时会触发FGC，排查FGC时候，一定要考虑)。
+使用直接内存的问题：
+	1. 堆外内存难以控制，如果内存泄漏，那么很难排查(VisualVM可以通过安装插件来监控堆外内存);
+	2. 堆外内存只能通过序列化和反序列化来存储，保持对象速度比堆内存慢，不适合存储复杂对象。一般简单的对象或扁平化的比较适合。
+	3. 直接内存的访问速度(读写方面)会快于堆内存。在申请内存空间时，堆内存速度高于直接内存。直接内存适合申请次数少，访问频繁的场合。如果内存空间需要频繁申请，则不适合直接内存。
+
+自JDK6之后，Java通过泛型解决了容器类型安全问题。泛型的本质是参数化类型。Java实现泛型完全是作为语法糖实现的，也就是说泛型对于JVM来说是透明的，有泛型和无泛型的代码，经过编译器编译后所生成的二进制代码是完全相同的。这个语法糖的实现被称为擦除。泛型是为了将具体的类型作为参数传递给方法、类、接口。擦除是在代码运行过程中将具体的类型都抹除。
+
+> object encoding <key>
+embstr, int, quiklist, SDS, skiplist, dict, intset, ziplist, 
+Redis触发扩容的条件：
+	1. 服务器目前没有执行bgsave命令或者bgrewriteaop命令，并且负载因子大于等于1；
+	2. 服务器正在执行bgsave或者bgrewriteaop命令，并且负载因子大于等于5；
+负载因子=哈希表已存在节点数量/哈希表大小；
+渐进式rehash: 也就是扩容和收缩操作不是一次性、集中式完成的，而是分多次、渐进式完成的。如果保存在Redis中的键值对只有几十个，那么rehash操作可以瞬间完成，但是如果键值对有百万，千万甚至更多，那么要一次性的进行rehash，势必造成Redis一段时间内不能进行其他操作。所以Redis采用渐进式rehash，这样在进行渐进式rehash期间，字典的删除查找更新等操作可能会在两个哈希表上进行，第一个哈希表没有找到，就会去第二个哈希表上进行查找。但是进行 增加操作，一定是在新的哈希表上进行的。
+压缩列表(ziplist)是Redis为了节省内存而开发的，是由一系列特殊编码的连续内存块组成的顺序性数据结构，一个压缩列表可以包含任意多个节点(entry)，每个节点可以保存一个字节数组或者一个整数值。
+压缩列表的原理：压缩列表并不是对数据利用某种算法进行压缩，而是将数据按照一定规则编码在一块连续的内存区域，目的是节省内存。
+
+Exchanger是一种线程间安全交换数据的机制。当线程A调用Exchanger对象的exchange()方法后，会进入阻塞状态，直到线程B也调用了exchange()，然后以线程安全的方式交换数据，之后线程A和B继续运行。
+Exchanger类底层的关键技术点：
+	1. 使用CAS自旋指令完成数据交换；
+	2. 使用LockSupport的park方法使得交换线程进入阻塞状态，LockSupport#unpark唤醒等待线程；
+	3. 使用Node对象用于存储交换数据。
+public class Exchanger<V> {
+	...
+	/* Nodes hold partially exchanged data, plus other per-thread bookkeeping.
+		Padded via @sun.misc.Contended to reduce memory contention.
+	*/
+	@sun.misc.Contended 
+	static final class Node {
+		int index;              // Arena index 
+		int bound;              // Last recorded value of Exchange.bound 
+		int collides;           // Number of CAS failures at current bound 
+		int hash;               // Pseudo-random for spins
+		Object item;            // This thread's current item 
+		volatile Object match;  // Item provided by releasing thread 
+		volatile Thread parked; // Set to this thread when parked, else null
+	}
+	
+	// The corresponding thread local class 
+	static final class Participant extends ThreadLocal<Node> {
+		public Node initialValue() { return new Node(); }
+	}
+	...
+}
+MyBatis: SqlSessionFactoryBean, mapperLocation, SqlSource, DynamicSqlSource, StaticSqlSource, SqlNode, IfSqlNode, ForEachSqlNode, TrimSqlNode, WhereSqlNode, StaticTextSqlNode, MappedStatement, Configuration#mappedStatements, MappedFactoryBean, MapperProxy, SqlSession, 
+------------------------------------------------------------------
+微服务是怎么划分的，划分粒度怎么确定：
+	1. 康威定律；
+	2. 领域模型；
+	3. 伸缩需求；
+	4. 修改相关性；
+	5. 部署频率；
+	6. 避免分布式事务；
+康威定律简单来说就是系统设计(产品结构)等同组织形式，每个设计系统的组织，其产生的设计等同于组织之间的沟通结构。如果单个服务由不同的组织管理，需求无法达成统一，面临着令出多头、需求干扰的风险。
+伸缩需求：同一个进程之内的不同业务功能，有时在业务量会出现较大的差异，具体要求的进程数量会有较大差别，这样的模块锁定在同一个进程之内，势必会造成资源的浪费。
+修改相关性：如果同一个交付物的不同组件，经常被同步修改，这可能说明，如果发生拆分，这两个模块应该是在一起的。
+领域建模：针对业务领域，引入限界上下文(Bounded Context)和上下文映射(Context Map)对业务领域进行合理的分解，识别出核心领域(Core Domain)和子领域(Sub Domain)，并确定领域的边界以及它们之间的关系。根据核心领域和子域划分微服务边界。
+对于一个单体应用，拆分过程应该是循序渐进、逐步拆分、有简到繁、由粗到细，是一个渐进过程。例如先将有明显边界的业务拆分为独立服务，无法明确边界的先混在一起，等业务需求逐步清晰后再拆。拆分时先拆分几个相对较粗粒度的服务，根据业务需求情况，逐步将粗粒度的服务中相对稳定，可以沉淀的业务拆分为独立服务。在这个过程中，原有的单体应用也可以承担部分兼容能力，在改造完成前，不对外系统造成过大影响。
+微服务的拆分是跟业务需求强相关，如果业务需求变更不多、相对稳定，处理的请求并发不高，单体应用的稳定性和可维护性更好，更加适用。
+------------------------------------------------------------------
+实践微服务架构中，有遇到什么问题：
+	1. 划分的粒度；
+	2. 分布式事务；
+	3. 底层的不稳定：网络异常/超时，服务的启停；
+	4. 部署的复杂性；
+	5. 数据的整合聚合；
+	6. 日志的聚合，调用链监控的难度；
+
+RocketMQ的消费者：与Name Server集群中的其中一个节点(随机)建立长连接，定期从Name Server拉取topic路由信息，并向提供Topic服务的Master Broker、Slave Broker建立长连接，且定时向Master Broker、Slave Broker发送心跳。Consumer既可以从Master Broker订阅消息，也可以从Slave Broker订阅消息，订阅规则由Broker配置决定。
+
+ElasticSearch搜索的过程：
+	1. 搜索被执行成一个两阶段过程，称之为Query Then Fetch;
+	2. 在初始查询阶段，查询会广播到索引中每一个分片(主分片或者副本分片)。每个分片在本地执行搜索并构建一个匹配文档的大小为from+size的优先队列；
+	PS：在搜索的时候是会查询FileSystem Cache，但是有部分数据还在MemoryBuffer，所以搜索是近实时的。
+	3. 每个分片返回各自优先队列中，所有文档的ID和排序值给协调节点，它合并这些值到自己的优先队列中来产生一个全局排序后的结果列表。
+	4. 接下来就是取回阶段，协调节点辨别出哪些文档需要被取回并向相关的分片提交多个GET请求。每个分片加载并丰富文档，如果有需要的话，接着返回文档给协调节点。一旦所有的文档都被取回了，协调节点返回结果给客户端。
+	5. 补充：Query The Fetch的搜索类型在文档相关性打分的时候参考的是本分片的数据，这样在文档数量较少的时候可能不够准备，DFS Query Then Fetch增加了一个预查询的处理，询问Term和Document Frequency，这个评分更准确，但是性能会变差。
+
+排序列表Array/List:使用二分法查找，不平衡
+HashMap/TreeMap:性能高，内存消耗大，几乎是原始数据的三倍
+SkipList:跳跃表，可快速查找词语，在Lucene,Redis,HBase等均有实现。相对于TreeMap等结构，特别适合高并发场景。
+Trie:适合英文词典，如果系统中存在大量字符串且这些字符串基本没有公共前缀，则相应的trie树将非常消耗内存。
+Double Array Trie:适合做中文词典，内存占用小，很多分词工具均采用此算法。
+Ternary Search Tree:三叉树，每个node有三个节点，兼具空间和查询快的优点。
+Finite State Transduceers(FST)：一种有限状态转移机，Lucene4有开源实现，并大量使用。
+
+MySQL中的锁可以分为两个粒度：表锁和行锁，表锁有：表级读锁，表级写锁，读意向锁，写意向锁，自增锁；行锁有：读记录锁，写记录锁，间隙锁，Next-Key锁，插入意向锁。绝大多数的死锁问题都是由这些锁之间的冲突导致的。不同的隔离级别加锁也不一样，比如RR隔离级别下有间隙锁和Next-Key锁，在RC隔离级别下是没有的。
+行锁都是加在索引上的，最终都会落在聚簇索引上。
+加行锁的过程是一条一条记录加的。
+select ...语句正常情况下为快照读，不加锁；但是在Serializable隔离级别下为当前读，加S锁。
+RC 隔离级别下没有间隙锁和Next-key锁(特殊情况下也会有:purge+unique key)；
+-------------------------------------------------
+为什么RocketMQ没有选择ZooKeeper，而是自己实现了一个NameServer集群：
+ZK可以提供Master选举功能，比如Kafka用来给每个分区选一个broker作为leader，但对于RocketMQ来说，topic的数据在每个Master上是对等的，没有哪个Master上有topic上的全部数据，所以这里选举leader没有意义；RocketMQ集群中，需要有构件来处理一些通用数据，比如broker列表，broker刷新时间，虽然ZK也能存放数据，并有一致性保证，但处理数据之间的一些逻辑关系却比较麻烦，而且数据的逻辑解析操作得交给Zookeeper客户端来做，如果有多种角色的客户端存在，自己解析多级数据确实是个麻烦事；既然RocketMQ集群中没有用到Zookeeper的一些重量级功能，只是使用Zookeeper的数据一致性和发布订阅的话，与其依赖重量级的Zookeeper,还不如写个轻量级的NameServer，NameServer也可以集群部署，NameServer之间无任何信息同步，只有一千多行的NameServer稳定性肯定高于Zookeeper，占用的系统资源也比较少。
+RocketMQ的架构设计决定了只需要一个轻量级的元数据服务器就足够了，只需要保持最终一致，而不需要Zookeeper这样的强一致性解决方案，不需要再依赖另一个中间件，从而减少整体维护成本。
+敏锐的同学肯定已经意识到了，根据CAP理论，RocketMQ在名称服务这个模块的设计上选择了AP，而不是CP：
+-------------------------------------------------
+命中二级唯一索引，在给二级索引加锁的时候，主键索引也会一并加锁。
+二级唯一索引，查询未命中，RR隔离级别下会加GAP锁，RC隔离级别不加锁。这种情况下只会在二级索引加锁，不会在聚簇索引上加锁。
+为什么非唯一索引会加GAP锁，而唯一索引不用加GAP锁？GAP锁的作用是为了解决幻读，防止其他事务插入相同索引值的记录，而唯一索引和主键约束都已经保证了该索引值肯定只有一条记录，所以无需加GAP锁。
+其实，在InnoDB存储引擎中，每个数据页中都会有两个虚拟的行记录，用来限定记录的边界，分别是:Infimum Record和Supremum Record，Infimum是比该页中任务记录都要小的值，而Supremum比该页中最大的记录值还要大，这两条记录在创建页的时候就有了，并且不会删除。
+
+如果where条件不走索引，在没有索引的时候，只能走聚簇索引，对表中的记录进行全表扫描。在RC隔离级别下会给所有记录加行锁，在RR隔离级别下，不仅会给所有记录加锁，所有聚簇索引和聚簇索引之间还会加锁GAP锁。
+不过在实际的实现中，MySQL有一些改进，如果是RC隔离级别，在MySQL Server过滤条件不满足后，会调用unlock_row方法，把不满足条件的记录锁释放掉(违背了2PL的约束)。这样做可以保证只会持有满足条件记录上的锁，但是每条记录的加锁操作还是不能省略。在RR隔离级别下，一般情况下MySQL是不能这样优化的，除非设置了innodb_locks_unsafe_for_binlog参数，这时也会提前释放锁，并且不加GAP锁，这就是所谓的semi-consistent read。
+
+semi-consistent read是read committed与consistent read两者的结合。一个update语句，如果读到一行已经加锁的记录，此时InnoDB返回记录最近提交的版本，由MySQL上层判断此版本是否满足update的where条件。若满足(需要更新)，则MySQL会重新发起一次读操作，此时会读取行的最新版本(并加锁)。
+semi-consistent read只会发生在read committed隔离级别下，或者是参数innodb_locks_unsafe_for_binlog被设置为true。
+
+活锁：死锁是互相拿不到资源都占用对方的资源，而活锁是拿到资源却又互相释放不执行。
+解决活锁的一个简单办法是：在下一次尝试获取资源之前，随机休眠一小段时间。
+解决活锁的方法二：约定优先级；
+解决活锁的方法三：比如月ing重试机制避免再次冲突。例如自动驾驶的防碰撞系统，可以根据序列号检测到相撞风险时，序列号小的朝上飞，序列号大的飞机朝下飞。
+
+饥饿：一个线程因为CPU时间全部被其他线程抢占而得不到CPU运行时间，导致线程无法执行。
+产生饥饿的原因：
+	1. 高优先级线程抢占低优先级线程的CPU；
+	2. 其他线程总是能持续地获得同步块的访问，线程被永久阻塞在一个等待进入同步块中；
+	3. 其他线程总是被抢先被唤醒，线程一直在等待被唤醒;
+
+丢失更新/提交覆盖(Read-Modify-Write问题)/回滚覆盖
+回滚覆盖称之为第一类丢失更新问题，提交覆盖称为第二类丢失更新问题。
+
+回滚覆盖/脏读/不可重复读/提交覆盖/幻读
+譬如在 SQL 标准中，RR 隔离级别解决了不可重复读问题，但是依然存在幻读现象；而在 MySQL 的 RR 隔离级别下，通过多版本快照读和间隙锁技术解决了幻读问题。
+
+活锁指的是任务或者执行者没有被阻塞，由于某些条件没有满足，导致一直重复尝试—失败—尝试—失败的过程。处于活锁的实体是在不断的改变状态，活锁有可能自行解开。
+
+Redis快的原因：
+	1. 完全基于内存，绝大部分请求是存粹内存操作，非常快速。
+	2. 数据结构简单，对数据操作也简单，Redis中的数据结构是专门设计过的。
+	3. 采用单线程，避免了不必要的上下文切换和锁竞争，也不存在多进程或多线程导致的切换消耗CPU，不用考虑各种锁，不存在加锁释放锁操作，不会因为死锁导致性能消耗。
+	4. 使用多路IO复用，非阻塞IO；
+	5. 使用底层模型不同，它们之间底层实现方法以及与客户端之间通信的应用协议不一样，Redis直接构建了VM机制，因为一般的系统调用系统函数的话，会浪费一定的时间去拷贝和请求。
+
+Undo log保存了记录修改前的镜像。在InnoDB存储引擎中，undo log分为：
+	- insert undo log
+	- update undo log
+insert undo log是指在insert操作中产生的undo log。由于insert操作的记录，只是对本事务可见，其他事务不可见，所以undo log可以在事务提交后直接删除，而不需要purge操作。
+update undo log是指在delete和update操作中产生的undo log。该undo log会被后续用于MVCC当中，因此不能提交的时候删除。提交后会放入undo log的链表，等待purge线程进行最后的删除。
+
+除此之外，Redis4.0之后的版本抛弃了单线程模型这一设计，原本用单线程运行的Redis也开始选择性使用多线程模型。在Redis4.0之后的版本，情况有些改变，新版Redis在执行一些命令时就会使用主线程之外的其他线程，例如unlink, flushall async, flushdb async等非阻塞的删除操作。
+
+Redis 选择使用单线程模型处理客户端的请求主要还是因为 CPU 不是 Redis 服务器的瓶颈，所以使用多线程模型带来的性能提升并不能抵消它带来的开发成本和维护成本，系统的性能瓶颈也主要在网络 I/O 操作上；而 Redis 引入多线程操作也是出于性能上的考虑，对于一些大键值对的删除操作，通过多线程非阻塞地释放内存空间也能减少对 Redis 主线程阻塞的时间，提高执行的效率。
+
+InnoDB采用WAL技术，即InnoDB Redo Log记录了对数据文件的物理更改，并保证总是日志先行，在持久化数据文件之前，保证之前的redo日志已经写到磁盘。
+
+四种隔离级别的加锁策略如下：
+	1. RU:事务读不阻塞其他事务读和写，事务写阻塞其他事务写但不阻塞读；通过对写操作加"持续X锁"，对读操作不加锁实现。
+	2. RC:事务读不会阻塞其他事务读和写，事务写会阻塞其他事务读和写；通过对写操作加"持续X锁"，对读操作加"临时S锁"实现，不会出现脏读；
+	3. RR:事务读会阻塞其他事务写但不阻塞读，事务写会阻塞其他事务读和写；通过对写操作加"持续X锁"，对读操作加"持续S锁"实现；
+	4. Serializable: 为了解决幻读，行级锁做不到，需使用表级锁。
+
+通过对锁的类型(读锁还是写锁)、锁的粒度(行锁还是表锁)、持有锁的时间(临时锁还是持续锁)合理的进行组合，就可以实现四种不同的隔离级别。这四种不同的加锁策略实际上又称为封锁协议(Locking Protocol)，所谓协议，就是说不论加锁还是释放锁都得按照特定的规则来。读未提交的加锁策略又称为一级封锁协议，后面的分别是二级、三级，序列化的加锁策略又称为四级封锁协议。
+其中三级封锁协议在事务的过程中为写操作加持续X锁，为读操作加持续S锁，并且在事务结束时才对锁进行释放，像这种加锁和解锁明确的分成两阶段称为两段锁协议(2-phase locking，简称2PC)。在两段锁协议中规定，加锁阶段只允许加锁，不允许解锁；而解锁阶段只允许解锁，不允许加锁。这种方式虽然无法避免死锁，但是两段锁协议可以保证事务的并发调度是串行化的。在两段锁协议中，还有一种特殊的形式，叫一次封锁，意思是指在事务开始的时候，将事务可能遇到的数据全部一次锁住，再在事务结束时全部一次释放，这种方式可以有效的避免死锁发生。但是这在数据库系统中并不适用，因为事务在开始时并不知道这个事务要用到哪些数据，一般在应用程序中使用的比较多。
+
+MVCC 的全称叫做 Multi-Version Concurrent Control（多版本并发控制），InnoDb 会为每一行记录增加几个隐含的“辅助字段”，（实际上是 3 个字段：一个隐式的 ID 字段，一个事务 ID，还有一个回滚指针），事务在写一条记录时会将其拷贝一份生成这条记录的一个原始拷贝，写操作同样还是会对原记录加锁，但是读操作会读取未加锁的新记录，这就保证了读写并行。要注意的是，生成的新版本其实就是 undo log，它也是实现事务回滚的关键技术。
+
+尽管RR和RC隔离级别都实现了MVCC来满足读写并行，但是读的实现方式是不一样的：RC 总是读取记录的最新版本，如果该记录被锁住，则读取该记录最新的一次快照，而RR 是读取该记录事务开始时的那个版本。虽然这两种读取方式不一样，但是它们读取的都是快照数据，并不会被写操作阻塞，所以这种读操作称为 快照读（Snapshot Read），有时候也叫做 非阻塞读（Nonlocking Read），RR隔离级别下的叫做一致性非阻塞读（Consistent Nonlocking Read）。
+
+除了 快照读 ，MySQL还提供了另一种读取方式：当前读（Current Read），有时候又叫做 加锁读（Locking Read） 或者 阻塞读（Blocking Read），这种读操作读的不再是数据的快照版本，而是数据的最新版本，并会对数据加锁，根据加锁的不同，又分成两类：
+SELECT ... LOCK IN SHARE MODE：加 S 锁
+SELECT ... FOR UPDATE：加 X 锁
+INSERT/UPDATE/DELETE：加 X 锁
+当前读在RR和RC两种隔离级别下的实现也是不一样的：RC只加记录锁，RR除了加记录锁，还会加间隙锁，用于解决幻读问题。
+-----------------------------------------------------
+innodb_flush_method:控制innodb数据文件，日志文件的打开和刷写的方式，建议取值:fsync, O_DIRECT。
+innodb_flush_lot_at_trx_commit:控制每次事务提交时，重做日志的写盘和落盘策略，可取值:0,1,2
+当innodb_flush_log_at_trx_commit=1时，每次事务提交，日志写到InnoDB Log Buffer后，会等待Log Buffer中的日志写到InnoDB日志文件并刷新到磁盘上才返回成功。
+sync_binlog:控制每次事务提交时，Binlog日志多久刷新到磁盘上，可取值：0或者n(n为正整数)
+不同取值会影响MySQL的性能和异常crash后数据能恢复的程度。
+当sync_binlog=1时，MySQL每次事务提交都会将binlog_cache中的数据强制写入磁盘。
+innodb_doublewrite:控制是否打开double writer功能，取值on或者off。
+当Innodb的page size默认16k，磁盘单次写的page大小通常为4k或者远小于InnoDB的page大小时，发生了系统断电/OS crash，刚好只有一部分写是成功的，则会遇到partial page write问题，从而可能导致crash后由于部分写失败的page影响数据的恢复。
+InnoDB为此提供了Double Writer技术来避免页断裂(partial write)的发生。
+innodb_support_xa：控制是否开启InnoDB的两阶段事务提交，默认情况下，innodb_support_xa=true，支持xa两阶段事务提交。
+-----------------------------------------------------
+MyIsam和InnoDB的索引不同：
+	1. 存储结构
+		InnoDB的数据文件本身就是主索引文件，而MyISAM的主索引和数据是分开的
+		InnoDB的二级索引data域存储相应记录主键的值而不是地址。而MyISAM的辅助索引和主索引没有多大区别。
+		InnoDB是聚簇索引，数据挂在主键索引之下。
+	2. 锁：MyISAM使用的是表锁，InnoDB使用行锁
+	3. 事务：MyISAM没有事务和MVCC，InnoDB支持事务和MVCC
+	4. 全文索引:MyISAM支持fulltext类型的全文索引；InnoDB不支持fulltext类型的全文索引，但是InnoDB可以使用Sphinx插件支持全文索引，并且效果更好。
+	5. 主键 
+		MyISAM允许没有任何索引和主键的表存在，索引都是保存行的地址。
+		InnoDB如果没有设定主键或非空唯一索引，就会自动生成一个6字节的主键。
+	6. 外键：MyISAM不支持外键，InnoDB支持外键。
+-----------------------------------------------------
+从生效入口开始看，@EnableAsync注解上标注了@Import(AsyncConfigurationSelector.class)
+@Import的作用是把后面的@Configuration类、ImportSelector类或者ImportBeanDefinitionRegistrar类中import的内容自动注册到ApplicationContext中。
+对于@Async：上面注册进去的advisor类型是AsyncAnnotationAdvisor。其中包括了PointCut, 类型是AnnotationMatchingPointcut，指定了只有@Async标记的方法或者此AOP增强器才生效。还有一个Advice，用于增强@Async标记的方法，转换为异步，类型是AnnotationAsyncExecutionInterceptor，其中的invoke方法是真正调用真实方法的地方。
+DynamicAdvisedInterceptor
+------------------------------
+解决this调用的几个替代方法：
+	1. 通过ApplicationContext来获得动态代理对象；
+	2. 通过AopContext获取动态代理对象(前提是exposeProxy为true)；
+	3. 对于exposeProxy为false时，在某个切入时机，手动执行AopConfigUtils.forceAutoProxyCreatorToExposeProxy(registry)静态方法，前提是有一个BeanDefinitionRegistry，且时机要在BeanDefinition已经创建且动态代理对象还没有生成时调用；
+	4. 手动修改各种BeanPostProcessor的属性。以@Async为例，其通过AsyncAnnotationBeanPostProcessor来生成动态代理类，只要在合适时机即该BPP已创建，但是还未被使用时，修改其中的exposeProxy属性，使用AsyncAnnotationBeanPostProcessor.setExposeProxy(true)即可。
+------------------------------
+/* Enhance #Configuration classes by generating a CGLIB subclass which interacts with 
+	the Spring container to respect bean scoping semantics for @Bean methods. Each such 
+	@Bean method will be overridden in the generated subclass, only delegating to the 
+	actual @Bean method implementation if the container actually requests the construction 
+	of a new instance. Otherwise, a call to such an @Bean method servs as a reference back 
+	to the container, obtaining the corresponding bean by name. 
+*/
+class ConfigurationClassEnhancer {
+	...
+}
+/* BeanFactoryPostProcessor used for bootstrapping processing of @Configuration classes.
+	Registered by default when using <context:annotation-config/> or <context:component-scan/>.
+	Otherwise, may be declared manually as with any other BeanFactoryPostProcessor.
+	This post processor is priority-ordered as it is important that any #Bean methods declared in @Configuration classes have their corresponding bean definitions registered before any other BeanFactoryPostProcessor executes.
+*/
+public class ConfigurationClassPostProcesser implements BeanDefinitionRegistryPostProcessor,
+	PriorityOrdered, ResourceLoaderAware, BeanClassLoaderAware, EnvironmentAware {
+	...
+}
+
+更新缓存的Design Pattern有四种：Cache aside, Read through, Write through, Write behind caching。
+-------------------------------------------------
+双1和binlog,redolog的完整性
+binlog的写入机制
+当一个事务执行，先把日志写到binlog cache，事务提交的时候，其实是redo log prepare/commit的时候，再把binlog cache写到binlog 文件中，清空binlog cache。
+如果当binlog的size大于binlog_cache_size的时候，就要从内存中写入到磁盘上。
+从内存binlog cache写入磁盘分为两个动作， 即binlog写入page cache还是持久化到磁盘分别在write和fsync先后进行。控制这两个动作的发生的是一个叫sync_binlog的参数：
+	如果参数为0，那么只write ；
+	如果参数为1 ，那么只fsync ；
+	如果参数为 N(N>1) 那么，write到了N才会fsync；
+一般这个值被设置为100-1000，既可以较快的处理，减少IO次数，也可以一定程度的防止实际业务中丢失数据的可能性（除非主机掉电）。
+redo log写入机制
+redo log同样是有三种存储状态和存储媒介：
+	1. redo log buffer：MySQL进程内存
+	2. 写磁盘write：文件系统page cache
+	3. 持久化磁盘fsync：硬盘
+控制参数innodb_flush_log_at_trx_commit：
+	0:事务提交，写入binlog的时机，redo log是留在redo log buffer中；
+	1:事务提交，redo log持久化到磁盘
+	2:事务提交，redo log写入page cache
+
+Redo log持久化到磁盘的几个场景：
+InnoDb引擎每秒会把redo log buffer的日志，写到文件系统的page cache，再fsync
+redo log size >= redo_log_buffer_size ，会写盘page cache
+innodb_flush_log_at_trx_commit 1会并行的把redo log fsync
+双1 ：sync_binlog 和 innodb_flush_log_at_trx_commit都设置为1 。通过上面的介绍，我们已经知道，在一个事务提交之前，会进行两次刷盘，一次刷盘（fsync）是binlog ，一次是redo log的prepare 阶段。
+
+主从延迟：
+	1. 主备机器性能不一致，往往备库会比主库机器配置差
+		Solve：对称部署
+	2. 备库上随意的无压力控制的操作，影响同步操作
+		Solve：一主多从、统计类查询交给Hadoop 、Elastic等系统处理，从库更多解决的是A高可用，高并发的问题，并不适合在Mysql底层完全解决。
+	3. 大事务运行，从主从一致性的原理主从同步流程看到，一个事务在主库执行完成才会写入binlog ，传递给Slave ，Slave写入relay log，最后写入从库，如果这个事务有10分钟，从库至少延迟10分钟
+
+解决/优化主从延迟
+	可以把Slave的双1关闭，innodb_flush_log_at_trx_commit和sync_binlog ，这样binlog不会fsync
+	第二种思路就是减少从库查询负载，有两种办法，0：增加Slave服务器 1:Slavel只作为备份
+可以看到Slave 的优化和高并发的情况是存在一些冲突的，一个是减少查询，一个是增加查询，个人觉得Slave在请求并发很高的时候，可以考虑转向分布式缓存，例如redis等，这肯定是比单纯数据库能扛住更大的压力的。
+--------------------------------------------------
+public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
+	...
+}
+在JDK8中，CompletableFuture提供了非常强大的Future的扩展功能，可以简化异步编程的复杂性，并且提供了函数式编程的能力，可以通过回调的方式处理计算结果，也提供了转换和组合CompletableFuture的方法。
+它能代表一个明确完成的Future，也可能代表一个完成阶段(CompletionStage)，它支持在计算完成以后触发一些函数或执行某些动作。它实现了Future和CompletionStage接口。
+------------------------------------------------
+redis-cluster的缺点/限制条件：
+Client实现复杂，驱动要求实现Smart Client，缓存slots mapping信息并及时更新，提高了开发难度，客户端的不成熟影响业务的稳定性。目前仅JedisCluster相对成熟，异常处理部分还不完善，比如常见的"max redirect exception"。
+节点会因为某些原因发生阻塞(阻塞时间大于cluster-node-timeout)，被判断下线，这种failover是没有必要的。
+数据通过异步复制，不保证数据的强一致性。
+多个业务使用同一套集群时，无法根据统计区分冷热数据，资源隔离性较差，容易出现互相影响的情况。
+Slave在集群中充当冷备，不能缓解读压力，当然可以通过SDK的合理设计来提高Slave资源的利用率。
+Key批量操作限制，如使用mset,mget目前只支持具有相同slot值的key执行批量操作。对于映射为不同slot值的key由于keys不支持跨slot查询，所以执行mset,mget,sunion等操作支持不友好。
+key事务操作支持有限，只支持key在同一个节点上的事务操作，当多个key分布于不同的节点上时无法使用事务功能。
+key作为数据分区的最小粒度，不能将一个很大的键值对对象如hash,list等映射到不同的节点。
+不支持多数据库空间，单机下的redis可以支持16个数据库，集群模式下只能使用1个数据库空间，即db0。
+复制结构只支持一层，从节点只能复制主节点，不支持嵌套树状复制结构。
+避免产生hot-key，导致主库节点称为系统短板。
+避免产生big-key，导致网卡撑爆、慢查询等。
+重试时间应大于cluster-node-time时间。
+Redis Cluster不建议使用pipeline和multi-key操作，减少max redirect产生的场景。
+------------------------------------------------
+Kafka在高并发情况下，如何避免消息丢失和消息重复：
+消息丢失解决方案：首先对Kafka进行限速，其次启用重试机制，重试间隔时间设置长一些，最后Kafka设置acks=all，即需要ISR分区都确认收到消息后，才算发送成功。
+消息重复解决方案：消息使用唯一ID标识；生产者ack=all；消费者offset手动提交，业务成功后，提交offset；落表；业务逻辑处理(选择唯一主键存储到Redis或者MongoDB中，先查询是否存在，若存在则不处理；若不存在，先插入Redis/MongoDB，再进行业务处理)；
+------------------------------------------------
+实际上，leader选举的算法非常多，比如Zookeeper的Zab, Raft和ViewStamped Replication，而Kafka所使用的leader选举算法更像是微软的PacificA算法。
+
+幂等性时，Producer的发送流程如下：
+	1. 调用KafkaProducer的send方法将数据添加到RecordAccumulator中，添加时会判断是否需要新建一个ProducerBatch,这时这个ProducerBatch还是没有PID和sequence number信息的；
+	2. Producer后台发送线程Sender，在run()方法中，会先根据TransactionManager的shouldResetProducerStateAfterResolvingSequences()方法判断当前的PID是否需要重置，重置的原因是因为：如果有topic-partition的batch已经超时还没有处理完，此时可能会造成sequence number不连续。因为sequence number有部分已经分配出去了，而kafka服务端没有收到这部分sequence number的序号，kafka服务端为了保证幂等性，只会接受同一个PID的sequence number等于服务器缓存sequence number+1的消息，所以这时候需要重置PID来保证幂等性。
+	3. Sender线程调用maybeWaitForProducerId()方法判断是否要申请PID，如果需要，会阻塞直到成功申请到PID。
+	4. 最后调用sendProduceRequest方法将消息发送出去。
+
+Kafka实现幂等性的类：
+KafkaProducer, RecordAccumulator, Sender,TransactionManager, ProducerIdAndEpoch, ProducerBatch,BatchMetadata,ProducerStateEntry,ProducerAppendInfo,ProducerStateManager,
+
+Future模式的缺点：Future虽然可以实现获取异步执行结果的需求，但是它没有提供通知的机制，无法得知Future什么时候完成。要么使用阻塞，在Future.get()地方等待future返回结果，这时又变成了同步操作。要么使用isDone(0轮询判断Future是否完成，这样会耗费CPU的资源。
+
+Netty,Guava分别扩展了Java的Future接口，方便异步编程。
+JDK8新增的CompletableFuture类正是吸收了所有Google Guava中ListenableFuture和SettableFuture的特征，还提供了其他强大的功能，让Java拥有了完整的非阻塞编程模型：Future, Promise和Callback(在JDK8之前，只要无Callback的Future).
+CompletableFuture能够将回调放在与任务不同的线程中执行，也能将回调作为继续执行的同步函数，在与任务相同的线程中执行。它避免了传统回调最大的问题，那就是能够将控制流分离到不同的事件处理器中。
+CompletableFuture弥补了Future模式的缺点。在异步的任务完成后，需要用其结果继续操作时，无需等待。可以直接通过thenAccept, thenApply, thenCompose等方式将前面异步处理的结果交给另外一个异步事件处理线程来处理。
+--------------------------------------------
+双亲委派模型破坏史：
+第一次破坏：由于双亲委派模型是在JDK1.2之后才被引入的，而类加载器和抽象类java.lang.ClassLoader则在JDK1.0时代就已经存在，面对已经存在的用户自定义类加载器的实现代码，Java设计者引入双亲委派模型时不得不做出一些妥协。在此之前，用户去继承java.lang.ClassLoader的唯一目的就是为了重新loadClass()方法，因为虚拟机在进行类加载的时候会调用加载器的私有方法loadClassInternal()，而这个方法唯一逻辑就是去调用自己的loadClass()。
+第二次破坏：双亲委派模型的第二次“被破坏”是由这个模型自身的缺陷所导致的，双亲委派很好地解决了各个类加载器的基础类的同一问题（越基础的类由越上层的加载器进行加载），基础类之所以称为“基础”，是因为它们总是作为被用户代码调用的API，但世事往往没有绝对的完美。
+如果基础类又要调用用户的代码，怎么办？一个典型的例子是JNDI服务。
+有了线程上下文加载器，JNDI服务就可以使用它去加载所需要的SPI代码，也就是父类加载器请求子类加载器去完成类加载的动作，这种行为实际上就是打通了双亲委派模型层次结构来逆向使用类加载器，实际上已经违背了双亲委派模型的一般性原则，但这也是无可奈何的事情。Java中所有涉及SPI的加载动作基本上都采用这种方式，例如JNDI、JDBC、JCE、JAXB和JBI等。
+第三次破坏：双亲委派的第三次被破坏是由于用户对程序动态性的追求导致的，这里所说的动态性是指：代码热替换、模块热部署等。
+--------------------------------------------
+BASE理论主要是解决CAP理论中分布式系统的可用性和一致性不可兼得的问题。BASE理论包括以下三个要素：
+BA: Basically Available, 基本可用
+S：Soft State，软状态，状态可以有一段时间不同步
+E：Eventually Consistent,最终一致，最终数据是一致的就可以了，而不是实时保持强一致。
+BASE模型与ACID不同，满足CAP理论，通过牺牲强一致性来保证系统可用性。
+
+2PC的缺点：
+	1. TM通过XA接口与RM之间进行数据交互，从第一阶段的准备阶段，业务所涉及的数据就被锁定，并且锁定跨越整个提交流程。在高并发和涉及业务模块较多的情况下对数据库的性能影响较大。
+	2. 二阶段是反伸缩模式的，业务规模越大，涉及模块越多，局限性越大，系统可伸缩越差。
+	3. 在技术栈比较杂的分布式应用中，存储组件有很多不支持XA协议。
+
+可靠消息最终一致性
+消息状态确认：可靠消息服务定时监听消息的状态，如果存在状态为待确认并且超时的消息，则表示上游应用和可靠消息交互出现异常。此时，可靠消息则携带消息体内的信息向上游应用发起请求查询该业务是否已执行。上游应用提供一个可查询接口供可靠消息追溯业务执行状态，如果业务执行成功则更改消息状态为已发送，否则删除此消息确保数据一致性。
+通过消息状态确认和消息重发两个功能，可以确保上游应用、可靠消息和下游应用数据的最终一致性。
+实际接入过程中，需要引入人工干预功能。比如引入重发次数限制、超过重发次数的消息发送到死信队列，等待人工干预。
+
+最大努力通知模式
+
+Guava中的RateLimiter的两种模式: SmoothBursty和SmoothWarmingUp。
+GateLimiter基于漏桶算法，但它参考了令牌桶算法。
+
+Semaphore用来控制同时访问某个资源的并发数量。而RateLimiter是用来控制访问资源的速率(rate)，它强调的是控制速率。比如每秒只能有100个请求通过，比如允许每秒发送1MB的数据。它的构造方法指定一个permitPerSecond参数，代表每秒钟产生多少个permits。RatLimiter允许预占未来的令牌，比如每秒产生5个permits,可以单次请求100个，这样紧接着的下一个请求需要等待大概20秒才能获取到permits。
+SmoothBursty可以处理突发请求，因为它会缓存最多1秒的permits，而SmoothWarmingUp是完全不同的设计。
+SmoothWarmingUp适用于资源需要预热的场景，比如某个接口业务，需要使用到数据库连接，由于连接需要预热才能进入到最佳状态，如果系统长时间处于低负载或零负载状态，当然，应用刚启动也是一样的），连接池中的连接慢慢释放掉了，此时我们认为连接池是冷的。
+
+当调用线程的interrupt方法，有两个作用：
+	1. 如果此线程处于阻塞状态(比如调用了wait,io等待)，则会马上退出阻塞，并抛出InterruptedException异常，线程可以通过捕获InterruptedException来做一定的处理，然后让线程退出。
+	2. 如果此线程处于运行之中，则线程不受任何影响，继续运行。仅仅是线程的中断标记为true。所以线程要在适当的位置通过调用isInterrupted方法来查看是否被中断，并做退出操作。
+--------------------------------------------------------------
+高并发下如何投递消息才能不丢失：
+在生产端高并发写入MQ的场景下，会面临两个问题：
+1、你每次写一条消息到MQ，为了等待这条消息的ack，必须把消息保存到一个存储里。
+并且这个存储不建议是内存，因为高并发下消息是很多的，每秒可能都几千甚至上万的消息投递出去，消息的ack要等几百毫秒的话，放内存可能有内存溢出的风险。
+2、绝对不能以同步写消息 + 等待ack的方式来投递，那样会导致每次投递一个消息都同步阻塞等待几百毫秒，会导致投递性能和吞吐量大幅度下降。
+
+针对这两个问题，相对应的方案其实也呼之欲出了。
+首先，用来临时存放未ack消息的存储需要承载高并发写入，而且我们不需要什么复杂的运算操作，这种存储首选绝对不是MySQL之类的数据库，而建议采用kv存储。kv存储承载高并发能力极强，而且kv操作性能很高。
+其次，投递消息之后等待ack的过程必须是异步的，也就是类似上面那样的代码，已经给出了一个初步的异步回调的方式。
+消息投递出去之后，这个投递的线程其实就可以返回了，至于每个消息的异步回调，是通过在channel注册一个confirm监听器实现的。
+收到一个消息ack之后，就从kv存储中删除这条临时消息；收到一个消息nack之后，就从kv存储提取这条消息然后重新投递一次即可；也可以自己对kv存储里的消息做监控，如果超过一定时长没收到ack，就主动重发消息。
+--------------------------------------------------------------
+可靠事件通知模式
+	- 同步事件
+	- 异步事件
+		- 本地事件服务
+		- 外部事件服务
+
+事件服务(此处指消息服务)与业务服务过于耦合，如果消息服务不可用，会导致业务不可用。应该 将事件服务与业务解耦，独立出来异步执行，或者在业务执行后先尝试发送一次消息，如果消息发送失败，则降级为异步发送。
+--------------------------------------------------------------
+Redis中的底层编码quicklist:
+ziplist是整个Redis中为了节省内存，而quicklist是更高级的数据结构。是在Redis3.2版本之后新加的，在3.2版本之前dict是最复杂的底层数据，而3.2版本之后quicklist是非常复杂的。
+以ziplist为节点的，双端链表结构。宏观上，quicklist是一个链表，微观上，链表中的每个节点都是一个ziplist。
+quicklist有自己的优点，也有缺点，对于使用者来说，其使用体验类似于线性数据结构，list作为最传统的双链表，节点通过指针持有数据，指针字段会耗费大量内存。ziplist解决了耗费内存这个问题，但引入了新问题：每次写操作整个ziplist的内存都需要重分配。quicklist在两者之间做了一个平衡，并且使用者可以通过自定义quicklist.fill，根据实际业务情况，调优。
+
+Redis中的zipmap:dict作为字典结构, 优点很多, 扩展性强悍, 支持平滑扩容等等, 但对于字典中的键值均为二进制数据, 且长度都很小时, dict的中的一坨指针会浪费不少内存, 因此Redis又实现了一个轻量级的字典, 即为zipmap.
+
+Note PriorityQueue is not synchronized. Multiple threads should not access a PriorityQueu instance concurrently if any of the threads modifies the queue. Instead, use the thread-safe java.util.concurrent.PriorityBlockingQueue class. 
+
+WebSocket的优点：
+	1. 较少的控制开销。在连接创建后，服务器和客户端之间交换数据时，用于协议控制的数据包头部相对较小。在不包含扩展的情况下，对于服务器到客户端的内容，此头部大小只有2至10字节（和数据包长度有关）；对于客户端到服务器的内容，此头部还需要加上额外的4字节的掩码。相对于HTTP请求每次都要携带完整的头部，此项开销显著减少了。
+	2. 更强的实时性。由于协议是全双工的，所以服务器可以随时主动给客户端下发数据。相对于HTTP请求需要等待客户端发起请求服务端才能响应，延迟明显更少；即使是和Comet等类似的长轮询比较，其也能在短时间内更多次地传递数据。
+	3. 保持连接状态。与HTTP不同的是，Websocket需要先创建连接，这就使得其成为一种有状态的协议，之后通信时可以省略部分状态信息。而HTTP请求可能需要在每个请求都携带状态信息（如身份认证等）。
+	4. 更好的二进制支持。Websocket定义了二进制帧，相对HTTP，可以更轻松地处理二进制内容。
+	5. 可以支持扩展。Websocket定义了扩展，用户可以扩展协议、实现部分自定义的子协议。如部分浏览器支持压缩等。
+	6. 更好的压缩效果。相对于HTTP压缩，Websocket在适当的扩展支持下，可以沿用之前内容的上下文，在传递类似的数据时，可以显著地提高压缩率。
+	7. 没有同源限制，客户端可以与任意服务器通信。
+	8. 协议标识符是ws(如果加密是wss)，请求的地址就是后端支持websocket的API。
+
+DMA是指外部设备不通过CPU而直接与系统内存交换数据的接口及时。要把外设的数据读入内存或把内存的数据传送到外设，一般都要通过CPU控制完成，如CPU程序查询或中断方式。利用中断进行数据传送，可以大大提高CPU的利用率。但是采用中断传送有它的缺点，对于一个高速IO设备，以及批量交换数据的情况，只能采用DMA方式，才能解决效率和速度问题。DMA在外设与内存间直接进行数据交换，而不通过CPU，这样数据传送的速度就取决于存储器和外设的工作速度。
+
+在RocketMQ中生产者有三种角色NormalProducer(普通)、OrderProducer(顺序)、TransactionProducer(事务)
+Resilence4J提供了一系列增强微服务的可用性功能：
+	1. 断路器
+	2. 限流
+	3. 基于信号量的隔离
+	4. 缓存 
+	5. 限时
+	6. 请求重试
+	
+对于Kafka的多集群同步方案：
+	1. 社区MirrorMaker:好处是社区自带，不过MirrorMaker运维成本很高，特别是主题的管理非常不便捷，同时很难实现管道化(pipelining)。
+	2. Uber的uReplicator:针对MirrorMaker弊端自研的多集群同步方案。
+	3. Confluent公司的Replicator:需要使用Confluent Kafka，而且是收费的。Replicator是目前宣称的最强大的Kafka多集群(甚至多DC)同步方案。
+	4. 社区MirrorMaker2：社区针对MirrorMaker研发的新版MirrorMaker。目前在开发中，要在Kafka2.4完成。
+
+Kafka多集群高可用的客户端方案：建立两个Kafka集群，不用同步，封装一个框架，生产者发双发，消费者双读，自动去重，是比较稳定的高可用方案。
+
+WebSocket是一种通信协议，可在单个TCP连接上进行全双工通信。WebSocket使得客户端和服务器之间的数据交换变得更加简单，运行服务端主动向客户端推送数据。在WebSocket API中，浏览器和服务器只需要完成一次握手，两者就可以建立持久性的连接，并进行双向数据传输。
+
+RocketMQ分布式事务的每个阶段：
+	1. 生产者向MQ服务器发送half消息。
+	2. half消息发送成功后，MQ服务器返回确认消息给生产者。
+	3. 生产者开始执行本地事务。
+	4. 根据本地事务执行结果(unknow, commit, rollback)向MQ Server发送提交或回滚消息。
+	5. 如果错过了(可能因为网络异常、生产者突然宕机等异常情况)提交/回滚消息，则MQ服务器将同一组中的每个生产者发送回查消息以获取事务状态。
+	6. 回查生产者本地事务状态。
+	7. 生产者根据本地事务状态发送提交/回滚消息。
+	8. MQ服务器将丢弃回滚的消息，但已提交(进行过二次确认的half消息)的消息将投递给消费者进行消费。
+从上述流程可以知道，RocketMQ事务消息其实只是保证了生产者本地事务和发送消息的原子性
+消费者在消费事务消息时，broker处理事务消息的消费与普通消息是一样的，若消费不成功，则broker会重复投递该消息16次，若仍然不成功则需要人工介入。
+
+DMA，全称叫Direct Memory Access，一种可让某些硬件子系统去直接访问系统主内存，而不用依赖CPU的计算机系统的功能。听着是不是很厉害，跳过CPU，直接访问主内存。传统的内存访问都需要通过CPU的调度来完成。
+
+传统的文件传输有多次用户态和内核态之间的切换，而且文件在多个buffer之间要复制多次最终才被发送到网卡。
+DMA是一种硬件直接访问系统主内存的技术。
+多种硬件都已使用了DMA技术，其中就包括网卡（NIC）。
+DMA技术让CPU得到解放，让CPU可以不用一直守着来完成文件传输。
+零拷贝技术减少了用户态与内核态之间的切换，让拷贝次数降到最低，从而实现高性能。
+Kafka使用零拷贝技术来进行文件的传输。
+
+@Configuration
+@EnableWebMvc
+@EnableWebSocket
+public class SpringWebSocketConfig extends WebMvcConfigurerAdapter implements WebSocketConfigurer {
+	...
+}
+
+HttpSessionHandshakeInterceptor
+Kafka使用磁盘速度快的原因：
+	1. 顺序读写；
+	2. 零拷贝；
+	3. mmap文件映射；
+
+MappedByteBuffer, FileChannel.transferTo(),
+PriorityQueue通过二叉小顶堆实现。PriorityQueue实现了Queue接口，不允许放入null元素；
+
+Leader Epoch与高水位
+正是有与Kafka复制协议分为两个阶段，导致使用高水位HW会出现数据丢失和数据不一致的问题。
+数据丢失:High Watermark truncation followed by immediate Leader Election.
+数据不一致：Replica divergence on restart after multiple hard failures.
+
+Resilience4j provides higher-order functions(decorators) to enhance any functional interface, lambda expression or method reference with a Circuit Breaker, Rate Limiter, Retry or Bulkhend. You can stack more than one decorator on any functional interface, lambda expression or method reference. The advantege is that you have the choice to select the decorators you need and nothing else. 
+
+Resilience4j provides several core modules:
+	resilience4j-circuitbreaker: Circuit breaking
+	resilience4j-ratelimiter: Rate limiting
+	resilience4j-bulkhead: Bulkheading
+	resilience4j-retry: Automatic retrying (sync and async)
+	resilience4j-timelimiter: Timeout handling
+	resilience4j-cache: Result caching
+当新的 controller 当选时，会触发 KafkaController.onControllerFailover 方法，在该方法中完成如下操作：
+1、 读取并增加Controller Epoch。 
+2、 在reassignedPartitions Patch(/admin/reassign_partitions)上注册watcher。 
+3、 在preferredReplicaElection Path(/admin/preferred_replica_election)上注册watcher。 
+4、 通过partitionStateMachine在broker Topics Patch(/brokers/topics)上注册watcher。 
+5、 若delete.topic.enable=true（默认值是 false），则partitionStateMachine在Delete Topic Patch(/admin/delete_topics)上注册watcher。 
+6、 通过replicaStateMachine在Broker Ids Patch(/brokers/ids)上注册Watch。 
+7、 初始化ControllerContext对象，设置当前所有topic，“活”着的broker列表，所有partition的 leader及ISR等。 
+8、 启动replicaStateMachine和partitionStateMachine。 
+9、 将brokerState状态设置为RunningAsController。 
+10、 将每个partition的Leadership信息发送给所有“活”着的broker。 
+11、 若auto.leader.rebalance.enable=true（默认值是true），则启动partition-rebalance线程。 
+12、 若delete.topic.enable=true 且Delete Topic Patch(/admin/delete_topics)中有值，则删除相应的Topic。
+
+实现一个分布式消息中间件，整体架构如何设计实现
+	1. 分布式事务；
+	2. 延迟功能；
+	3. 高可用：多副本；
+	4. 高并发：内存/分片；
+	5. 持久化：存储；
+	6. 清理机制：过期数据的清理；
+	7. 协议：通信协议和存储协议；
+	8. 一致性协议：依赖中间件/自己实现；
+	9. 元数据；
+	10. 线程模型；
+	11. 监控机制:消息积压/磁盘空间等
+	12. 微内核+插件化；
+
+kafka碰到的问题
+	1. 重复消费;
+	2. 不支持分布式事务；
+	3. 不支持延迟队列；
+	4. 原生不支持Json序列化；
+--------------------------------------------
+两种IO多路复用模式：Reactor和Proactor
+一般地，IO多路复用机制都依赖于一个事件多路分离器(Event Demultiplexer)。分离器对象可将来自事件源的IO事件分离出来，并分发到对应的read/write事件处理器(Event Handler)。开发人员预先注册需要处理的事件及其事件处理器(或回调函数)；事件处理器将请求事件传递给事件处理器。
+两个事件分离器有关的模式是Reactor和Proactor。Reactor模式采用同步IO，而Proactor采用异步IO
+
+在Reactor中，事件分离器负责等待文件描述符或socket为读写操作准备就绪，然后将就绪事件传递给对应的处理器，最后由处理器负责完成实际的读写工作。
+而在Proactor模式中，处理器-或者兼任处理器的事件分离器，只负责发起读写操作。IO操作本身由操作系统来完成。传递给操作系统的参数需要包括用户定义的数据缓冲区地址和数据大小，操作系统才能从中得到写出操作所需数据，或写入从socket读到的数据。事件分离器捕获IO操作完成事件，然后将事件传递给对应处理器。比如，在windows上，处理器发起一个异步IO操作，再由事件分离器等待IOCompletion事件。典型的异步模式实现，都建立在操作系统支持异步API的基础之上，将这种实现称为系统级异步或真异步，因此应用程序完全依赖操作系统执行真正的IO工作。
+两个模式的相同点，都是对某个IO事件的事件通知(即告诉某个模块，这个IO操作可以进行或完成)。在结构上，两者也有相同点：demultiplexor负责提交IO操作(异步)、查询设备是否可操作(同步)，然后当条件满足时，就回调handler；不同点在于，异步情况下(proactor)，当回调handler时，表示IO操作已经完成；同步情况下(Reactor)，回调handler时，表示IO设备可以进行某个操作(可读/可写)。
+使用Proactor框架和Reactor框架都可以极大的简化网络应用的开发，但它们的重点却不同。Reactor框架中用户定义的操作是在实际操作之前调用的。比如你定义了操作是要向一个SOCKET写数据，那么当该SOCKET可以接收数据的时候，你的操作就会被调用；而Proactor框架中用户定义的操作是在实际操作之后调用的。比如你定义了一个操作要显示从SOCKET中读入的数据，那么当读操作完成以后，你的操作才会被调用。Proactor和Reactor都是并发编程中的设计模式。在我看来，他们都是用于派发/分离IO操作事件的。这里所谓的IO事件也就是诸如read/write的IO操作。"派发/分离"就是将单独的IO事件通知到上层模块。两个模式不同的地方在于，Proactor用于异步IO，而Reactor用于同步IO。
+支持Proactor: boost, iocp
+--------------------------------------------
+MyISAM和Memory存储引擎采用的是表级锁，BDB存储引擎采用的是页面锁，但也支持表级锁。InnoDB存储引擎支持行级锁，也支持表级锁，但默认情况下是采用行级锁。
+页面锁：开销和加锁时间介于表锁和行锁之间，会出现死锁；锁粒度介于表锁和行锁之间，并发度一般。
+
+Epoll网络架构模型解决了c10k问题
+C10K:单机1万个并发连接问题。
+Epoll就成为C10K killer、高并发、高性能、异步非阻塞这些技术的代名词了。FreeBSD推出了kqueue，Linux推出了epoll，Windows推出了IOCP，Solaris推出了/dev/poll。这些操作系统提供的功能就是为了解决C10K问题。epoll技术的编程模型就是异步非阻塞回调，也可以叫做Reactor，事件驱动，事件轮循（EventLoop）。Nginx，libevent，node.js这些就是Epoll时代的产物。
+由于epoll, kqueue, IOCP每个接口都有自己的特点，程序移植非常困难，于是需要对这些接口进行封装，以让它们易于使用和移植，其中libevent库就是其中之一。跨平台，封装底层平台的调用，提供统一的 API，但底层在不同平台上自动选择合适的调用。按照libevent的官方网站，libevent库提供了以下功能：当一个文件描述符的特定事件（如可读，可写或出错）发生了，或一个定时事件发生了，libevent就会自动执行用户指定的回调函数，来处理事件。目前，libevent已支持以下接口/dev/poll, kqueue, event ports, select, poll 和 epoll。Libevent的内部事件机制完全是基于所使用的接口的。因此libevent非常容易移植，也使它的扩展性非常容易。目前，libevent已在以下操作系统中编译通过：Linux，BSD，Mac OS X，Solaris和Windows。使用libevent库进行开发非常简单，也很容易在各种unix平台上移植。
+
+
+MyISAM存储引擎:在用lock tables给表显式加表锁时，必须同时取得所有涉及到表的锁，并且MySQL不支持锁升级。也就是说，在执行lock tables后，只能访问显式加锁的这些表，不能访问未加锁的表；同时，如果加的是读锁，那么只能执行查询操作，而不能执行更新操作。其实，在自动加锁的情况下也是一样的，MyISAM总是一次获得SQL语句所需要的全部锁。这正是MyISAM表不会出现死锁的原因。当使用LOCK TABLES时，不仅需要一次锁定用到的所有表，而且，同一个表在SQL语句中出现多少次，就要通过与SQL语句中相同的别名锁定多少次，否则也会出错。
+
+在一定条件下，MyISAM表也支持查询和插入操作的并发进行。 
+MyISAM存储引擎有一个系统变量concurrent_insert，专门用以控制其并发插入的行为，其值分别可以为0、1或2。
+	1. 当concurrent_insert设置为0时，不允许并发插入。
+	2. 当concurrent_insert设置为1时，如果MyISAM表中没有空洞（即表的中间没有被删除的行），MyISAM允许在一个进程读表的同时，另一个进程从表尾插入记录。这也是MySQL的默认设置。
+	3. 当concurrent_insert设置为2时，无论MyISAM表中有没有空洞，都允许在表尾并发插入记录。
+可以利用MyISAM存储引擎的并发插入特性，来解决应 用中对同一表查询和插入的锁争用。例如，将concurrent_insert系统变量设为2，总是允许并发插入；同时，通过定期在系统空闲时段执行 OPTIMIZE TABLE语句来整理空间碎片，收回因删除记录而产生的中间空洞。
+-------------------------------------------------------
+MyISAM的锁调度：
+MyISAM存储引擎的读锁和写锁是互斥的，读写操作是串行的。一个进程请求某个 MyISAM表的读锁，同时另一个进程也请求同一表的写锁，MySQL如何处理呢？答案是写进程先获得锁。不仅如此，即使读请求先到锁等待队列，写请求后 到，写锁也会插到读锁请求之前！这是因为MySQL认为写请求一般比读请求要重要。这也正是MyISAM表不太适合于有大量更新操作和查询操作应用的原 因，因为，大量的更新操作会造成查询操作很难获得读锁，从而可能永远阻塞。这种情况有时可能会变得非常糟糕！幸好我们可以通过一些设置来调节MyISAM 的调度行为。
+
+	- 通过指定启动参数low-priority-updates，使MyISAM引擎默认给予读请求以优先的权利。
+	- 通过执行命令SET LOW_PRIORITY_UPDATES=1，使该连接发出的更新请求优先级降低。
+	- 通过指定INSERT、UPDATE、DELETE语句的LOW_PRIORITY属性，降低该语句的优先级。
+虽然上面3种方法都是要么更新优先，要么查询优先，但还是可以用其来解决查询相对重要的应用（如用户登录系统）中，读锁等待严重的问题。 
+另外，MySQL也提供了一种折中的办法来调节读写冲突，即给系统参数max_write_lock_count设置一个合适的值，当一个表的读锁达到这个值后，MySQL就暂时将写请求的优先级降低，给读进程一定获得锁的机会。
+
+上面已经讨论了写优先调度机制带来的问题和解决办法。强调一点：一些需要长时间运行的查询操作，也会使写进程“饿死”！因此，应用中应尽量避免出现长时间运行的查询操作，不要总想用一条SELECT语 句来解决问题，因为这种看似巧妙的SQL语句，往往比较复杂，执行时间较长，在可能的情况下可以通过使用中间表等措施对SQL语句做一定的“分解”，使每 一步查询都能在较短时间完成，从而减少锁冲突。如果复杂查询不可避免，应尽量安排在数据库空闲时段执行，比如一些定期统计可以安排在夜间执行。
+-------------------------------------------------------
+当前读：特殊的读操作，插入/更新/删除操作，属于当前读，需要加锁。
+通过检查InnoDB_row_lock状态变量来分析DB上的行锁的争夺情况:
+>show status like 'innodb_row_lock%';
+为了允许行锁和表锁共存，实现多粒度锁机制，InnoDB有两种内部使用的意向锁(Intention Locks)，这两种意向锁都是表锁。
+意向共享锁IS：事务在给一个数据行加共享锁前必须先取得该表的IS锁。
+意向排它锁IX:事务在给一个数据行加排它锁前必须先取得该表的IX锁。
+用SELECT ... IN SHARE MODE获得共享锁，主要用在需要数据依存关系时来确认某行记录是否存在，并确保没有人对这个记录进行UPDATE或者DELETE操作。但是如果当前事务也需要对该记录进行更新操作，则很有可能造成死锁，对于锁定行记录后需要进行更新操作的应用，应该使用SELECT… FOR UPDATE方式获得排他锁。
+即便在条件中使用了索引字段，但是否使用索引来检索数据是由MySQL通过判断不同执行计划的代价来决 定的，如果MySQL认为全表扫描效率更高，比如对一些很小的表，它就不会使用索引，这种情况下InnoDB将使用表锁，而不是行锁。因此，在分析锁冲突时，检查SQL的执行计划，以确认是否真正使用了索引。
+----------------------------------------
+1. memory引擎表数据只存放在内存中，插入数据后，文件也只有表结构文件，没有表数据文件，重启后，数据丢失 ，但是表结构还在，表结构文件也还在
+2. memory引擎表，一个会话修改了数据，其他会话可以立即看到修改后的数据
+3. 要清空memory引擎表，delete、truncate、drop、重启都可以;
+4. memory引擎表最大大小受参数max_heap_table_size的限制
+5. momory引擎的表，除了这两点，表数据放在内存中、重启后数据丢失，其他一切都和普通表一样。
+6. 生产环境不建议使用memory引擎，因为它有两个最大的缺点，其一它只有表锁没有行锁，这样一旦表有更新操作，就会堵塞其他会话对这张表的读写。其二它的数据存放在内存中，一旦在M-S架构中，S从库重启，S从库数据就会丢失，但是M主库数据还在，继而影响主从同步，因为重启后如果收到一条update语句后，主库正常执行，把该语句发送到从库就会报错找不到更新的行，导致主从同步停止。
+7. 如果非要用memory引擎的优点，把数据存放在内存中，可以使用memory引擎临时表，正好可以避免上面6的两个缺点。
+8. MEMORY默认使用哈希索引。速度比使用B型树索引快。当然如果你想用B型树索引，可以在创建索引时指定。
+----------------------------------------
+Reactor模型中定义的三种角色：
+Reactor：负责监听和分配事件，将I/O事件分派给对应的Handler。新的事件包含连接建立就绪、读就绪、写就绪等。
+Acceptor：处理客户端新连接，并分派请求到处理器链中。
+Handler：将自身与事件绑定，执行非阻塞读/写任务，完成channel的读入，完成处理业务逻辑后，负责将结果写出channel。可用资源池来管理。
+Proactor操作系统支持，Windows下通过IOCP实现了真正的异步 I/O，而在Linux系统下，Linux2.6才引入，并且异步I/O使用epoll实现的，所以还不完善。
+
+双亲委派机制的作用
+	1. 防止重复加载同一个类，通过委托父类加载器确保没有加载过，才加载；
+	2. 保证核心类库的安全，不被篡改。
+
+java文件编译成.class文件的过程：
+	1. 源代码 
+	2. 词法分析器
+	3. Token流
+	4. 语法分析器
+	5. 语法树/抽象语法树
+	6. 语义分析器
+	7. 注解抽象语法树
+	8. 字节生成器
+	9. JVM字节码 
+MyCat:将字典表或者符合字典表的一些表定义为全局表，从另外一方面，很好的解决了数据join的难题。
+数据冗余是解决跨分片数据join的一种很好的思路，也是数据切分规划的另外一条重要规则。
+MyCat有对全局表的一致性检测。
+MyCat目前版本支持跨分片的join，主要实现方式有四种：全局表，ER分片，catletT(人工智能)和ShareJoin, ShareJoin在开发版中支持，前面三种方式1.3.0支持。
+
+redis集群脑裂问题的解决方法：配置文件中存在两个参数：
+min-replicas-to-write 3
+min-replicas-max-lag 10
+min-replicas-to-write表示连接到master的最少slave数量。
+min-replicas-max-lag表示slave连接到master的最大延迟时间。
+按照上面的配置，要求至少3个slave节点，且数据复制和同步的延迟不能超过10秒，否则的话master就会拒绝写请求，配置了这两个参数之后，如果发生集群脑裂，原先的master节点接收到客户端的写入请求会拒绝，就可以减少数据同步之后的数据丢失。
+Redis不保证强一致性。
+
+public interface SmartInitializingSingleton {
+	/* Invoked right at the end of the singleton pre-instantiation phase, 
+		with a guarantee that all regular singleton beans have been created already.
+		ListableBeanFactory#getBeansOfType calls within this method won't trigger 
+		side effects during bootstrap. NOTE: This callback won't be triggered for 
+		singleton beans lazily initialized on demand after #BeanFacory bootstrap,
+		and not for any other bean scope either. Carefully use it for beans with 
+		the intended bootstrap semantices only. 
+	*/
+	void afterSingletonsInstantiated();
+}
+Spring Cloud Gateway本身集成了限流功能，限流需要使用Redis。其中filters.name=RequestRateLimiter
+
+1. XmlBeanFactory继承AbstractBeanDefinitionReader, 使用ResourceLoader将资源文件路径转换为对应的Resouce文件。
+2. 通过DocumentLoader对Resouce文件进行转换，将Resource文件转换为Document。
+3. 通过实现接口BeanDefintionDocumentReader的DefaultBeanDefintionDocumentReader类对Document进行解析，并且使用BeanDefinitionParserDelegate对Element进行解析。
+
+BeanDefinitonHolder, GenericBeanDefinition, RootBeanDefintion, BeanDefinitionBuilder, AbstractBeanDefinition,ChildBeanDefintion,BeanDefinitionRegistry,
+--------------------------------------------------------
+Dubbo并发控制:
+在服务消费方设置接口中每个方法并发请求数，通过设置actives参数。
+在服务消费方设置接口中的某个方法的并发请求数，通过设置actives参数。
+在服务提供方设置接口中每个方法的并发请求数，通过设置executes参数。
+在服务提供方设置接口的某个方法的并发请求数，通过设置executes参数。
+消费端并发限制：ActiveLimitFilter
+服务端并发限制：ExecuteLimitFilter
+--------------------------------------------------------
+使用表级锁的主要是MyISAM, Memory, CSV等一些非事务型存储引擎；
+使用行级锁的主要是InnoDB存储引擎。
+使用页级锁的主要是BerkeleyDB存储引擎。
+行级锁定不是MySQL自己实现的锁定方式，而是由存储引擎实现的，如InnoDB存储引擎和MySQL的分布式存储引擎NDBCluster等都是实现了行级锁。
+
+SmartInitializingSingleton是spring 4.1中引入的新特效，与InitializingBean的功能类似，都是bean实例化后执行自定义初始化，都是属于spring bean生命周期的增强。但是，SmartInitializingSingleton的定义及触发方式方式上有些区别，它的定义不在当前的bean中（a bean's local construction phase），它是回调接口（针对非lazy单例Bean），回调的操作是由spring事件ContextRefreshedEvent触发。
+Ribbon使用SmartInitializingSingleton定制化RestTemplate.
+@Configuration
+@ConditionalOnClass(RestTemplate.class)
+@ConditionalOnBean(LoadBalancerClient.class)
+@EnableConfigurationProperties(LoadBalancerRetryProperties.class)
+public class LoadBalancerAutoConfiguration {
+	@LoadBalanced
+	@Autowired(required = false)
+	private List<RestTemplate> restTempaltes = Collections.emptyList();
+	
+	@Bean 
+	public SmartInitializingSingleton loadBalancedRestTemplateInitializer(final 
+				List<RestTemplateCustomizer> customizers) {
+		return new SmartInitializingSingleton() {
+			@Override
+			public void afterSingletonsInstantiated() {
+				for (RestTemplate restTemplate : LoadBalancerAutoConfiguration.this.restTemplates) {
+					for (RestTemplateCustomizer customizer : customizers) {
+						customizer.customize(restTemplate);
+					}
+				}
+			}
+		}
+	}
+	...
+}
+MyCat的：全局表，ER分片表
+常见的除了主键之外的其他可能分片字段有订单创建时间、店铺类别或所在省等。当找到某个合适的业务字段作为分片字段以后，不必纠结于"牺牲了按主键查询记录的性能"，因为在这种情况下，MyCAT提供了"主键到分片"的内存缓存机制，热点数据按照主键查询，不损失性能。
+对于非主键分片的table，填写属性primaryKey，此时MyCAT会将你根据主键查询的SQL语句的第一次执
+行结果进行分析，确定该Table的某个主键在什么分片上，并进行主键到分片ID的缓存。第二次或后续查询
+mycat会优先从缓存中查询是否有id–>node 即主键到分片的映射，如果有直接查询，通过此种方法提高了非主
+键分片的查询性能
+-----------------------
+Databus是一个低延迟、可靠的、支持事务的、保持一致的数据变更抓取系统。由LinkedIn于2013年开源。Databus通过挖掘数据库日志的方式，将数据库变更实时、可靠的从数据库拉取出来，业务可以通过定制化client实时获取变更并进行业务处理。
+Databus有以下特点：
+	1. 数据源和消费者之间隔离；
+	2. 数据传输能保证顺序性和至少一次交付的高可用性；
+	3. 从变化流的任意时间点进行消费，包括通过bootstrap获取所有数据；
+	4. 分区消费；
+	5. 源一致性保存，消费不成功会一直消费到消费成功。
+功能&特性
+	来源独立：Databus支持多种数据来源的变更抓取，包括Oracle和MySQL。
+	可扩展、高度可用：Databus能扩展到支持数千消费者和事务数据来源，同时保持高度可用性。
+	事务按序提交：Databus能保持来源数据库中的事务完整性，并按照事务分组和来源的提交顺寻交付变更事件。
+	低延迟、支持多种订阅机制：数据源变更完成后，Databus能在毫秒级内将事务提交给消费者。同时，消费者使用Databus中的服务器端过滤功能，可以只获取自己需要的特定数据。
+	无限回溯：对消费者支持无限回溯能力，例如当消费者需要产生数据的完整拷贝时，它不会对数据库产生任何额外负担。当消费者的数据大大落后于来源数据库时，也可以使用该功能。
+Databus for MySQL:
+	实现原理：通过解析mysql的binlog日志来获取变更事件，解析过程利用开源工具OpenReplicator，OpenReplicator首先连接到MySQL(类似于普通的MySQL Slave)，然后接收和分析binlog，最终将分析得出binlog events以回调的方式通知应用，所有的Event实现了BinlogEventV4接口。
+	binlog格式：Databus设计为针对Row格式日志进行解析
+		Statement:基于SQL语句的复制(statement-based replication, SBR)
+		Row: 基于行的复制(row-based replication RBR)
+		Mixed: 混合模式复制(mixed-based replication, MBR)
+	SCN(System change number)的确定：64bits，高32位表示binlog的文件序号，低32位代表event在binlog文件的offset。
+-----------------------
+Canal工作原理：
+	1. Canal模拟MySQL Slave的交互协议，伪装自己为MySQL slave，向MySQL发送dump协议；
+	2. MySQL master收到dump请求，开始推送binary log给Slave(即Canal)；
+	3. Canal解析binary log对象(原始为byte流).
+Canal特别设计了client-server模式，交互协议使用protobuf 3.0, client端可采用不同语言实现不同的消费逻辑.
+Canal作为MySQL binlog增量获取和解析工具，可将变更记录投递到MQ系统中，比如kafka/rocketMQ。
+-----------------------
+通过show engine innodb status命令查看死锁日志，结合异常代码，可定位原因。
+
+死锁分析
+等待锁分析
+查看死锁日志，显示事务T1的insert语句在等待插入意向锁，lock_mode X locks gap before rec insert intention waiting;事务T2持有a=4的gap lock，同时也在等待插入意向锁。另外，T1能执行delete，说明它也拿到了gap lock，所以，两个事务都持有gap lock，导致循环等待插入意向锁而发生死锁。
+
+加锁分析
+	1. delete的where子句没有满足条件的记录，而对于不存在的记录 并且在RR级别下，delete加锁类型为gap lock，gap lock之间是兼容的，所以两个事务都能成功执行delete；这里的gap范围是索引a列(3,5)的范围。
+	2. insert时，其加锁过程为先在插入间隙上获取插入意向锁，插入数据后再获取插入行上的排它锁。又插入意向锁与gap lock和 Next-key lock冲突，即一个事务想要获取插入意向锁，如果有其他事务已经加了gap lock或 Next-key lock，则会阻塞。
+	3. 两个事务都持有gap lock，然后又申请插入意向锁，此时都被阻塞，循环等待造成死锁。
+/*Intercepts client-side HTTP requests. Implementations of this interface can be 
+RestTemplate#setInterceptors registered with RestTemplate, as to modify the outgoing 
+ClientHttpRequest and/or the incoming ClientHttpResponse.
+The main entry point for interceptors is intercept(HttpRequest, byte[],
+ ClientHttpRequestExecution).
+*/
+@FunctionalInterface
+public interface ClientHttpRequestInterceptor {
+	ClientHttpResponse intercept(HttpRequest request, byte[] body,
+				ClientHttpRequestExecution execution) throw IOException;
+}
+------------------------------------
+MethodInterceptor
+AOP中使用到的类/接口：
+	1. AopProxyFactory接口: AopProxy代理工厂类，用于生成代理对象AopProxy。
+	2. AopProxy:代表一个AopProxy代理对象，可以通过这个对象构造代理对象实例。
+	3. Advised接口：代表被Advice增强的对象，包括添加advisor的方法、添加advice等方法；
+	4. ProxyConfig类：一个代理对象的配置信息，包括代理的各种属性，如基于接口还是基于类构造代理。
+	5. AdvisedSupport类：对Advised的构建提供支持，Advised的实现类以及ProxyConfig的子类。
+	6. ProxyCreatorSupport类：AdvisedSupport的子类，创建代理对象的支持类，内部包括AopProxyFactory工厂成员，可直接使用工厂成员创建Proxy。
+	7. ProxyFactory类：ProxyCreatorSupport的子类，用于生成代理对象实例的工厂类。
+	8. Advisor接口：代表一个增强器提供者的对象，内部包含getAdvice方法获取增强器。
+	9. AdvisorChainFactory接口：获取增强器链的工厂接口。提供方法返回所有增强器，以数组返回。
+	10. Pointcut接口：切入点，用于匹配类与方法，满足切入点的条件才插入advice。相关接口：ClassFilter, MethodMatcher.
+代理对象实例最终是使用AopProxy.getProxy()得到的，它的调用是在AopProxyFactory.createAopProxy(AdvisedSupport config), createAopProxy有两个结果。一个是基于接口的JDK动态代理JdkDynamicAopProxy,一个是基于Cglib的生成类代理ObjenesisCglibAopProxy。

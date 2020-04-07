@@ -1,0 +1,1030 @@
+Spring默认的HandlerMapping是BeanNameUrlHandlerMapping和RequetMappingHandlerMapping，在resouces目录的DispatcherServlet.properties里的org.springframework.web.servlet.HandlerMapping的key进行记录。
+
+Spring默认的HandlerAdapter是HttpRequestHandlerAdapter,SimpleControllerHandlerAdapter,AnnotationMethodHandlerAdapter
+
+Spring默认的HandlerExceptionResolver是AnnotationMethodHandlerExceptionResolver,ResponseStatusExceptionResolver,DefaultHandlerExceptionResolver
+
+Spring默认的ViewResolver是InternalResouceViewResolver
+
+@ExceptionHandler
+
+ 按照《Unix网络编程》的划分，IO模型可以分为：阻塞IO、非阻塞IO、IO复用、信号驱动IO和异步IO，按照POSIX标准来划分只分为两类：同步IO和异步IO。如何区分呢？首先一个IO操作其实分成了两个步骤：发起IO请求和实际的IO操作，同步IO和异步IO的区别就在于第二个步骤是否阻塞，如果实际的IO读写阻塞请求进程，那么就是同步IO，因此阻塞IO、非阻塞IO、IO服用、信号驱动IO都是同步IO，如果不阻塞，而是操作系统帮你做完IO操作再将结果返回给你，那么就是异步IO。阻塞IO和非阻塞IO的区别在于第一步，发起IO请求是否会被阻塞，如果阻塞直到完成那么就是传统的阻塞IO，如果不阻塞，那么就是非阻塞IO。
+ 
+ Java2.0 引入了异步IO，包括文件和网络。为了支持AIO引入的新的类和接口:
+ java.nio.channels.AsynchronousChannel: 标识一个channel支持异步操作
+ java.nio.channels.AsynchronousServerSocketChannel: ServerSocket的aio版本,创建TCP服务端，绑定地址，监听端口等
+ java.nio.channels.AsynchronousSocketChannel: 面向流的异步socket channel,表示一个链接
+ java.nio.channels.AsynchronousChannelGroup: 异步Channel的分组管理，目的是为了资源共享。一个AsynchronousChannelGroup绑定一个线程池，这个线程池执行两个任务：处理IO事件和派发CompletionHandler。AsynchronousServerSocketChannel创建的时候可以传入一个AsynchronousChannelGroup，那么通过AsynchronousServerSocketChannel创建的AsynchronousSocketChannel将同属于一个组，共享资源。即线程池
+ java.nio.channels.CompletionHandler:异步IO操作结果的回调接口，用于定义在IO操作完成后所做的回调工作。AIO允许两种方式来处理异步操作的结果:返回的Future模式或者注册CompletionHandler，推荐使用CompletionHandler。这些CompletionHandler的调用是由AsynchronousChannelGroup的线程池派发的。显然线程池的大小是性能的关键因素。AsynchronousChannelGroup有三个静态方法来创建:
+ public static AsynchronousChannelGroup withFixedThreadPool(int nThreads, ThreadFactory threadFactory) throws IOException;
+ public static AsynchronousChannelGroup withCachedThreadPool(ExecutorService executor, int initialSize);
+ public static AsynchronousChannelGroup withThreadPool(ExecutorService executor) throws IOException;
+ 
+ 
+ 集合类初始化时，尽量指定大小。
+ 
+ 
+ 在MIME格式的电子邮件中，base64可以用来将binary的字节序列数据编码成ASCII字符序列构成的文本。使用时，在传输编码方式中指定base64。使用的字符包括大小写字母各26个，加上10个数字，和加号“+”，斜杠“/”，一共64个字符，等号“=”用来作为后缀用途。
+ 编码后的数据比原始数据略长，为原来的4/3。在电子邮件中，根据RFC822规定，每76个字符，还需要加上一个回车换行。可以估算编码后数据长度大约为原长的135.1%。
+转换的时候，将三个byte的数据，先后放入一个24bit的缓冲区中，先来的byte占高位。数据不足3byte的话，于缓冲区中剩下的Bit用0补足。然后，每次取出6个bit，按照其值选择ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/中的字符作为编码后的输出。不断进行，直到全部输入数据转换完成。
+如果最后剩下两个输入数据，在编码结果后加1个“=”；如果最后剩下一个输入数据，编码结果后加2个“=”；如果没有剩下任何数据，就什么都不要加，这样才可以保证资料还原的正确性。
+ 
+ 
+ 
+ 线程快照是当前java虚拟机内每一条线程正在执行的方法堆栈的集合，生成线程快照的主要目的是定位线程出现长时间停顿的原因，如线程间死锁、死循环、请求外部资源导致的长时间等待等。 线程出现停顿的时候通过jstack来查看各个线程的调用堆栈，就可以知道没有响应的线程到底在后台做什么事情，或者等待什么资源。 如果java程序崩溃生成core文件，jstack工具可以用来获得core文件的java stack和native stack的信息，从而可以轻松地知道java程序是如何崩溃和在程序何处发生问题。另外，jstack工具还可以附属到正在运行的java程序中，看到当时运行的java程序的java stack和native stack的信息, 如果现在运行的java程序呈现hung的状态，jstack是非常有用的。
+ 
+ So,jstack命令主要用来查看Java线程的调用堆栈的，可以用来分析线程问题（如死锁）。
+ 
+ 频繁GC问题或内存溢出问题
+一、使用jps查看线程ID
+二、使用jstat -gc 3331 250 20 查看gc情况，一般比较关注PERM区的情况，查看GC的增长情况。
+三、使用jstat -gccause：额外输出上次GC原因
+四、使用jmap -dump:format=b,file=heapDump 3331生成堆转储文件
+五、使用jhat或者可视化工具（Eclipse Memory Analyzer 、IBM HeapAnalyzer）分析堆情况。
+六、结合代码解决内存溢出或泄露问题。
+
+ 
+
+死锁问题
+一、使用jps查看线程ID
+二、使用jstack 3331：查看线程情况
+ 
+ 
+ 
+Guava是Google开源项目，包含了若干被Google的Java项目广泛依赖的核心库，其中的RateLimit提供了令牌桶算法实现：平滑突发限流(SmoothBursty)和平滑预热限流(SmoothWarmingUp)实现。
+ 
+对于Nginx接入层限流可以使用Nginx自带了两个模块：
+	1. 连接数限流模块:ngx_http_limit_conn_module
+	2. 漏桶算法实现的请求限流模块:ngx_http_limit_req_module
+
+ApplicationListener, ApplicationContextInitializer
+SpringFactoriesLoader里的META-INF/spring.factories
+
+类从被加载到虚拟机内存中开始，到卸载出内存为止。它的整个生命周期包括：加载Loading, 验证Verification，准备Preparation, 解析Resolution,初始化Initialization,使用Using和卸载Unloading7个阶段。其中准备、验证、解析3个部分统称为链接Linking。
+加载、验证、准备、初始化和卸载这5个阶段的顺序是确定的，类的加载过程必须按照这种顺序按部就班地开始，而解析阶段则不一定：它在某些情况下可以在初始化阶段之后再开始，这是为了支持Java语言的运行时绑定（也称为动态绑定或晚期绑定）。
+	
+索引的一些优化建议：
+	1. 索引并不是越多越好，要根据查询有针对性的创建，考虑在where和order by涉及的字段建立索引，可根据explain查看是否用了索引还是全表扫描；
+	2. 应尽量避免在where子句中对字段进行null值判断，否则将导致引擎放弃使用索引而进行全表扫描；
+	3. 值分布很稀少的字段不适合建索引，例如性别这种没有区分度的字段；
+	4. 字符字段只建前缀索引；
+	5. 字符字段最好不要做主键；
+	6. 不用外键，由程序保证外键相关的约束；
+	7. 尽量不用union，由程序保证约束；
+	8. 使用联合索引顺序和查询条件保持一致，同时删除不必要的单列索引。
+
+这里需要注意的是：与SQL标准不同的地方在于InnoDB存储引擎中repeatable-read可重复读事务隔离级别下使用的是Next-Key Lock锁算法，因此可以避免幻读的产生，这与其他数据库系统(SQL Server)是不同的。所以说InnoDB存储引擎的默认支持的隔离级别是Repeatable-read，已经可以完全保证事务的隔离性要求，即达到了SQL标准的serializable隔离级别。
+因为隔离级别越低，事务请求的锁越少，所以大部分数据库系统的隔离级别read-committed，但是最新版本的InnoDB存储引擎默认使用repeatable-read并不会有任何性能损失。
+InnoDB存储引擎在分布式事务的情况下，一般会用到serializable隔离级别。
+
+
+G1是为多处理器和大内存的服务器而设计的，它根据运行JVM过程中构建的停顿预测模型(Pause Prediction Model)计算出来的历史数据来预测本次收集需要选择的Region数量，然后尽可能满足GC的停顿时间，G1期望能让JVM的GC成为简单的事情。G1旨在延迟性和吞吐量之间取得最佳的平衡，它尝试解决有如下问题的JAVA应用：
+	1. 堆大小达到几十个G甚至更大，超过50%的堆空间都是存活对象；
+	2. 对象分配和晋升的速度随着时间的推移有很大的影响；
+	3. 堆上严重的碎片化问题；
+	4. 可预测的停顿时间，避免长时间的停顿。
+
+程序计数器是唯一一个不会出现OutOfMemoryError的内存区域，它的生命周期随着线程的创建而创建，随着线程的结束而死亡。
+
+
+索引优化：小心隐式类型转换
+明确知道只会返回一条记录，可以加limit 1。这样可以让MySQL停止游标移动，提高查询效率。
+对文本建立前缀索引。
+选择足够长的前缀保证较高的区分度，同时又不能太长(以便节约空间)。
+需要注意的一点是：前缀索引不能使用覆盖索引，因为从索引中获取不到完整的数据，还得回表查询。
+
+建立索引的列不为NULL：只要列中包含有NULL值都将不会被包含在索引中，复合索引中只要有一列含有NULL值，那么这一列对于此复合索引就是无效的。
+因此，在数据库设计时，除非有很特别的原因使用NULL值，不然尽量不要让字段的默认值为NULL。
+
+先每隔1秒重试了5次，再用"指数规避"的时间间隔重试，2S，4S,8S,16S,32S，最后结束。
+
+生存时间TTL：IP报文所允许通过的路由器的最大数量。每经过一个路由器，TTL减一，当为0时，路由器将该数据丢弃。TTL字段是由发送端初始设置一个8bit字段。推荐的初始值由分配数字RFC指定。发送ICMP回显应答时经常把TTL设为255.TTL可以防止数据报陷入路由循环。
+
+TCP中的6bit TCP标志位：从左到右依次是紧急URG,确认ACK，推送PSH，复位RST，同步SYN，终止FIN。ack有效，同时psh有效。
+TCP中的紧急指针。仅在URG=1时才有意义，它指出本报文段中的紧急数据的字节数。当URG=1时，发送方TCP就把紧急数据插入到本报文段的最前面，而在紧急数据后面的数据仍是普通数据。
+
+标识：同一个数据报的唯一标识。当IP数据报被拆分时，会复制到每一个数据中。
+
+HTTP通过文档过期机制和服务器再验证机制保持已缓存数据和服务器间的数据充分一致。
+文档过期通过：Cache-Control:max-age, Expires头部字段来表示缓存的有效期。
+If-Modified-Since:<date>
+If-None-Match:<tags>
+
+通常，服务器需要先生成数据，再进行传输，这时，可以计算数据的长度，并将其编码到Content-Length中。但是，有时，内容是动态生成的，服务器希望在数据生成之前就开始传输，这时，是没有办法知道数据大小的。这种情况下，就要用到传输编码来标注数据的结束的。
+HTTP协议中通过如下两个首部来描述和控制传输编码：
+	1. Transfer-Encoding: 发送方告知接收方，我方已经进行了何种传输编码；典型值：chuncked分块编码；
+	2. TE:请求方告知服务器可以用哪种传输编码；trailers, chuncked接受分块编码，并且愿意接受这报文结尾上的拖挂。
+
+HTTP有keep-alive机制，目的是可以在一个TCP连接上传输多个HTTP事务，以此提高通信效率。底层的TCP其实也有keep-alive机制，它是为了探测TCP连接的活跃性。TCP层的keep-alive可以在任何一方设置，可以是一端设置、两端同时设置或者两端都没有设置。新建socket的时候需要设置，从而使得协议栈调用相关函数tcpsetkeepalive，来激活连接的keep-alive属性。
+当网络两端建立了TCP连接之后，闲置(双方没有任何数据流发送往来)时间超过tcp_keepalive_time后，服务器内核就会尝试向客户端发送侦测包，来判断TCP连接状况(有可能客户端崩溃、强制关闭应用、主机不可达)。如果没有收到对方的回答(ack包)，则会在tcp_keepalive_interval后再次尝试发送侦测包，直到收到对方的ack，如果一直没有收到对方的ack，一共会尝试tcp_keepalive_probes次，每次的间隔时间在这里分别是15s, 30s, 45s, 60s, 75s。如果尝试 tcp_keepalive_probes次后,依然没有收到对方的ack包，则会丢弃该TCP连接。TCP连接默认闲置时间是2小时，一般设置为30分钟足够了。
+
+TCP的结构：
+	源端口和目的端口在TCP层确定双方进程，序列号表示的是报文段数据中的第一个字节号，ACK表示确认号，该确认号的发送方期待接收的下一个序列号，即最后被成功接收的数据字节序列号加1，这个字段只有在ACK位被启用的时候才有效。
+	当新建一个连接时，从客户端发送到服务端的第一个报文段的SYN位被启用，这称为SYN报文段，这时序列号字段包含了本次连接的这个方向上要使用的第一个序列号，即初始序列号ISN，之后发送的数据是ISN加1，因此SYN位字段会消耗一个序列号，这意味着使用重传进行可靠传输。而不消耗序列号的ACK则不是。
+	头部长度以32位为单位，即4个字节为单位，它只有4位，最大为15，因此头部最大长度为60字节，而起最小为5，也就是头部最小为20字节(可变选项为空)。
+	ACK-确认，使得确认号有效。RST-重置连接(经常看到的reset by peer)就是此字段。SYN-用于初始化一个连接的序列号。FIN-该报文段的发送方已经结束向对方发送数据。
+	当一个连接被建立或被终止时，交换的报文段只包含TCP头部，而没有数据。
+
+三次握手的作用就是：双方都能明确自己和对方的收、发能力是正常的。
+第一、二握手后，服务端并不知道客户端的接收能力以及自己的发送能力是否正常。而在第三次握手时，服务端收到了客户端对第二次握手的回应。从服务端的角度，我在第二次握手的响应数据发送出去了，客户端接收到了。所以，我的发送能力是正常的。而客户端的接收能力也是正常的。
+
+而从上面的过程可以看到，最少是需要三次握手过程的。两次达不到让双方都得出自己、对方的接收、发送能力都正常的结论。其实每次收到网络包的一方至少是可以得到：对方的发送、我方的接收是正常的。而每一步都是有关联的，下一次的“响应”是由于第一次的“请求”触发，因此每次握手其实是可以得到额外的结论的。比如第三次握手时，服务端收到数据包，表明看服务端只能得到客户端的发送能力、服务端的接收能力是正常的，但是结合第二次，说明服务端在第二次发送的响应包，客户端接收到了，并且作出了响应，从而得到额外的结论：客户端的接收、服务端的发送是正常的。
+
+其实三次握手的目的并不只是让通信双方都了解到一个连接正在建立，还在于利用数据包的选项来传输特殊的信息，交换初始序列号ISN。
+三次握手是指发送了3个报文段，4次握手是指发送了4个报文段。注意，SYN和FIN段都是会利用重传进行可靠传输的。
+
+为什么建立连接是三次握手，而关闭连接却是四次挥手：
+	这是因为服务端在listen状态下，收到建立连接请求的SYN报文后，把ACK和SYN放在一个报文里发送给客户端。而关闭连接时，当收到对方的FIN报文时，仅仅表示对方不再发送数据但是还能接收数据，是否现在关闭发送数据通道，需要上层应用来决定，因此，ACK和FIN一般都会分开发送。
+
+当外部连接请求到来时，TCP模块会首先查看max_syn_backlog，如果处于SYN_RCVD状态的连接数目超过这个阈值，进入的连接会被拒绝。根据tcp_abort_overflow字段来决定是直接丢弃，还是直接reset。
+从服务端来看，三次握手，第一步server接收到client的syn后，把相关信息放到半连接队列中，同时回复syn+ack给client。第三步当收到客户端的ack，将连接加入到全连接队列。
+一般，全连接队列比较小，会先满，此时半连接还没满。如果这时收到syn报文，则会进入半连接队列，没有问题。但是如果手动了三次握手中的第3部(ACK),则会根据tcp_abort_on_overflow字段来决定是直接丢弃，还是直接reset。此时，客户端发送了ACK,那么客户端认为三次握手完成，它认为服务端已经准备好了接收数据的准备。但此时服务端可能因为全连接队列满了而无法将连接放入，会重新发送第二步的syn+ack，如果这时有数据到来，服务器TCP模块会将数据存入队列。一段时间后，client端没收到回复，超时，连接异常，client会主动关闭连接。
+
+缓存穿透是指查询一个一定不存在的数据。由于缓存不命中，并且出于容错考虑，如果从数据库查不到数据则不写入缓存，这将导致这个不存在的数据每次请求都要到数据库去查询，失去了缓存的意义。	
+	
+	
+缓存与数据库双写一致性问题：
+对于操作缓存有两种方案：更新缓存或者删除缓存。
+一般我们都是采取删除缓存缓存策略的，原因如下：
+	1. 高并发环境下，无论是先操作数据库还是后操作数据库而言，如果加上更新缓存，那就更加容易导致数据库与缓存数据不一致问题。(删除缓存直接和简单很多)
+	2. 如果每次更新了数据库，都要更新缓存【这里指的是频繁更新的场景，这会耗费一定的性能】，倒不如直接删除掉。等再次读取时，缓存里没有，那我到数据库找，在数据库找到再写到缓存里边(体现懒加载)
+
+基于这两点，对于缓存在更新时而言，都是建议执行删除操作！
+
+
+--------------------------------------------------------------
+先更新数据库，再删除缓存方案：
+	正常的情况是这样的：
+		1. 先操作数据库，成功；
+		2. 再删除缓存，也成功；
+
+	如果原子性被破坏了：
+	第一步成功(操作数据库)，第二步失败(删除缓存)，会导致数据库里是新数据，而缓存里是旧数据。
+	如果第一步(操作数据库)就失败了，我们可以直接返回错误(Exception)，不会出现数据不一致。
+
+如果在高并发的场景下，出现数据库与缓存数据不一致的概率特别低，也不是没有：
+	缓存刚好失效
+		线程A查询数据库，得一个旧值
+		线程B将新值写入数据库
+		线程B删除缓存
+		线程A将查到的旧值写入缓存
+
+要达成上述情况，还是说一句概率特别低：
+
+因为这个条件需要发生在读缓存时缓存失效，而且并发着有一个写操作。而实际上数据库的写操作会比读操作慢得多，而且还要锁表，而读操作必需在写操作前进入数据库操作，而又要晚于写操作更新缓存，所有的这些条件都具备的概率基本并不大。
+
+对于这种策略，其实是一种设计模式：Cache Aside Pattern
+删除缓存失败的解决思路：
+	- 将需要删除的key发送到消息队列中；
+	- 自己消费消息，获得需要删除的key;
+	- 不断重试删除操作，直到成功；
+--------------------------------------------------------------
+先删除缓存，再更新数据库：
+	正常情况是这样的：
+		- 先删除缓存，成功；
+		- 再更新数据库，也成功；
+如果原子性被破坏了：
+	- 第一步删除缓存成功，第二步更新数据库失败，数据库和缓存的数据还是一致的；
+	- 如果第一步缓存删除就失败了，直接返回错误Exception，数据库和缓存的数据还是一致的；
+看起来很美好但是在并发场景下，还是有问题：
+	- 线程A删除了缓存
+	- 线程B查询，发现缓存已经不存在；去数据库查询到旧的值；
+	- 线程B将旧值写入缓存；
+	- 线程A将新值写入数据库。
+所以也会导致数据库和缓存不一致的问题。
+并发下解决数据库与缓存不一致的思路：
+	-将删除缓存、修改数据库、读取缓存等的操作积压在队列里面，实现串行化。保证每步发生的动作是按顺序进行的。
+
+--------------------------------------------------------------
+对比两种策略的优缺点：
+	1. 先删除缓存，再更新数据库：在高并发表现不如意，在原子性被破坏时表现优异；
+	2. 先更新数据库，再删除缓存(Cache Aside Pattern设计模式)：在高并发表现优异，在原子性被破坏时表现不如意。
+其他保障数据一致性的方案：使用databus或者阿里的canal监听binlog进行更新。
+
+所以系统A要判定一个核心数据是否写成功，如果系统B一共部署了3台机器的话，那么系统A必须在指定时间内收到2台系统B所在机器返回的写成功的响应。
+此时系统A才能认为这条数据对系统B是写成功了。这就是所谓的Quorum机制。
+
+----------------------------------------------------
+如何将Redis优化到极致：
+需要优化下列5个命令：
+命令1：hset mall:sale:freq:ctrl:860000000000001 599055114591 1（hash结构，field表示购买的商品ID，value表示购买次数）
+命令2：hset mall:sale:freq:ctrl:860000000000001 599055114592 2
+命令3：expire mall:sale:freq:ctrl:860000000000001 3127（设置过期时间）
+
+命令4：set mall:total:freq:ctrl:860000000000001 3
+命令5：expire mall:total:freq:ctrl:860000000000001 3127（设置过期时间）
+
+第一次优化：利用hmset命令将两条hset命令合二为一。
+hmset mall:sale:freq:ctrl:860000000000001 599055114591 1 599055114592 2
+expire mall:sale:freq:ctrl:860000000000001 3127
+set mall:total:freq:ctrl:860000000000001 3
+expire mall:total:freq:ctrl:860000000000001 3127
+第二次优化：将set和expire命令合二为一
+hmset mall:sale:freq:ctrl:860000000000001 599055114591 1 599055114592 2
+expire mall:sale:freq:ctrl:860000000000001 3127
+setex mall:total:freq:ctrl:860000000000001 3 3127
+第三次优化：需要借助pipeline。不过需要注意在Redis Cluster中使用pipeline必须满足pipeline打包的所有命令key在Redis Cluster的同一个Slot上。如果打包命令的key不在同一个slot上，就会报错。所以需要分两批打包：
+-- 这两条命令的key都是一样的，肯定在同一个Slot上
+pipeline(
+hmset mall:sale:freq:ctrl:860000000000001 599055114591 1 599055114592 2
+expire mall:sale:freq:ctrl:860000000000001 3127
+)
+--上面那个key和下面这个key不在同一个slot(不一定)
+setex mall:total:freq:ctrl:860000000000001 3 3127
+第四次优化：这次优化利用了高级特性：hashtag。Redis Cluster总计有16*1024=16384个Slot。那么执行一条Redis命令时，计算Slot的公式如下：
+Slot = CRC16(key)%16384。是否可以让计算slot只和key的一部分相关呢，可以利用hashtag特性，使用${}可以把参与slot计算的key的一部分标注出来。
+优化后的命令如下：
+pipeline(
+hmset mall:sale:freq:ctrl:{860000000000001} 599055114591 1 599055114592 2
+expire mall:sale:freq:ctrl:{860000000000001} 3127
+setex mall:total:freq:ctrl:{860000000000001} 3 3127
+)
+----------------------------------------------------
+多线程的作用：
+	1. 发挥多核CPU的优势；
+	2. 防止阻塞；
+	3. 利于建模；
+
+获取堆栈信息：jstack <pid>；对于Linux系统，也可以使用kill -3 <pid>
+
+一个线程出现了运行时异常会怎么样：
+如果这个异常没有被捕获的话，这个线程就停止执行了。另外一个重要点：如果这个线程持有某个对象的监视器，那么这个对象监视器会被立即释放。
+
+sleep和wait方法有什么区别：sleep方法和wait方法都可以用来放弃CPU执行权，不同点在于如果线程持有某个对象的监视器，sleep方法不会放弃这个对象的监视器，wait方法会放弃这个对象的监视器。
+
+wait方法和notify/notifyAll方法在放弃对象监视器时有什么区别：
+wait方法和notify/notifyAll方法在放弃对象监视器的时候区别在于：wait方法立即释放对象监视器，notify/notifyAll方法则会等待线程剩余代码执行完毕后才会放弃监视器。
+
+如何判断线程持有某个对象的监视器锁? Thread的静态方法holdsLock(Object obj)可以判断当前线程是否持有某个对象的监视器锁。是个native方法。
+如下：
+public class Thread implements Runnable {
+...
+	/*Returns true if and only if the current thread holds the monitor lock on the specified object.
+	This method is designed to allow a program to assert that the current thread already holds a specified lock:
+		assert Thread.holdsLock(obj);
+	*/
+	public static native boolean holdsLock(Object obj);
+...
+}
+
+怎么唤醒一个阻塞的线程：
+如果线程是因为调用了wait(), sleep()或者join()方法而导致的阻塞，可以中断线程，并且通过抛出InterruptedException来唤醒它；如果线程遇到了IO阻塞，无能无力，因为IO是操作系统实现的，Java代码并没有办法直接接触到操作系统。
+
+同步方法和同步块，哪个更好？同步块意味着同步块之外的代码是异步执行的，这比同步整个方法更提升代码的效率。一个原则：同步的范围越小越好。
+另外，虽说同步的范围越少越好，但是在JVM中还是存在锁粗化的优化方法，这种方法就是把同步范围变大。这是有用的，比如StringBuffer，它是一个线程安全的类。最常用的append()方法是一个同步方法，写代码时会反复append()，这意味着反复的加锁->解锁，对性能不利，因为这意味着JVM虚拟机在这个线程上反复地在内核态和用户态之间进行切换，因为JVM会将多次append方法调用的代码进行一个锁粗化操作，将多次的append操作扩展到append方法的头尾，变成一个大的同步块，这样就减少了加锁->解锁的次数，有效地提升了代码执行的效率。
+
+
+衡量一个哈希函数的好坏的重要指标就是发生碰撞的概率以及发生碰撞的解决方案。任何哈希函数基本都无法彻底避免碰撞，常见的解决碰撞的方法有以下几种：
+	1. 开放定址法；
+	2. 链地址法；
+	3. 再哈希法；
+	4. 建立公共溢出区。
+
+为什么位运算可以实现取模运算呢？即：X%(2^n) = X & (2^n - 1)
+	
+为了对key的hashCode进行扰动计算，防止不同hashCode的高位不同但低位相同导致的hash冲突。简单来说，就是为了把高位的特征和低位的特征组合起来，降低哈希冲突的概率，也就是说，尽量做到任何一位的变化都能对最终得到的结果产生影响。
+
+其实，使用位运算代替取模运算，除了性能之外，还有一个好处就是可以很好的解决负数问题。因为hashCode的结果是int，取值范围为：-2^31 ~2^31-1。这里面包含负数，对于一个负数取模有点麻烦。如果使用二进制的位运算，可以很好的避免这个问题。首先，不管hashCode的值是正数还是负数。length-1一定是正数，那么它的二进制第一位是0，这样两个数按位与运算之后，第一位一定是0，也就是得到的结果一定是正数。
+
+实现大整数相乘的方案：
+	1. 竖列，把两整数按位依次相乘；复杂度：O(n^2)
+	2. 利用分治法，把两个大整数分成高位和低位两部分，转化成4个较小的乘积：
+		整数1 * 整数2
+		= (A * 10^(n/2) + B) * (C * 10^(n/2) + D)
+		= AC*10^n + AD*10^(n/2) + BC*10^(n/2) + BD
+		复杂度：O(n^2)
+	3. 上面方案2的优化：
+		整数1 * 整数2
+		= (A * 10^(n/2) + B) * (C * 10^(n/2) + D)
+		= AC*10^n + AD*10^(n/2) + BC*10^(n/2) + BD
+		= AC*10^n + ((A-B)(D-C) + AC + BD) * 10^(n/2) + BD
+		将原本的4次乘法3次加法，转化为3次乘法6次加法。
+		复杂度：O(n^1.59)
+	4. 快速傅里叶变换FFT；复杂度：O(NlogN)
+	
+Raft有效的解决了分布式一致性算法过于复杂及难于实现的问题。
+
+Java中的CAS操作都是通过sun包下的Unsafe类实现，而Unsafe类中的方法都是native，由JVM实现。Linux的X86主要是通过cmpxchgl这个指令在CPU级别完成CAS操作的，但在多处理器下必须使用lock指令加锁来完成。
+	
+Java中提供了AtomicStampedReference/AtomicMarkableReference来处理会发生ABA问题的场景，主要是在对象中额外再增加一个标记来标识对象是否有过变更。
+
+@SuppressWarnings("serial")
+abstract class Striped64 extends Number {
+	@sun.misc.Contended
+	static final class Cell {
+		volatile long value;
+		Cell(long x) {value = x;}
+		
+		final boolean cas(long cmp, long val) {
+			return UNSAFE.compareAndSwapLong(this, valueOffset, cmp, val);
+		}
+		
+		// Unsafe mechanics
+		private static final sun.misc.Unsafe UNSAFE;
+        private static final long valueOffset;
+        static {
+            try {
+                UNSAFE = sun.misc.Unsafe.getUnsafe();
+                Class<?> ak = Cell.class;
+                valueOffset = UNSAFE.objectFieldOffset
+                    (ak.getDeclaredField("value"));
+            } catch (Exception e) {
+                throw new Error(e);
+            }
+        }
+	}
+}
+
+Callable与Runnable不同点：
+	1. Callable在任务结束时提供一个返回值，Runnable无法提供这个功能；
+	2. Callabel的call方法可以抛出异常，而Runnable的run方法不能抛出异常；
+
+Spring解决Bean循环依赖的机制根据Spring框架定义的三级缓存来实现的，也就是说：三级缓存解决了Bean之间的循环依赖。	
+
+public class DefaultSingletonBeanRegistry extends SimpleAliasRegistry implments SingletoBeanRegistry {
+	// Cache of singleton objects : bean name to bean instance
+	private final Map<String, Object> singletonObjects = new ConcurrentHashMap<>(256);
+	//Cache of singleton factories: bean name to ObjectFactory
+	private final Map<String, ObjectFactory<?>> singletonFactories = new HashMap<>(16);
+	// Cache of early singleton objects: bean name to bean instance 
+	private final Map<String, Object> earlySingletonObjects = new HashMap<>(16);
+	// Set of registered singletons, containing the bean name in registration order.
+	privte final Set<String> registeredSingletons = new LinkedHashSet<>(256);
+	// Names of beans that are currently in creation.
+	private final Set<String> singletonsCurrentlyInCreation = Collections.newSetFromMap(new ConcurrentHashMap<>(16));
+	...
+}
+
+Zuul 1.x基于Servlet，使用阻塞API，不支持任何长连接，如WebSockets，Spring Cloud Gateway使用非阻塞API，支持WebSockets，支持限流等新特性。
+
+Spring Cloud Gateway中的相关概念：
+Route(路由)：这是网关的基本构建块。它有一个ID，一个目标URI，一组断言和一组过滤器定义。如果断言为真，则路由匹配；
+Predicate(断言): 是Java8的Predicate。输入类型是一个ServerWebExchange。可以使用它来匹配来自HTTP请求的任何内容，例如headers或者参数；
+Filter(过滤器)：这是org.springframework.cloud.gateway.filter.GatewayFilter的实例，使用它修改请求和应答。
+
+Spring Cloud Gateway features:
+	1. Built on Spring Framework 5, Project Reactor and Spring Boot 2.0;
+	2. Able to match routes on any request attribute.
+	3. Predicates and filters are specific to routes.
+	4. Hystrix Circuit Breaker integration.
+	5. Spring Cloud DiscoveryClient integration.
+	6. Easy to write Predicates and Filters.
+	7. Request Rate Limiting.
+	8. Path Rewriting.
+
+Spring Cloud Gateway是使用Netty+Webflux实现，因此不需要引入Web模块。	
+	
+Java的线程阻塞和唤醒是通过Unsafe类的park和unpark方法实现的，这两个方法在底层是使用操作系统提供的信号量机制来实现的。
+线程从启动开始就会一直跑，除了操作系统的任务调度策略外，它只有在调用 park 的时候才会暂停运行。锁可以暂停线程的奥秘所在正是因为锁在底层调用了 park 方法。
+
+
+public class Thread implements Runnable {
+...
+	/** 
+		The argument supplied to the current call to LockSupport.park.
+		Set by (private) LockSupport.setBlocker
+		Accessed using LockSupport.getBlocker
+	*/
+	volatile Object parkBlocker;
+	
+	/* The object in which this thread is blocked in an interruptible I/O operation, if any.
+		The blocker's interrupt method should be invoked after setting this thread's interrupt status.
+	*/
+	private volatile Interruptible blocker;
+	private final Object blockerLock = new Object();
+...
+}
+
+AbstractQueueSynchronizer类是一个抽象类，它是所有的锁队列管理器的父类，JDK中的各种形式的锁其内部的队列管理器都继承了这个类，它是Java并发世界的核心基石。比如ReentrantLock, ReadWriteLock, CountDownLatch, Semaphore, ThreadPoolExecutor内部的队列管理器都是它的子类。这个抽象类暴露了一些抽象方法，每一种锁都需要对这个管理器进行定制。
+
+------------------------------------------
+共享锁和排它锁
+ReentrantLock的锁是排他锁，一个线程持有，其他线程都必须等待。而ReadWriteLock里面的读锁不是排他锁，它允许多线程同时持有读锁，这是共享锁。共享锁和排他锁是通过Node类里面的nextWaiter字段区分的。
+
+------------------------------------------
+public abstract class AbstractQueuedSynchronizer 
+	extends AbstractOwnableSynchronizer 
+	implements java.io.Serializable {
+...
+	static final class Node {
+		// Marker to indicate a node is waiting in shared mode
+		static final Node SHARED = new Node();
+		// Marker to indicate a node is waiting in exclusive mode
+		static final Node EXCLUSIVE = null;
+		...
+		/* Link to next node waiting on condition, or the special value SHARED.
+			Because condition queues are accessed only when holding in exclusive mode, 
+			we just need a simple linked queue to hold nodes while they are waiting on conditions.
+			They are then transferred to the queue to re-acquire. And because conditions can only 
+			be exclusive, we save a field by using special value to indicate shared mode.
+		*/
+		Node nextWaiter;
+		...
+	}
+...
+}
+
+await()方法会一直阻塞在cond条件变量上直到被另外一个线程调用了cond.signal()或者cond.signalAll()方法后才会返回，await()阻塞时会自动释放当前线程持有的锁，await()被唤醒后会再次尝试持有锁(可能需要排队)，拿到锁成功后await()方法才能成功返回。
+
+阻塞在条件变量上的线程可以有多个，这些阻塞线程会被串联成一个条件等待队列。当 signalAll() 被调用时，会唤醒所有的阻塞线程，让所有的阻塞线程重新开始争抢锁。如果调用的是 signal() 只会唤醒队列头部的线程，这样可以避免「惊群问题」。
+
+await() 方法必须立即释放锁，否则临界区状态就不能被其它线程修改，condition_is_true() 返回的结果也就不会改变。 这也是为什么条件变量必须由锁对象来创建，条件变量需要持有锁对象的引用这样才可以释放锁以及被 signal 唤醒后重新加锁。创建条件变量的锁必须是排他锁，如果是共享锁被 await() 方法释放了并不能保证临界区的状态可以被其它线程来修改，可以修改临界区状态的只能是排他锁。这也是为什么 ReadWriteLock.ReadLock 类的 newCondition 方法定义如下
+
+条件等待队列：当多个线程await()在同一个条件变量上时，会形成一个条件等待队列。同一个锁可以创建多个条件变量，就会存在多个条件等待队列。这个队列和AQS的队列结构很接近，只不过它不是双向队列，而是单向队列。队列中的节点和AQS等待队列的节点是同一个类，但是节点指针不是prev和next，而是nextWaiter。
+
+读写锁分为两个锁对象ReadLock和WriteLock，这两个锁对象共享同一个AQS。AQS的锁计数变量state将分为两个部分，前16bit为共享锁ReadLock计数，后16bit为互斥锁WriteLock计数。互斥锁记录的是当前写锁重入的次数，共享锁记录的是所有当前持有共享读锁的线程重入总次数。
+读写锁同样也需要考虑公平锁和非公平锁。共享锁和互斥锁的公平锁策略和 ReentrantLock 一样，就是看看当前还有没有其它线程在排队，自己会乖乖排到队尾。非公平锁策略不一样，它会比较偏向于给写锁提供更多的机会。如果当前 AQS 队列里有任何读写请求的线程在排队，那么写锁可以直接去争抢，但是如果队头是写锁请求，那么读锁需要将机会让给写锁，去队尾排队。
+毕竟读写锁适合读多写少的场合，对于偶尔出现一个写锁请求就应该得到更高的优先级去处理。
+
+如果当前线程已经持有写锁，它可以继续加读锁，这是为了达成锁降级必须支持的逻辑。锁降级是指在持有写锁的情况下，再加读锁，再解除写锁。相比于先写解锁再加读锁而言，这样可以省去加锁二次排队的过程。因为锁降级的存在，锁计数中读写计数可以同时不为零。
+
+All indexes other than the clustered index are known as secondary indexes. In InnoDB, each record in a secondary index contains the primary key columns for the row, as well as the columns specified for the secondary index. InnoDB uses this primary key value to search for the row in the clustered index. If the primary key is long, the secondary indexes use more space, so it is advantageous to have a short primary key.
+
+ID作为主键时在特定的环境会存在一些问题，比如做DB主键的场景下，UUID就非常不适用：
+	1. MySQL官方有明确的建议主键要尽量越短越好，36个字符长度的UUID不符合要求；
+	2. 对MySQL索引不利：如果作为数据库主键，在InnoDB引擎下，UUID的无序性可能会引起数据位置频繁变动，严重影响性能。
+
+
+类Snowflake方案的优缺点：
+优点：
+	- 毫秒数在高位，自增序列在低位，整个ID都是趋势递增的。
+	- 不依赖数据库等第三方系统，以服务的方式部署，稳定性更高，生成ID的性能也是非常高的。
+	- 可以根据自身业务特性分配bit位，非常灵活。
+缺点：
+	- 强依赖机器时钟，如果机器上时钟回拨，会导致发号重复或者服务处于不可用状态。
+
+MongoDB官方ObjectID可以算是和snowflake类似方法，通过"时间+机器码+pid+inc"共12个字节，通过4+3+2+3的方式最终标识成一个24字节长度的十六进制字符。
+
+分布式数据库生成的缺点：
+	1. 系统水平扩展比较困难，比如定义好了步长和机器数之后，如果要添加机器怎么处理？假设现在只有一台机器发号是1,2,3,4,5（步长是1），这个时候需要扩容机器一台。可以这样做：把第二台机器的初始值设置得比第一台超过很多，比如14（假设在扩容时间之内第一台不可能发到14），同时设置步长为2，那么这台机器下发的号码都是14以后的偶数。然后摘掉第一台，把ID值保留为奇数，比如7，然后修改第一台的步长为2。让它符合我们定义的号段标准，对于这个例子来说就是让第一台以后只能产生奇数。扩容方案看起来复杂吗？貌似还好，现在想象一下如果我们线上有100台机器，这个时候要扩容该怎么做？简直是噩梦。所以系统水平扩展方案复杂难以实现。
+	2. ID没有了单调递增的特性，只能趋势递增，这个缺点对于一般业务需求不是很重要，可以容忍。
+	3. 数据库压力还是很大，每次获取ID都是读写一次数据库，只能靠堆机器来提高性能。
+
+美团提出了两种改进方案：Leaf-segment和Leaf-snowflake方案。
+
+
+Linux内核给每个进程都提供了一个独立的连续虚拟地址空间。
+每个进程的虚拟地址分为内核空间和用户空间。但内核空间，其实关联的都是相同的物理内存。进程用户态只能访问用户空间内存；内核态可以访问内核空间内存。
+内存映射就是将虚拟内存地址映射到物理内存地址，内核为每个进程都维护了一张页表，记录映射关系。
+页表实际存储在CPU的内存管理单元MMU中，页表还有一个缓冲TLB(Translation Lookaside Buffer，转译后备缓冲器)
+页的大小为4K,为了解决页过多，Linux提供了两种机制多级页表和大页(HugePage)。
+多级页表就是把内存分成区块来管理，将原来的映射关系改成区块索引和区块内的偏移，这样可以大大减少页表的项数。
+Linux使用四级页表管理内存页。
+大页就是比普通页更大的内存块。
+当访问虚拟地址在页表中找不到时，会产生缺页异常，进入内核空间分配物理内存、更新进程页表，最后再返回用户空间，恢复进程的运行。
+
+内存性能指标：
+	1. 系统内存指标：
+		1.1 已用内存
+		1.2 剩余内存
+		1.3 可用内存
+		1.4 缺页异常：
+			1.4.1 主缺页异常
+			1.4.2 次缺页异常
+		1.5 缓存/缓冲区
+			1.5.1 使用量
+			1.5.2 命中率
+		1.6 Slabs
+	2. 进程内存指标：
+		2.1 虚拟内存(VSS)
+		2.2 常驻内存(RSS)
+		2.3 按比例分配共享内存后的物理内存(PSS)
+		2.4 独占内存(USS)
+		2.5 共享内存
+		2.6 Swap内存
+		2.7 缺页异常
+			2.7.1 主缺页异常
+			2.7.2 次缺页异常 
+	3. swap：
+		3.1 已用空间
+		3.2 剩余空间
+		3.3 换入速度
+		3.4 换出速度
+
+常用命令：free, top, vmstat, /proc/meminfo, cachestat, cachetop, sar, ps, pmap, memleak, pcstat, valgrind
+进程内存分布：pmap
+
+响应式宣言：
+We want systems that are Responsive, Resilient, Elastic and Message Driven.
+四个关键字：
+	1. Responsive:即时响应性，系统尽可能及时响应。
+	2. Resilient:回弹性，系统中出现故障时保持响应。通过复制、包含、隔离和委派来实现弹性。故障包含在每个组件中，使组件彼此隔离，从而确保系统的各个部分可以发生故障并可以恢复而不会损害整个系统。
+	3. Elastic: 弹性，系统中不断变化的工作负载下保持响应能力。
+	4. Message Driven消息驱动：响应式系统依靠异步消息传递在组件之间建立边界，以确保松耦合，隔离和位置透明。
+Reactive Streams是一项倡议，旨在为具有无阻塞背压的异步流处理提供标准。
+
+背压(Back Pressure)：控制数据流量大小，数据流的订阅者可以和发布者协商自己可以处理的数据量。极端情况下，发布快速流量数据会压垮订阅者(例如，消耗内存和处理器)。背压可以让发布者匹配订阅者的处理能力。
+
+主要讨论RR隔离级别，因为RC只是少了间隙锁。
+
+意向共享锁(Intention shared lock: IS)
+意向排它锁(Intention exclusive lock: IX)
+意向锁解决表级锁和行级锁的冲突。意向锁之间兼容
+事务中请求S锁和X锁前，需要先获得对应的IX、IS锁。
+
+行锁：
+	1. 记录锁:Record Locks；单条索引记录上加锁，record lock锁住的永远是索引，而非记录本身。如果没有显式索引，InnoDB会创建聚集索引。
+	2. 间隙锁：Gap Locks；锁住一个索引区间(开区间). 锁住索引记录的区间，或第一条索引记录之前的范围，或最后一条索引记录之后的范围。
+	3. 临键锁：Next-Key Locks；记录锁与间隙锁的组合，它的封锁范围，既包含索引记录，又包含索引区间(左开右闭区间)。
+	4. 插入意向锁：Insert Intention Locks；一种特殊的间隙锁。两个事务只要插入的行没有冲突，即使在同一个间隙，也可以插入。
+
+存在Insert Intention锁时，申请Gap锁是允许的；但是存在Gap锁时，申请Insert Intention锁时是被阻止的。
+
+自增锁:auto-inc Locks。表级锁，多个事务同时插入时，保证auto_increment列递增。
+
+InnoDB和Memory引擎的数据组织方式是不同的：
+	1. InnoDB引擎把数据放在主键索引上，其他索引上保存的是主键ID。这种方式，称之为索引组织表(Index Organizied Table)。
+	2. Memory引擎采用的是把数据单独存放，索引上保存数据位置的数据组织形式，称之为堆组织表(Heap Organizied Table)。
+
+Memory引擎和InnoDB引擎的不同点：
+	1. InnoDB表的数据总是有序存放的，而内存表的数据是按照写入顺序存放的；
+	2. 当数据文件有空洞的时候，InnoDB表在插入新数据的是，为了保证数据有序性，只能在固定的位置写入新值，而内存表找到空位置就可以插入新值。
+	3. 数据位置发生变化的时候，InnoDB表只需要修改主键索引，而内存表需要修改所有索引；
+	4. InnoDB表用主键索引查询时需要走一次索引查找，用普通索引查询的时候，需要走两次索引查找；而内存表没有这个区别，所有索引的"地位"都是相同的。
+	5. InnoDB支持变长数据类型，不同记录的长度可能不同；内存表不支持Blob和Text字段，并且 即使定义了varchar(N)，实际也当作char(N)，也就是固定长度字符串来存储，因此内存表的每行数据长度相同。
+
+总结：
+	1. RR下，事务中第一次Read操作时，会建立read-view；
+	2. RC下，事务中每次Read操作时，都会建立read-view;
+不同业务选择不同的隔离级别。
+
+undo log有两个作用：提供回滚和MVCC。
+在数据修改的时候，不仅记录redo，还记录相对应的undo，如果因为某些原因导致事务失败或回滚了，可以借助该undo进行回滚。
+undo log和redo log记录物理日志不一样，它是逻辑日志。可以认为当delete一条记录时，undo log中记录一条对应的insert记录，反之亦然，当update一条记录时，它记录一条对应相反的update记录。
+
+不同时刻启动的事务会有不同的read-view。同一条记录在系统中可以存在多个版本，就是数据库的多版本并发控制MVCC。当系统里没有比这个回滚日志更早的read-view的时候，回滚日志会被删除。所以要避免长事务。
+
+redo log主要节省的是随机写磁盘的IO消耗(转成顺序写)，而change buffer主要节省的则是随机读磁盘的IO消耗。
+
+//wt可以看线程上下文切换
+$pidstat -wt <pid>
+
+uptime: 平均负载
+top: 平均负载，运行队列，整体的CPU使用率以及每个进程的状态和CPU使用率
+htop: top增强版，以不同颜色区分不同类型的进程，更直观
+atop: CUP，内存，磁盘和网络等各种资源的全面监控
+vmstat: 系统整体的CPU使用率、上下文切换次数、中断次数，还包括处于运行和不可中断的进程数量
+mpstat: 每个CPU的使用率和软中断次数
+pidstat: 进程和线程的CPU使用率、中断上下文切换次数
+/proc/softirqs：软中断类型和每个CPU上的累积中断次数
+/proc/interrupts：硬中断类型和每个CPU上的累积中断次数
+ps:每个进程的状态和CPU使用率
+pstree: 进程的父子关系
+dstat: 系统整体的CPU使用率 
+sar: 系统整体的CPU使用率，包括可配置的历史数据 
+strace: 进程的系统调用
+perf：CPU性能事件剖析，如调用链分析、CPU缓存、CPU调度等
+execsnoop：监控短时进程
+
+public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
+	implements ConcurrentMap<K, V>, Serializable {
+...
+	// The smallest table capacity for which bins may be treeified.
+	//(Otherwise the table is resized if too many nodes in a bin.)
+	//The value should be at leaset 4 * TREEIFT_THRESHOLD to avoid 
+	// conflicts between resizing and treeification thresholds.
+	static final int MIN_TREEIFY_CAPACITY = 64;
+...
+}
+
+select * from information_schema.innodb_lock_waits;
+select * from information_schema.innodb_locks;
+show engine innodb status\G;
+-------------------------------------------------
+插入意向锁：Insert Intention Locks
+插入意向锁本质上可以看成是一个Gap Lock。
+	- 普通的Gap Lock不允许在(上一条记录，本记录)范围内插入数据；
+	- 插入意向锁Gap Lock允许在(上一条记录，本记录)范围内插入数据； 
+插入意向锁的作用是为了提高并发插入的性能，多个事务同时写入不同数据至同一索引范围(区间)内，并不需要等待其他事务完成，不会发生锁等待。
+
+关于Insert Intention Locks的锁等待有两种情况：
+	case1：事务A获得Gap Lock，事务B Insert Intention Lock等待；
+	case2: 事务A获得Next-key Lock， 事务B Insert Intention Lock等待。
+-------------------------------------------------
+自增锁(AUTO-INC Locks)
+在InnoDB中，每个含有自增列的表都有一个自增长计数器。当对含有自增长计数器的表进行插入时，首先会执行select max(auto_inc_col) from t for update来得到计数器的值，然后再将这个值加1赋予自增长列。这种方式称之为AUTO_INC Lock。
+AUTO_INC Lock是一种特殊的表锁，它在完成对自增值插入的SQL语句后立即释放，所以性能会比事务完成后释放锁要高。由于是表级锁，所以在并发环境下依然存在性能问题。
+从MySQL5.1.22开始，InnoDB中提供了一种轻量级互斥量的自增长实现机制，同时InnoDB存储引擎提供了一个参数innodb_autoinc_lock_mode来控制自增长的模式，进而提高自增长值插入的性能。
+参数innodb_autoinc_lock_mode的说明：
+参数值0:这是MySQL5.1.22版本之前自增长的实现方式，即通过表锁的AUTO-INC Locking方式。因为有了新的自增长实现方式，0这个选项不应该是新版用户的首选项。
+参数值1：该参数的默认值。对于"simple inserts"，该值用互斥量(mutex)去对内存中的计数器进行累加的操作。对于"bulk inserts"，还是使用传统表锁的AUTO-INC Locking方式。在这种配置下，如果不考虑回滚操作，对于自增值列的增长还是连续的。并且在这种方式下，statement-based方式的replication还是能很好地工作。需要注意的是，如果已经使用AUTO-INC Locking方式去产生自增长的值，而这时需要再进行"simple inserts"的操作时，还是需要等待AUTO-INC Locking的释放。
+参数值2：在这个模式下，对于所有的"INSERT-like"自增长值的产生都是通过互斥量，而不是AUTO-INC Locking的方式。显然，这是性能最高的方式。然而，这会带来一定的问题。因为并发插入的存在，在每次插入时，自增长的值可能不是连续的。此外，最重要的是，基于Statement-Base Replication会出现问题。因此，使用这个模式，任何时候都应该使用row-base replication。这样才能保证最大的并发性能及replication主从数据的一致。
+-------------------------------------------------
+show engine innnodb status;
+需要注意：虽然插入意向锁含有意向锁三个字，但是它并不属于意向锁而属于间隙锁，因为意向锁是表锁而插入意向锁是行锁。
+---------------------select/poll/epoll之间的区别----------------------------
+select：时间复杂度O(n)。它仅仅知道有IO事件发生了，并不知道是哪几个流(可能一个、多个、甚至全部)，只能轮询所有流，找出可读/可写的流，进行读/写操作。所以select具有O(n)的无差别轮询复杂度，同时处理的流越多，无差别轮询时间就越长。
+poll:时间复杂度O(n)。 本质上和select没有区别，它将用户传入的数组拷贝到内核空间，然后查询每个fd对应的设备状态，但是它没有最大连接数的限制，原因是它基于链表来存储的。
+epoll：时间复杂度O(1)。epoll可以理解为event poll，不同于忙轮询和无差别轮询,epoll会把哪个流发生了什么IO事件通知给我们。所以说epoll实际上是事件驱动(每个事件关联上fd)的，此时对这些流的操作都是有意义的(复杂度降低到了O(1)).
+
+select, poll, epoll都是IO多路复用的机制。IO多路复用就是通过一种机制，可以监视多个描述符，一旦某个描述符就绪(读就绪或写就绪)，能够通知程序进行相应的读写操作。但select,poll,epoll本质上都是同步IO,因为他们都需要读写事件就绪后自己负责进行读写，也就是这个读写过程是阻塞的。而异步IO无需自己负责读写，异步IO的实现会负责把数据从内核拷贝到用户空间。
+epoll和select都能提供多路IO复用的解决方案。在Linux都能支持，其中epoll是Linux特有的，而select是POSIX所规定的，一般操作系统均有实现。
+-------------------------------------------------
+select:
+select本质上是通过设置或者检查存放fd标志位的数据结构来进行下一步处理。这样所带来的缺点是：
+	1. 单个进程可监视的fd数量被限制，即能监听端口的大小有限。
+		一般来说这个数目和系统内存关系很大，具体数目可以cat /proc/sys/fs/file-max。32位机器默认1024, 64位机器默认2048。
+	2. 对socket进行扫描时是线性扫描，即采用轮询的方法，效率较低。
+		当套接字比较多时，每次select()都要通过遍历FD_SETSIZE个Socket来完成调度，不管哪个Socket是活跃的，都遍历一遍。这会浪费CPU时间。如果能给套接字注册回调函数，当他们活跃时，自动完成相关操作，就避免了轮询，这正是epoll与kqueue做到的。
+	3. 需要维护一个用于存放大量fd的数据结构，这样会是的用户空间和内核空间中传递该结构时复制开销大。
+-------------------------------------------------
+poll:
+poll本质上和select没有区别，它将用户传入的数组拷贝到内核空间，然后查询每个fd对应的设备状态，如果设备就绪则在设备等待队列中加入一项并继续遍历，如果遍历完所有fd后没有发现就绪设备，则挂起当前进程，直到设备就绪或者主动超时，被唤醒后它又要再次遍历fd。这个过程经历了多次无谓的遍历。
+它没有最大连接数的限制，原因是它是基于链表来存储的，但是同样有缺点：
+	1. 大量的fd的数组被整体复制于用户态和内核态地址之间，而不管这样的复制是否有意义。
+	2. poll还有一个特点是"水平触发"，如果报告了fd后，没有被处理，那么下次poll时会再次报告该fd。
+-------------------------------------------------
+epoll:
+epoll有epoll lt和epoll et两种触发模式，LT是默认的模式，ET是高速模式。LT模式下，只要这个fd还有数据可读，每次epoll_wait都会返回它的事件，提醒用户程序去操作。而在ET(边缘触发)模式下，它只会提示一次，直到下次再有数据流入之前都不会再提示了，无论fd中是否还有数据可读。所以在ET模式下，read一个fd的时候一定要把它的buffer读光，也就是说一直读到read的返回值小于请求值，或者遇到EAGAIN错误。还有一个特点是，epoll使用事件的就绪通知方式，通过epoll_ctl注册fd，一旦该fd就绪，内核就会采用类似callback的回调机制来激活该fd，epoll_wait便可以收到通知。
+
+epoll为什么要有epoll ET触发模式？
+如果采用epoll LT模式的话，系统中一旦有大量不需要读写的就绪文件描述符，它们每次调用epoll_wait都会返回，这样会大大降低处理程序检索自己关心的就绪文件描述符的效率。而采用epoll ET这种边沿触发模式的话，当被监控的文件描述符有可读写事件发生时，epoll_wait()会通知处理程序去读写。如果这次没有把数据全部读写完(如读写缓冲区太小),那么下次调用epoll_wait()时，它不会再次通知，也就是只会通知一次，直到该文件描述符上出现第二次读写事件才会通知!!!这种模式比水平触发效率高，系统不会充斥大量你不关心的就绪文件描述符。
+
+epoll的优点：
+	1. 没有最大并发连接的限制，能打开的F的上限远大于1024(1G的内存上能监听10万个端口)
+	2. 效率提升，不是轮询的方式，不会随着FD数目的增加效率下降。只有活跃可用的FD才会调用callback函数；即epoll最大的优点就在于只管"活跃"的连接，而跟总连接无关，因此在实际的网络环境中，epoll的效率就会远远高于select和poll。
+	3. 内存拷贝，利用mmap()文件映射内存加速与内核空间的消息传递；即epoll使用mmap减少复制开销。
+-------------------------------------------------
+select, poll, epoll区别总结：
+	1. 支持一个进程所能打开的最大连接数；
+		select:单个进程所能打开的最大连接数有FD_SETSIZE宏定义，其大小是(32位机器是1024, 64位机器是2048)，当然可以进行修改，然后重新编译内核，但是性能可能受到影响。
+		poll:本质上select没有区别，但是它没有最大连接数的限制，原因是它基于链表来存储的。
+		epoll:虽然连接数有上限，但是很大，1G内存的机器上可以打开10万左右的连接，2G内存可以20万左右；
+	2. FD剧增后带来的IO效率问题。
+		select：因为每次调用都会对连接进行线性遍历，所以随着FD的增加会造成遍历速度慢的"线性下降性能问题"
+		poll:同select
+		epoll:因为epoll内核中实现是根据每个FD上的callback函数来实现的，只有活跃socket才会主动调用callback，所以在活跃socket较少的情况下，使用epoll没有前面两个的线性下降的性能问题，但是所有socket都很活跃的情况下，会有性能问题。
+	3. 消息传递方式；
+		select:内核需要将消息传递到用户空间，都需要内核拷贝动作；
+		poll: 同上
+		epoll: 通过内核和用户空间共享一块内存来实现的。
+总结：综上，在选择select, poll, epoll要根据实际的使用场合以及三种方式的自身特点；
+	1. 表面上epoll的性能最好，但是在连接数少并且连接都很活跃的情况下，select和poll的性能可能比epoll好，比较epoll的通知机制需要很多函数回调。
+	2. select低效是因为每次它都需要轮询。但是低效也是相对的，视情况而定，也可通过良好的设计改善。
+-------------------------------------------------
+ForkJoinPool:
+@sun.misc.Contended 
+public class ForkJoinPool extends AbstractExecutorService {
+	...
+	
+	/*
+		Recording WorkQueues. WorkQueue are recorded in the "workQueues" array.
+		The array is created upon first use(see #externalSubmit) and expanded if necessary. 
+		Updates to the array while recording new works and unrecording terminated ones are 
+		protected from each other by the runState lock, but the array is otherwise concurrently 
+		readable, and accessed directly. We also ensure that reads of the array reference itself 
+		never become too stale. To simplify index-based operations, the array size is always a 
+		power of two, and all readers must tolerate null slots. Worker queue are at odd indices.
+		Shared (submission) queues are at even indices, up to a maximum of 64 slots, to limit 
+		growth even if array needs to expand to add more workers. Grouping them together in this way
+		simplifies and speeds up task scanning.
+	
+	*/
+	...
+}
+
+ForkJoinPool里有三个重要角色：
+	1. ForkJoinWorkerThread
+	2. WorkQueue
+	3. ForkJoinTask
+-------------------------------------------------
+/* A thread managed by a ForkJoinPool, which executes ForkJoinTask.
+This class is subclassable solely for the sake of adding functionality -- there are no 
+overridable methods dealing with scheduling or execution. However, you can override initializationg and 
+termination methods surrounding the main task processing loop.
+If you do create such as subclass, you will also need to supply a custom ForkJoinPool.ForkJoinWorkerThreadFactory to 
+ForkJoinPool#ForkJoinPool use it in a ForkJoinPool.
+*/
+public class ForkJoinWorkerThread extends Thread {
+	final ForkJoinPool pool;   //the pool this thread works in 
+	final ForkJoinPool.WorkQueue workQueue;   //work-stealing mechanics 
+	...
+	/* Returns the unique index number of this thread in its pool.
+	The returned value ranges from zero to the maximum number of threads(minus one) that may exist in the pool, 
+	and does not change during the lifetime of the thread. This method may be useful for application that track 
+	status or collect results per-worker-thread rather than per-task.
+	*/
+	public int getPoolIndex() {
+		return workQueue.getPoolIndex();
+	}
+	
+	//Erases ThreadLocals by nulling out Thread maps.
+	final void eraseThreadLocals() {
+		U.putObject(this, THREADLOCALS, null);
+		U.putObject(this, INHERITABLETHREADLOCALS, null);
+	}
+	
+	//Non-public hook method for InnocuousForkJoinWorkerThread
+	void afterTopLevelExec() {
+	}
+	
+	/* A worker thread that has no permissions, is not a member of any user-defined ThreadGroup, 
+	and erases all ThreadLocals after running each top-level task.
+	*/
+	static final class InnocuousForkJoinWorkerThread extends ForkJoinWorkerThread {
+		
+	}
+	...
+}
+
+
+/* Abstract base class for tasks that run within a ForkJoinPool.
+A ForkJoinTask is a thread-like entity that is much lighter weight than a normal thread.
+Huge numbers of tasks and subtasks may be hosted by a small number of actual threads in 
+a ForkJoinPool, at the price of some usage limitations.
+
+...
+The ForkJoinTask class is not usually directly subclassed. Instead, you subclass one of 
+the abstract classes that support a particular style of fork/join processing, typically 
+RecursiveAction for most computations that do not return results, RecursiveTask for those that do, 
+and CountedCompleter for those in which completed actions trigger other actions. 
+Normally, a concrete ForkJoinTask subclass declared fields comprising its parameters, established in 
+a constructor, and then defines a #compute method that somehow uses the control methods supplied by 
+this base class.
+
+* <p>Method {@link #join} and its variants are appropriate for use
+ * only when completion dependencies are acyclic; that is, the
+ * parallel computation can be described as a directed acyclic graph
+ * (DAG). Otherwise, executions may encounter a form of deadlock as
+ * tasks cyclically wait for each other.  However, this framework
+ * supports other methods and techniques (for example the use of
+ * {@link Phaser}, {@link #helpQuiesce}, and {@link #complete}) that
+ * may be of use in constructing custom subclasses for problems that
+ * are not statically structured as DAGs. To support such usages, a
+ * ForkJoinTask may be atomically <em>tagged</em> with a {@code short}
+ * value using {@link #setForkJoinTaskTag} or {@link
+ * #compareAndSetForkJoinTaskTag} and checked using {@link
+ * #getForkJoinTaskTag}. The ForkJoinTask implementation does not use
+ * these {@code protected} methods or tags for any purpose, but they
+ * may be of use in the construction of specialized subclasses.  For
+ * example, parallel graph traversals can use the supplied methods to
+ * avoid revisiting nodes/tasks that have already been processed.
+ * (Method names for tagging are bulky in part to encourage definition
+ * of methods that reflect their usage patterns.)
+ 
+...
+*/
+public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
+...
+	// Marks completion and wakes up threads waiting to join this task.
+	// @param completion one of NORMAL, CANCELLED, EXCEPTIONAL
+	private int setCompletion(int completion) {
+		for(int s;;) {
+			if ((s = status) < 0)
+				return s;
+			if (U.compareAndSwapInt(this, STATUS, s, s|completion)) {
+				if ((s >>> 16) != 0)
+					synchronized (this) {notifyAll();}
+				return completion;
+			}
+		}
+	}
+	
+	/* Primary execution method for stolen tasks. Unless done, calls exec and 
+		records status if completed, but doesn't wait for completion otherwise.
+	*/
+	final int doExec() {
+		int s; boolean completed;
+		if ((s = status) >= 0) {
+			try {
+				completed = exec();
+			} catch (Throwable rex) {
+				return setExceptionalCompletion(rex);
+			}
+			if (completed)
+				s = setCompletion(NORMAL);
+		}
+		return s;
+	}
+	
+	// public methods 
+	/* Arranges to asynchronously execute this task in the pool the current task is running in, 
+	  if applicable, or using the ForkJoinPool.commonPool() if not inForkJoinPool.
+	  while it is not necessarily enforced, it is a usage error to fork a task more than once unless 
+	  it has completed and been reinitialized. Subsequent modifications to the state of this task or 
+	  any data it operates on are not necessarily consistently observable by any thread other than the one 
+	  executing it unless preceded by a call to #join or related methods, or a call to #isDone returning true.
+	*/
+	public final ForkJoinTask<V> fork() {
+		Thread t;
+		if ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread)
+			((ForkJoinWorkerThread)t).workQueue.push(this);
+		else
+			ForkJoinPool.common.externalPush(this);
+		return this;
+	}
+	
+	/* Returns the result of the computation when it #isDone is done.
+		This method differs from #get() in that abnormal completion results in 
+		RuntimeException or Error, not ExecutionException, and that interrupts of 
+		the calling thread do not cause the method to abruptly return by throwing InterruptedException.
+	*/
+	public final V join() {
+		int s;
+		if ((s = doJoin() & DONE_MASK) != NORMAL)
+			reportException(s);
+		return getRawResult();
+	}
+	/**
+     * Commences performing this task, awaits its completion if
+     * necessary, and returns its result, or throws an (unchecked)
+     * {@code RuntimeException} or {@code Error} if the underlying
+     * computation did so.
+     *
+     * @return the computed result
+     */
+    public final V invoke() {
+        int s;
+        if ((s = doInvoke() & DONE_MASK) != NORMAL)
+            reportException(s);
+        return getRawResult();
+    }
+	
+	/* Attempts to cancel execution of this task. This attempt will fail 
+		if the task has already completed or could not be cancelled for some other reason.
+		If successful, and this task has not started when #cancel is called, execution of 
+		this task is suppressed. After this method returns successfully, unless there is an 
+		intervening call to #reinitialize, subsequent calls to #isCancelled, #isDone, and #cancel will 
+		return true and calls to #join and related methods will result in CancellationException.
+		
+		This method may be overridden in subclasses, but if so, must still ensure that these properties hold.
+		In particular, the #cancel method itself must not throw exceptions.
+		
+		This method is designed to be invoked by other tasks. To terminate the current task, 
+		you can just return or throw an unchecked exception from its computation method, or 
+		invoke #completeExceptionally(Throwable).
+	*/
+	public boolean cancel(boolean mayInterruptIfRunning) {
+		return (setCompletion(CANCELLED) & DONE_MASK) == CANCELLED;
+	}
+	
+	/**
+     * Completes this task, and if not already aborted or cancelled,
+     * returning the given value as the result of subsequent
+     * invocations of {@code join} and related operations. This method
+     * may be used to provide results for asynchronous tasks, or to
+     * provide alternative handling for tasks that would not otherwise
+     * complete normally. Its use in other situations is
+     * discouraged. This method is overridable, but overridden
+     * versions must invoke {@code super} implementation to maintain
+     * guarantees.
+     *
+     * @param value the result value for this task
+     */
+    public void complete(V value) {
+        try {
+            setRawResult(value);
+        } catch (Throwable rex) {
+            setExceptionalCompletion(rex);
+            return;
+        }
+        setCompletion(NORMAL);
+    }
+	
+	
+	/* Waits if necessary for the computation to complete, and then retrieves its result.
+	*/
+	public final V get() throws InterruptedException, ExecutionException {
+		int s = (Thread.currentThread() instanceof ForkJoinWorkerThread) ?
+			doJoin() : externalInterruptibleAwaitDone();
+		Throwable ex;
+		if ((s &= DONE_MASK) == CANCELLED)
+			throw new CancellationException();
+		if (s == EXCEPTIONAL && (ex = getThrowableException()) != null)
+			throw new ExecutionException(ex);
+		return getRawResult();
+	}
+	
+	/* Possibly executes tasks until the pool hosting the current task 
+		ForkJoinPool#isQuiescent is quiescent. This method may be of use in designs 
+		in which many tasks are forked, but none are explicitly joined, instead 
+		executing them until all are processed.
+	*/
+	public static void helpQuiesce() {
+		Thread t;
+		if ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread) {
+			ForkJoinWorkerThread wt = (ForkJoinWorkerThread)t;
+			wt.pool.helpQuiescePool(wt.workQueue);
+		} else {
+			ForkJoinPool.quiesceCommonPool();
+		}
+	}
+	
+	/*Resets the internal bookkeeping state of this task, allowing a subsequent #fork. 
+		This method allows repeated reuse of this task, but only if reuse occurs when this task 
+		has either never been forked, or has been forked, then completed and all outstanding joins
+		of this task have also completed. Effects under any other usage conditions are not guaranteed.
+		This method may be useful when executing pre-constructed trees of subtasks in loops.
+		Upon completion of this method, #isDone() reports false, and #getException() reports null.
+		However, the value returned by #getRawResult() is unaffected. To clear this value, you can 
+		invoke #setRawResult(null).
+	*/
+	public void reinitialize() {
+		if ((status & DONE_MASK) == EXCEPTIONAL)
+			clearExceptionalCompletion();
+		else
+			status = 0;
+	}
+	
+	/* Returns an estimate of how many more locally queued tasks are held by the
+		current worker thread than there are other worker threads that might steal them, 
+		or zero if this thread is not operating in a ForkJoinPool. This value may be useful for 
+		heuristic decisions about whether to fork other tasks. In many usages of ForkJoinTasks, 
+		at steady state, each worker should aim to maintian a small constant surplus(for example, 3)
+		of tasks, and to process computations locally if this threshold is exceeded. 
+	*/
+	public static int getSurplusQueuedTaskCount() {
+		return ForkJoinPool.getSurplusQueuedTaskCount();
+	}
+...
+}
+
+
+
+Resilience4J：
+是Spring Cloud G版本推荐的容错方案，是一个轻量级的容错库。借鉴了Hystrix而设计，并且采用JDK8函数式编程，即lambda表达式。为什么是轻量级？因为它的库只使用Vavr(以前称Javaslang)，它没有任何其他外部库依赖项。相比之下，Netflix Hystrix对Archaius具有编译依赖性，这导致了更多的外部库依赖，比如Guava和Apache Commons。而如果使用Resilience4J，无需引用全部依赖，可以根据需要引入相关模块即可。
+Resilience4J提供了一系列增强微服务的可用性功能：
+	1. 断路器；
+	2. 限流；
+	3. 基于信号量的隔离；
+	4. 缓存；
+	5. 限时；
+	6. 请求重启。
+
+Spring Cloud Circuit breaker provides an abstraction across different circuit breaker implementations. It provides a consistent API to use in your applications alowing you the developer to choose the circuit breaker implementation that best fits your need for your app.
+Supported Implementations:
+	1. Netflix Hystrix;
+	2. Resilience4J;
+	3. Sentinel;
+	4. Spring Retry;
+
+-------------------------------------------------------------
+ForkJoinTask: ForkJoinWorkerThread执行的对象，实现了Future。两种类型：一种叫submission,另一种叫task。
+
+ForkJoinPool使用数组保存所有WorkQueue，每个ForkJoinWorkThread有属于自己的WorkQueue，但不是每个WorkQueue都有对应的ForkJoinWorkerThread。
+-没有ForkJoinWorkerThread的WorkQueue: 保存的是submission,来自外部提交，在WorkQueue[]的下标是偶数；
+-属于ForkJoinWorkerThread的WorkQueue: 保存的是task，在WorkQueue[]的下标是奇数。	
+	
+WorkQueue是一个双端队列，同时支持LIFO的push和pop操作，和FIFO的poll操作，分别操作top端和base端。ForkJoinWorkerThread操作自己的WorkQueue是LIFO操作(可选FIFO)，除此之外，ForkJoinWorkerThread会尝试steal其他WorkQueue里的任务，这个时候执行的是FIFO操作。
+分开两端取任务的好处：
+	1. LIFO操作只有对应的ForkJoinWorkThread才能执行，push和pop不需要考虑并发；
+	2. 拆分时，越大的任务越在WorkQueue的base端，尽早分解，能够尽快进入计算。
+
+config保存不变的参数，包括了parallelism和mode，供后续读取。mode可选FIFO_QUEUE和LIFO_QUEUE，默认是LIFO_QUEUE,具体用哪种，看具体业务。
+ctl是ForkJoinPool中最重要的控制手段，将下面信息按16bit为一组封装在一个long中。
+	- AC:活动的ForkJoinWorkerThread数量；
+	- TC:总共的ForkJoinWorkerThread数量；
+	- SS:WorkQueue状态，第一位表示active的还是inactive，其余15位表示版本号(应对ABA)
+	- ID:这里保存了一个WorkQueue在WorkQueue[]的下标，和其他ForkJoinWorkerThread通过字段stackPred组成一个TreiberStack。
+TreiberStack:这个栈的pull和poll使用了CAS,所以支持并发下的无锁操作。
+AC和TC初始化时，取的是parallelism负数，后续代码可以直接判断正负，为负数代表还没有达到目标数量。另外ctl低32位有个技巧可以直接用sp=(int)ctl取得，为负数代表存在空闲ForkJoinWorkerThread。
+线程池缺不了状态的变化，记录字段是runState。
+	
+ForkJoinPool执行任务的对象是ForkJoinTask,是一个抽象类，有两个具体实现类：RecursiveAction和RecursiveTask。
+ForkJoinTask的抽象方法exec由RecursiveAction和RecursiveTask实现，它被定义为final，具体的执行步骤compute延迟到子类实现。RecursiveAction没有返回值，getRawResult返回空。RecursiveTask有返回结果。
+
+ForkJoinTask有一个状态字段status，默认是0.当结果为负数时，有三种结果：
+	- NORMAL 
+	- CANCELLED 
+	- EXCEPTIONAL
+除此之外，在得到结果之前，任务状态能够被设置为SIGNAL,表示有线程等待这个任务的结果，执行完成后需要notify通知，具体详细看join()。
+ForkJoinTask在触发执行后，并不支持其他特别操作，只能等待任务执行完成。
+CountedCompleter是ForkJoinTask的子类，它在子任务协作方面扩展了更多操作。
+
+WorkQueue是一个双端队列，定义在ForkJoinPool类里。
+scanState描述WorkQueue当前状态：
+	- 偶数表示RUNNING
+	- 奇数表示SCANNING
+	- 负数表示inactive
+stackPred是WorkQueue组成TreiberStack时，保存前者的字段。
+volatiel int base;
+int top;
+
+base和top分别指向WorkQueue的两端，区别是base带上了volatile，回答了对top端push和pop不考虑并发这个优点。
+操作WorkQueue前需要锁定，记录在字段qlock:
+	- 1: 锁定
+	- 0：未锁定
+	- 负数：对应的ForkJoinWorkerThread已经撤销注册，WorkQueue也就终止使用。
+WorkQueu也有config，和ForkJoinPool不一样，不要混淆。WorkQueue的config记录了在WorkQueue[]的下标和当前mode。
+
+
+ForkJoinPool状态修改：
+	- STARTED
+	- STOP
+	- TERMINATED
+	- SHUTDOWN
+	- RSLOCK
+	- RSIGNAL
+
+runState记录了ForkJoinPool的运行状态，除了SHUTDOWN是负数，其他都是正数。前面四中是线程池标准状态流转。在多线程环境修改rnState，需要先获取锁，RSLOCK和RSIGNAL就用在这里。
+
+// Acquires the runState lock; returns current (locked) runState.
+private int lockRunState() {
+	int rs;
+	return ((((rs = runState) & RSLOCK) != 0 || 
+			!U.compareAndSwapInt(this, RUNSTATE, rs, rs |= RSLOCK)) ? 
+			awaitRunStateLock() : rs);
+}
+修改前调用lockRunState()锁定，检查当前状态，尝试一次使用CAS修改runState为RSLOCK。需要状态变化的机会很少，大多数时间一次就能成功，但不能排除小几率的竞争，这时候进入awaitRunStateLock()。
+
+-------------------------------------------------------------	

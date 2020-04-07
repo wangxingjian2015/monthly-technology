@@ -1,0 +1,1018 @@
+@SuppressWarnings("serial")
+public class DefaultAopProxyFactory implements AopProxyFactory, Serializable {
+	@Ovrride
+	public AopProxy createAopProxt(AdvisedSupport config) throws AopConfigException {
+		if (config.isOptimize() || config.isProxyTargetClass() 
+				|| hasNoUserSuppliedProxyInterfaces(config)) {
+			Class<?> targetClass = config.getTargetClass();
+			if (targetClass == null) {
+				throw new AopConfigException("TargetSource cannot determine target class:" 
+					+ "Either an interface or a target is required for proxy creation.");
+			}
+			if (targetClass.isInterface() || Proxy.isProxyClass(targetClass)) {
+				return new JdkDynamicAopProxy(config);
+			}
+			return new ObjenesisCglibAopProxy(config);
+		} else {
+			return new JDKDynamicAopProxy(config);
+		}
+	}
+}
+
+final class JdkDynamicAopProxy implements AopProxy, InvocationHandler, Serializable {
+	...
+	// Config used to configure this proxy 
+	private final AdvisedSupport advised;
+	// Is the equals mehtod defined on the proxied interfaces?
+	private boolean equalsDefined;
+	// Is the hashCode method defined on the proxied interfaces?
+	private boolean hashCodeDefined;
+	...
+	// Implementation of InvocationHandler.invoke. Callers will see exactly the 
+	// exception thrown by the target, unless a hook method throws an exception. 
+	@Ovrride 
+	@Nullable
+	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+		MethodInvocation invocation;
+		Object oldProxy = null;
+		boolean setProxyContext = false;
+
+		TargetSource targetSource = this.advised.targetSource;
+		Object target = null;
+
+		try {
+			if (!this.equalsDefined && AopUtils.isEqualsMethod(method)) {
+				// The target does not implement the equals(Object) method itself.
+				return equals(args[0]);
+			}
+			else if (!this.hashCodeDefined && AopUtils.isHashCodeMethod(method)) {
+				// The target does not implement the hashCode() method itself.
+				return hashCode();
+			}
+			else if (method.getDeclaringClass() == DecoratingProxy.class) {
+				// There is only getDecoratedClass() declared -> dispatch to proxy config.
+				return AopProxyUtils.ultimateTargetClass(this.advised);
+			}
+			else if (!this.advised.opaque && method.getDeclaringClass().isInterface() &&
+					method.getDeclaringClass().isAssignableFrom(Advised.class)) {
+				// Service invocations on ProxyConfig with the proxy config...
+				return AopUtils.invokeJoinpointUsingReflection(this.advised, method, args);
+			}
+
+			Object retVal;
+
+			if (this.advised.exposeProxy) {
+				// Make invocation available if necessary.
+				oldProxy = AopContext.setCurrentProxy(proxy);
+				setProxyContext = true;
+			}
+
+			// Get as late as possible to minimize the time we "own" the target,
+			// in case it comes from a pool.
+			target = targetSource.getTarget();
+			Class<?> targetClass = (target != null ? target.getClass() : null);
+
+			// Get the interception chain for this method.
+			List<Object> chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice(method, targetClass);
+
+			// Check whether we have any advice. If we don't, we can fallback on direct
+			// reflective invocation of the target, and avoid creating a MethodInvocation.
+			if (chain.isEmpty()) {
+				// We can skip creating a MethodInvocation: just invoke the target directly
+				// Note that the final invoker must be an InvokerInterceptor so we know it does
+				// nothing but a reflective operation on the target, and no hot swapping or fancy proxying.
+				Object[] argsToUse = AopProxyUtils.adaptArgumentsIfNecessary(method, args);
+				retVal = AopUtils.invokeJoinpointUsingReflection(target, method, argsToUse);
+			}
+			else {
+				// We need to create a method invocation...
+				invocation = new ReflectiveMethodInvocation(proxy, target, method, args, targetClass, chain);
+				// Proceed to the joinpoint through the interceptor chain.
+				retVal = invocation.proceed();
+			}
+
+			// Massage return value if necessary.
+			Class<?> returnType = method.getReturnType();
+			if (retVal != null && retVal == target &&
+					returnType != Object.class && returnType.isInstance(proxy) &&
+					!RawTargetAccess.class.isAssignableFrom(method.getDeclaringClass())) {
+				// Special case: it returned "this" and the return type of the method
+				// is type-compatible. Note that we can't help if the target sets
+				// a reference to itself in another returned object.
+				retVal = proxy;
+			}
+			else if (retVal == null && returnType != Void.TYPE && returnType.isPrimitive()) {
+				throw new AopInvocationException(
+						"Null return value from advice does not match primitive return type for: " + method);
+			}
+			return retVal;
+		}
+		finally {
+			if (target != null && !targetSource.isStatic()) {
+				// Must have come from TargetSource.
+				targetSource.releaseTarget(target);
+			}
+			if (setProxyContext) {
+				// Restore old proxy.
+				AopContext.setCurrentProxy(oldProxy);
+			}
+		}
+	}
+	...
+}
+
+// A simple but definitive way of working out an advice chain for a Method,
+// given an #Advised object. Always rebuilds each advice chain; caching can be provided by subclasses.
+@SuppressWarnings("serial")
+public class DefaultAdvisorChainFactory implements AdvisorChainFactory, Serializable {
+	@Ovrride 
+	public List<Object> getInterceptorsAndDynamicInterceptionAdvice(Advised config, Method method, 
+							@Nullable Class<?> targetClass) {
+		// This is somewhat tricky... We have to process introductions first,
+		// but we need to preserve order in the ultimate list.
+		AdvisorAdapterRegistry registry = GlobalAdvisorAdapterRegistry.getInstance();
+		Advisor[] advisors = config.getAdvisors();
+		List<Object> interceptorList = new ArrayList<>(advisors.length);
+		Class<?> actualClass = (targetClass != null ? targetClass : method.getDeclaringClass());
+		Boolean hasIntroductions = null;
+
+		for (Advisor advisor : advisors) {
+			if (advisor instanceof PointcutAdvisor) {
+				// Add it conditionally.
+				PointcutAdvisor pointcutAdvisor = (PointcutAdvisor) advisor;
+				if (config.isPreFiltered() || pointcutAdvisor.getPointcut().getClassFilter().matches(actualClass)) {
+					MethodMatcher mm = pointcutAdvisor.getPointcut().getMethodMatcher();
+					boolean match;
+					if (mm instanceof IntroductionAwareMethodMatcher) {
+						if (hasIntroductions == null) {
+							hasIntroductions = hasMatchingIntroductions(advisors, actualClass);
+						}
+						match = ((IntroductionAwareMethodMatcher) mm).matches(method, actualClass, hasIntroductions);
+					} else {
+						match = mm.matches(method, actualClass);
+					}
+					if (match) {
+						MethodInterceptor[] interceptors = registry.getInterceptors(advisor);
+						if (mm.isRuntime()) {
+							// Creating a new object instance in the getInterceptors() method
+							// isn't a problem as we normally cache created chains.
+							for (MethodInterceptor interceptor : interceptors) {
+								interceptorList.add(new InterceptorAndDynamicMethodMatcher(interceptor, mm));
+							}
+						} else {
+							interceptorList.addAll(Arrays.asList(interceptors));
+						}
+					}
+				}
+			} else if (advisor instanceof IntroductionAdvisor) {
+				IntroductionAdvisor ia = (IntroductionAdvisor) advisor;
+				if (config.isPreFiltered() || ia.getClassFilter().matches(actualClass)) {
+					Interceptor[] interceptors = registry.getInterceptors(advisor);
+					interceptorList.addAll(Arrays.asList(interceptors));
+				}
+			} else {
+				Interceptor[] interceptors = registry.getInterceptors(advisor);
+				interceptorList.addAll(Arrays.asList(interceptors));
+			}
+		}
+
+		return interceptorList;
+	}
+}
+
+@SuppressWarnings("serial")
+class CglibAopProxy implements AopProxy, Serializable {
+	...
+	//General purpose AOP callback. Used when the target is dynamic or when the 
+	// proxy is not frozen.
+	private static class DynamicAdvisedInterceptor implements MethodInterceptor, Serializable {
+		private final AdvisedSupport advised;
+		public DynamicAdvisedInterceptor(AdvisedSupport advised) {
+			this.advised = advised;
+		}
+
+		@Override
+		@Nullable
+		public Object intercept(Object proxy, Method method, Object[] args, MethodProxy methodProxy) 
+			throw Throwable {
+			Object oldProxy = null;
+			boolean setProxyContext = false;
+			Object target = null;
+			TargetSource targetSource = this.advised.getTargetSource();
+			try {
+				if (this.advised.exposeProxy) {
+					// Make invocation available if necessary.
+					oldProxy = AopContext.setCurrentProxy(proxy);
+					setProxyContext = true;
+				}
+				// Get as late as possible to minimize the time we "own" the target, in case it comes from a pool...
+				target = targetSource.getTarget();
+				Class<?> targetClass = (target != null ? target.getClass() : null);
+				List<Object> chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice(method, targetClass);
+				Object retVal;
+				// Check whether we only have one InvokerInterceptor: that is,
+				// no real advice, but just reflective invocation of the target.
+				if (chain.isEmpty() && Modifier.isPublic(method.getModifiers())) {
+					// We can skip creating a MethodInvocation: just invoke the target directly.
+					// Note that the final invoker must be an InvokerInterceptor, so we know
+					// it does nothing but a reflective operation on the target, and no hot
+					// swapping or fancy proxying.
+					Object[] argsToUse = AopProxyUtils.adaptArgumentsIfNecessary(method, args);
+					retVal = methodProxy.invoke(target, argsToUse);
+				}
+				else {
+					// We need to create a method invocation...
+					retVal = new CglibMethodInvocation(proxy, target, method, args, targetClass, chain, methodProxy).proceed();
+				}
+				retVal = processReturnType(proxy, target, method, retVal);
+				return retVal;
+			}
+			finally {
+				if (target != null && !targetSource.isStatic()) {
+					targetSource.releaseTarget(target);
+				}
+				if (setProxyContext) {
+					// Restore old proxy.
+					AopContext.setCurrentProxy(oldProxy);
+				}
+			}
+		}
+
+		@Override
+		public boolean equals(Object other) {
+			return (this == other ||
+					(other instanceof DynamicAdvisedInterceptor &&
+							this.advised.equals(((DynamicAdvisedInterceptor) other).advised)));
+		}
+
+		/**
+		 * CGLIB uses this to drive proxy creation.
+		 */
+		@Override
+		public int hashCode() {
+			return this.advised.hashCode();
+		}
+	}
+	...
+}
+
+SOA采用中心化的服务总线架构，解耦了业务逻辑和服务治理逻辑；微服务架构回归了去中心化的点对点调用方式，在提升敏捷性和可伸缩性的同时，也牺牲了业务逻辑和服务治理逻辑解耦所带来的灵活性。
+为了解决上述挑战，社区提出了Service Mesh(服务网格)架构。它重新将服务治理能力下沉到基础设施，在服务的消费者和提供者两侧以独立进程的方式部署。
+这样既达到了去中心化的目的，保障了系统的可伸缩性；也实现了服务治理和业务逻辑的解耦，二者可以独立演进不互相干扰，提升了整体架构演进的灵活性。同时服务网格架构减少了对业务逻辑的侵入性，降低了多语言支持的复杂性。
+Istio 提供了一系列高阶的服务治理能力，比如：服务发现和负载均衡，渐进式交付(灰度发布)，混沌注入与分析，全链路追踪，零信任网络安全等，可以供上层业务系统将其编排到自己的 IT 架构和发布系统之中。
+但是 Service Mesh 不是银弹，其架构选择是通过增加部署复杂性（sidecar）和损失性能（增加两跳），来换取架构的灵活性和系统的可演化性。
+
+Java创建线程的方式：
+	1. 继承Thread类
+	2. 覆写Runnable接口
+	3. 覆写Callable接口
+	4. 通过线程池启动
+
+Apace Shiro是一个强大且易用的Java安全框架，执行身份验证、授权、密码和会话管理。有三个核心组件：Subject, SecurityManager和Realms.
+
+微服务之间的安全认证：
+	1. 黑白名单机制；
+	2. 服务注册/发现时的认证;
+	3. 服务发现时，扩展注册中心，只给授权的服务列表；
+	4. 服务调用时，去注册中心查看是否允许调用；为了保证有效性，可定期或注册中心推送来验证消费者的合法性；
+	5. 在Provider进行验证，每次只允许特定的服务调用，登陆/验证通过后，赋值JWT。同样有有效期的限制。
+
+Eureka Server增加安全机制: 引入Spring Security，设置用户名/密码，
+
+
+1. 浏览器把自身支持的一系列Cipher Suite(密码算法套件)发给服务器；
+2. 服务器接收到浏览器的所有Cipher后，与自己支持的套件进行比对，如果找到双方都支持的Cipher，则告知浏览器。
+
+TLS_RSA_WITH_AES_128_CBC_SHA
+TLS_RSA_WITH_AES_256_CBC_SHA
+TLS_RSA_WITH_RC4_128_SHA
+TLS_RSA_WITH_3DES_EDE_CBC_SHA
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA_P256
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA_P384
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA_P521
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA_P256
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA_P384
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA_P521
+Cipher的一长串数字的含义，由四部分组成：
+	1. 密钥交换算法，用于决定客户端与服务器之间在握手的过程中如何认证，用到的算法包括RSA，Diffie-Hellman, ECDH， PSK等；
+	2. 加密算法，用于加密消息流，该名称后通常会带有两个数字，分别表示密钥的长度和初始向量的长度，比如DES 56/56, RC2 56/128, RC4 128/128, AES 256/256;
+	3. 报文认证信息码(MAC)算法，用于创建报文摘要，确保消息的完整性(没有被篡改)，算法包括MD5,SHA等；
+	4. PRF(伪随机数函数)，用于生成"master secret"。
+
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,可以知道：
+基于TLS协议的；使用ECDHE, RSA作为密钥交换算法；加密算法是AES(密钥和初始向量的长度都是256)；MAC算法是SHA。
+HTTPS用到的加密算法一般如下：
+	1. 非对称：RAS, DSA/DSS, ECDHE, DH, ECDH；
+	2. 对称: AES, RC4, 3DES
+	3. MAC: MD5, SHA1, SHA256;
+HTTPS的握手流程：首先是TCP握手，TCP三次完成之后才进入SSL握手，SSL握手总是以ClientHello消息开始，就跟TCP握手总是以SYN包开始一样。
+-----------------------------------------
+SSL/TLS握手时的私钥用途(RSA, ECDHE)：
+两种使用方式分别是：使用RSA来做密钥交换和使用ECDHE来做密钥交换。
+对于RSA来说，客户端生成预主密钥，然后用公钥加密再发给服务器，服务器用私钥来解密得到预主密钥，然后由预主密钥生成主密钥，再由主密钥生成会话密钥，最后用会话密钥来通信。
+对于ECDHE来说，客户端和服务端双方是交换椭圆曲线参数，私钥只是用来签名，这是为了保证这个消息是持有私钥的人给我发的，而不是冒充的。双方交换完参数之后生成预主密钥，再生成主密钥和会话密钥。
+可以看出RSA和椭圆曲线密钥交换算法的私钥用途是不一样的，RSA密钥交换是用来做加解密的，椭圆曲线密钥交换是用来做签名的。
+-----------------------------------------
+SSL/TLS的预主密钥，主密钥和会话密钥：
+主密钥是由预主密钥、客户端随机数和服务器随机数通过PRF函数来生成；
+会话密钥是由主密钥、客户端随机数和服务器随机数通过PRF函数来生成，会话密钥里面包含对称加密密钥、消息认证和CBC模式的初始化向量，但对于非CBC模式的加密算法来说，就没有用到这个初始向量。
+session缓存和session ticket里面保存的是主密钥，而不是会话密钥，这是为了保证每次会话都是独立的，这样才安全，即使一个主密钥泄漏了也不影响其他会话。
+-----------------------------------------
+TLS（Transport Layer Security，传输层安全）：其前身是SSL，它最初的几个版本（SSL 1.0、SSL 2.0、SSL 3.0）由网景公司开发，1999年从3.1开始被IETF标准化并改名，发展至今已经有TLS 1.0、TLS 1.1、TLS 1.2 三个版本。SSL3.0和TLS1.0由于存在安全漏洞，已经很少被使用到。需要关注一点的就是TLS1.3是TLS协议一个非常重大的改革。不管是安全性还是用户访问速度都会有质的提升。TLS1.3协议的最终版本（RFC8446）已于2018年8月10日发布，各主流浏览器也逐渐支持TLS1.3。
+
+TLS协议主要有五部分：应用数据层协议，握手协议，报警协议，加密消息确认协议，心跳协议。
+TLS协议本身又是由Record协议传输，Record协议的格式如下：
+	1. ContentType
+	2. Version
+	3. Length
+	4. ProtocolMessage
+	5. MAC(可选)
+	6. padding(cbc)
+----------------------------------------
+密钥交换算法本身非常复杂，密钥交换过程涉及到随机数生成、模指数运算、空白补齐、加密、签名等操作。
+常见的密钥交换算法有RSA, ECDHE, DH, DHE等算法，它们的特性如下：
+RSA：算法实现简单，历史悠久，经过了长时间的破解测试，安全性高。缺点就是需要比较大的素数（目前常用的是2048位）来保证安全强度，很消耗CPU运算资源。RSA是目前唯一一个既能用于密钥交换又能用于证书签名的算法。
+DH：Diffie-Hellman密钥交换算法，诞生时间比较早，但是1999年才公开。缺点是比较消耗CPU性能。
+ECDHE：使用椭圆曲线（ECC）的DH算法，优点是能用较小的素数（256位）实现RSA相同的安全等级。缺点是算法实现复杂，用于密钥交换的历史不长，没有经过长时间的安全攻击测试。
+ECDH：不支持PFS，安全性低，同时无法实现False Start。
+DHE：不支持ECC。非常消耗CPU资源。
+建议优先支持RSA和ECDH_RSA密钥交换算法。原因是：
+ECDHE支持ECC加速，计算速度更快。支持PFS，更加安全。支持False Start，用户访问速度更快。
+目前还有至少20%以上的客户端不支持ECDHE，我们推荐使用RSA而不是DH或者DHE，因为DH系列算法非常消耗CPU（相当于要做两次RSA计算）。
+----------------------------------------
+非对称加密相比对称加密更加安全，但也存在两个明显缺点：
+	1. CPU计算资源消耗非常大。一次完全TLS握手，密钥交换时的非对称解密计算量占整个握手过程的90%以上。而对称加密的计算量只相当于非对称加密的0.1%，如果应用层数据也使用非对称加解密，性能开销太大，无法承受。
+	2. 非对称加密算法对加密内容的长度有限制，不能超过公钥长度。比如现在常用的公钥长度是2048位，意味着待加密内容不能超过256个字节。
+所以公钥加密目前只能用来作密钥交换或者内容签名，不适合用来做应用层传输内容的加解密。
+
+ElasticSearch应用场景：
+	1. 日志聚合；
+	2. jaeger后端存储；
+	3. 全文搜索；
+	4. 海量数据下的近实时数据分析；
+
+ElasticSearch倒排索引的底层实现是基于FST(Finite State Transducer)数据结构
+Lucene从4+版本开始大量使用的数据结构是FST。FST有两个优点：
+	1. 空间占用小。通过对词典中单词前缀和后缀的重复利用，压缩了存储空间；
+	2. 查询速度快。O(len(str))的查询时间复杂度。
+
+ElasticSearch是如何实现master选举的：
+前置前提：
+	1. 只有候选主节点(master:true)的节点才能成为主节点；
+	2. 最小主节点数(min_master_nodes)的目的是防止脑裂；
+核心入口为findMaster，选择主节点成功返回对应Master，否则返回Null。选举流程如下：
+	第一步：确认候选主节点数达标，elasticsearch.yml设置的值；
+		discovery.zen.minimum_master_nodes;
+	第二步：先判定是否具备master资格，具备候选主节点资格的优先返回；若两节点都为候选主节点，则id小的值为主节点。
+ElasticSearch是如何实现master选举的：
+	1. ElasticSearch的选主是ZenDiscovery模块负责的，主要包括Ping(节点之间通过这个RPC来发现彼此)和Unicast(单播模块包含一个主机列表以控制哪些节点需要ping通)这两部分；
+	2. 对所有可以成为master的节点(node.master:true)根据nodeId字典排序，每次选举每个节点都把自己所知道节点排一次序，然后选出第一个节点，暂且认为它是master节点；
+	3. 如果对某个节点的投票数达到一定的值(比如master节点数/2+1)并且该节点自己也选择自己，那这个节点就是master。否则重新选举一直到满足上述条件；
+	4. 补充：master节点的职责主要包括集群、节点和索引的管理，不负责文档级别的管理；data节点可以关闭http功能。
+
+详细描述一下ElasticSearch搜索的过程：
+	1. 搜索被执行成一个两阶段过程，称之为Query then Fetch；
+	2. 在初始查询阶段时，查询会广播到索引中每一个分片拷贝(主分片或者副本分片)。每个分片在本地执行搜索并构建一个匹配文档的大小为from+size的优先队列。
+		PS: 在搜索的时候是会查询FileSystem Cache的，但是有部分数据还在Memory Buffer，所以搜索是近实时的。
+	3. 每个分片返回各自优先队列中所有文档的ID和排序值给协调节点，它合并这些值到自己的优先队列中来产生一个全局排序后的结果列表。
+	4. 接下来就是取回阶段，协调节点辨别出哪些文档需要被取回并向相关的分片提交多个get请求。每个分片加载并丰富文档，如果有需要的话，接着返回文档给协调节点。一旦所有的文档都被取回了，协调节点返回结果给客户端。
+	5. 补充：Query then Fetch的搜索类型在文档相关性打分的时候参考的是本分片的数据，这样在文档数量较少的时候可能不够准确，DFS Query Then Fetch增加了一个预查询的处理，询问Term和Document frequency，这个评分更准确，但是性能会变差。
+
+在并发情况下，Elasticsearch如何保证读写一致：
+	1. 可以通过版本号使用乐观并发控制，以确保新版本不会被旧版本覆盖，由应用层来处理具体的冲突；
+	2. 另外对于写操作，一致性级别支持quorum/one/all，默认为quorum，即只有当大多数分片可用时才允许写操作。但即使大多数可用，也可能存在因为网络等原因导致写入副本失败，这样该副本被认为故障，分片将会在不同的节点重建。
+	3. 对于读操作，可以设置replication为sync(默认)，这使得操作在主分片和副本分片都完成后才会返回；如果设置replication为async时，也可以通过设置搜索请求参数_preference为primary来查询主分片，确保文档是最新版本。
+
+public class ArrayList<E> extends AbstractList<E> 
+		implements List<E>, RandomAccess, Cloneable, java.io.Serializable {
+	....
+}
+
+public class LinkedList<E> extends AbstractSequentialList<E> 
+		implements List<E>, Deque<E>, Cloneable, java.io.Serializable {
+	...
+}
+
+public class ConcurrentHashMap<K, V> extends AbstractMap<K, V> 
+	implements ConcurrentMap<K, V> Serializable {
+	...
+	private transient volatile CounterCell[] counterCells;
+	...
+	final long sumCount() {
+		CounterCell[] as = counterCells;
+		CounterCell a;
+		long sum = baseCount;
+		if (as != null) {
+			for (int i = 0;i < as.length; ++i) {
+				if ((a = as[i]) != null) {
+					sum += a.value;
+				}
+			}
+		}
+		return sum;
+	}
+	...
+	public int size() {
+		long n = sumCount();
+		return ((n < 0L) ? 0 : 
+				(n > (long)Integer.MAX_VALUE) ? Integer.MAX_VALUE : 
+				(int)n);
+	}
+	...
+}
+
+JDK中的ConcurrentMap<K, V>接口的实现类有: ConcurrentHashMap, ConcurrentNavigableMap, ConcurrentSkipListMap;
+
+Dubbo的Provider接收客户端请求后涉及的类(基于Netty通信)：
+	1. NioWorker;
+	2. Channels;
+	3. Channel;
+	4. ChannelPipeline(DefaultChannelPipeline);
+	5. DefaultChannelHandlerContext;
+	6. SimpleChannelUpstreamHandler(NettyCodecAdapter$InternalDecoder);
+	7. NettyChannel;
+	8. DubboCountCodec;
+	9. DubboCodec;
+	10. Request;
+	11. DecodeableRpcInvocation;
+	12. MultiMessage;
+	13. NettyHandler;
+	14. NettyServer;
+	15. MultiMessageHandler;
+	16. HeartbeatHandler;
+	17. AllChannelHandler;
+	18. ChannelEventRunnable;
+	19. DecodeHandler;
+	20. HeaderExchangHandler;
+	21. DubboProtocol$requestHandler;
+	22. ProtocolWrapper链;
+	23. RegistryProtocol$InvokerDelegete;
+	24. DelegateProviderMetaDataInvoker;
+	25. JavassistProxyFactory;
+Dubbo各层说明：
+	1. config配置层：对外配置接口，以ServiceConfig, ReferenceConfig为中心，可以直接初始化配置类，也可以通过spring解析配置生成配置类。
+	2. proxy服务代理层：服务接口透明代理，生成服务的客户端Stub和服务器端Skeleton，以ServiceProxy为中心，扩展接口为ProxyFactory。
+	3. registry注册中心层：封装服务地址的注册与发现，以服务URL为中心，扩展接口为RegistryFactory, Registry, ReistryService。
+	4. cluster路由层：封装多个提供者的路由及负载均衡，并桥接注册中心，以Invoker为中心，扩展接口为Cluster, Directory, Router, LoadBalance。
+	5. monitor监控层：RPC调用次数和调用时间监控，以Statistics为中心，扩展接口为MonitorFactory, Monitor, MonitorService。
+	6. protocol远程调用层：封装RPC调用，以Invocation, Result为中心，扩展接口为Protocol,Invoker, Exporter。
+	7. exchange信息交换层：封装请求应答模式，同步转异步，以Request, Response为中心，扩展接口为Exchanger, ExchangeChannel, ExchangeClient, ExchangeServer。
+	8. transport网络传输层：抽象mina和netty为统一接口，以Message为中心，扩展接口为Channel，Transporter, Client, Server, Codec。
+	9. serialize数据序列化层：可复用的一些工具，扩展接口为Serialization, ObjectInput, ObjectOutput, ThreadPool.
+
+Dubbo 提供了4种负载均衡实现:
+	1. 基于权重随机算法的RandomLoadBalance
+	2. 基于最少活跃调用数算法的LeastActiveLoadBalance
+	3. 基于hash一致性的ConsistentHashLoadBalance
+	4. 基于加权轮询算法的RoundRobinLoadBalance
+
+AbstractLoadBalance除了实现了LoadBalance接口方法，还封装了公共逻辑，比如服务提供者权重计算逻辑，实现如下：
+protected int getWeight(Invoker<?> invoker, Invocation invocation) {
+	// 从 url 中获取权重 weight 配置值
+    int weight = invoker.getUrl().getMethodParameter(invocation.getMethodName(), Constants.WEIGHT_KEY, Constants.DEFAULT_WEIGHT);
+    if (weight > 0) {
+        // 获取服务提供者启动时间戳
+        long timestamp = invoker.getUrl().getParameter(Constants.REMOTE_TIMESTAMP_KEY, 0L);
+        if (timestamp > 0L) {
+            // 计算服务提供者运行时长
+            int uptime = (int) (System.currentTimeMillis() - timestamp);
+            // 获取服务预热时间，默认为10分钟
+            int warmup = invoker.getUrl().getParameter(Constants.WARMUP_KEY, Constants.DEFAULT_WARMUP);
+            // 如果服务运行时间小于预热时间，则重新计算服务权重，即降权
+            if (uptime > 0 && uptime < warmup) {
+                // 重新计算服务权重
+                weight = calculateWarmupWeight(uptime, warmup, weight);
+            }
+        }
+    }
+    return weight;
+}
+
+static int calculateWarmupWeight(int uptime, int warmup, int weight) {
+	// 计算权重，逻辑上形似与(uptime/warmup) * weight;
+	// 随着服务运行时间uptime增大，权重计算ww会慢慢接近配置值weight
+	int ww = (int) ((float)uptime / ((float)warmup/(float)weight));
+	return ww < 1 ? 1 : (ww > weight ? weight : ww);
+}
+上面是权重的计算过程，该过程主要用于保证当服务运行时长小于服务预热时间时，对服务进行降权，避免让服务在启动之初就处于高负债状态。服务预热是一个优化手段，与类似的还有JVM预热。主要目的是让服务启动后"低功率"运行一段时间，使其效率慢慢提升至最佳状态。
+
+RandomLoadBalance的算法思想比较简单，在经过多次请求后，能够将调用请求按照权重值进行"均匀"分配。当然RandomLoadBalance也存在一定的缺点，当调用次数比较少时，Random产生的随机数可能会比较集中，此时多数请求会落在同一台服务器上。这个缺点并不是很严重，多数情况下可以忽略。RandomLoadBalance 是一个简单，高效的负载均衡实现，因此 Dubbo 选择它作为缺省实现。
+
+LeastActiveLoadBalance 翻译过来是最小活跃数负载均衡。活跃调用数越小，表明该服务提供者效率越高，单位时间内可处理更多的请求。此时应优先将请求分配给该服务提供者。在具体实现中，每个服务提供者对应一个活跃数 active。初始情况下，所有服务提供者活跃数均为0。每收到一个请求，活跃数加1，完成请求后则将活跃数减1。在服务运行一段时间后，性能好的服务提供者处理请求的速度更快，因此活跃数下降的也越快，此时这样的服务提供者能够优先获取到新的服务请求、这就是最小活跃数负载均衡算法的基本思想。除了最小活跃数，LeastActiveLoadBalance 在实现上还引入了权重值。所以准确的来说，LeastActiveLoadBalance 是基于加权最小活跃数算法实现的。举个例子说明一下，在一个服务提供者集群中，有两个性能优异的服务提供者。某一时刻它们的活跃数相同，此时 Dubbo 会根据它们的权重去分配请求，权重越大，获取到新请求的概率就越大。如果两个服务提供者权重相同，此时随机选择一个即可。
+-----------------------------
+分布式锁需要注意的几个要点：
+	1. 确保互斥：在同一时刻，必须保证锁至多被一个客户端持有；
+	2. 不能死锁：在一个客户端持有锁期间崩溃而没有主动解锁情况下，也能保证后续其他客户端可以获取
+	3. 避免活锁：在获取锁失败的情况下，反复进行重试操作，占用CPU，影响性能；
+	4. 实现更多锁特性：锁中断、锁重入、锁超时等；
+	5. 确认客户端只能解锁自己持有的锁。
+
+Redisson分布式锁有个缺陷：在Redis哨兵模式下，Client A对master写入了redisson锁，此时会异步复制给对应的slave节点。但是这个过程中一旦发生master节点宕机，主备切换，slave节点变为master节点。这时Client B来尝试加锁，也能加锁成功，违反了分布式锁的语义。
+
+select student from student_scores group by student having min(score) > 90;
+-----------------------------------------------
+Cache Aside Pattern:旁路缓存方案的经验实践，这个实践又分为读实践和写实践。
+对于读请求
+	1. 先读cache，再读db
+	2. 如果cache hit，则直接返回数据
+	3. 如果cache miss，则访问db，并将数据set回缓存
+对于写请求：
+	1. 淘汰缓存，而不是更新缓存；
+	2. 先操作数据库，再淘汰缓存；
+
+Cache Aside Pattern为什么建议淘汰缓存，而不是更新缓存？
+答：如果更新缓存，在并发写时，可能出现数据不一致；
+Cache Aside Pattern为什么建议先操作数据库，再操作缓存？
+答：如果先操作缓存，在读写并发时，可能出现数据不一致。
+Cache Aside Pattern方案存在什么问题？
+答：如果先操作数据库，再淘汰缓存，在原子性被破坏时：
+	1. 修改数据库成功了；
+	2. 淘汰缓存失败了；
+导致数据库与缓存的数据不一致。
+-----------------------------------------------
+Spring事务的底层原理
+Spring事务的SPI接口主要有: TransactionDefinition, PlatformTransactionManager, TransactionStatus;
+DefaultTransactionDefinition.
+PlatformTransactionManager根据底层所使用的不同持久化API或框架，使用如下：
+DataSorceTransactionManager:适用于使用JDBC和MyBatis进行数据持久化操作的情况
+HibernateTransactionManager:适用于使用Hibernate进行数据持久化操作的情况
+JpaTransactionManager适用于使用JPA进行数据持久化操作的情况
+另外还有JtaTransactionManager, JdoTransactionManager, JmsTransactionManager等待；
+如果使用JTA进行事务管理，可以通过JNDI和Spring的JtaTransactionManager来获取一个容器管理的DataSource。JtaTransactionManager不需要知道DataSource和其他特定的资源，因为它使用容器提供的全局事务管理。而对于其他事务管理器，比如DataSourceTransactionManager, 在定义时需要提供底层的数据源作为其属性，即DataSource。与HibernateTransactionManager对应的是SessionFactory,与JpaTransactionManager对应的是EntityManagerFactory等。
+TransactionStatus
+Spring是在代码层面执行事务的时候使用TransactionInterceptor进行拦截，然后处理。
+
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Import(TransactionManagementConfigurationSelector.class)
+public @interface EnableTransactionManagement {
+	boolean proxyTargetClass() default false;
+	AdviceMode mode() default AdviceMode.PROXY;
+	int order() default Ordered.LOWEST_PRECEDENCE;
+}
+
+BeanPostProcessor
+InstantiationAwareBeanPostProcessor
+SmartInstantiationAwareBeanPostProcessor
+AopInfrastructureBean
+ProxyConfig
+BeanClassLoaderAware
+BeanFactoryAware
+ProxyProcessorSupport
+AbstractAutoProxyCreator
+AbstractAdvisorAutoProxyCreator
+InfrastuctureAdvisorAutoProxyCreator
+
+拦截接口intercept(Object proxy, Method method, Object[] args, MethodProxy methodProxy)根据条件进行是否要拦截的数据，根据参数可以判断。
+DefaultAdviosrChainFactory.getInterceptorsAndDynamicInterceptionAdvice()
+PointcutAdvisor为BeanFactoryTransactionAttributeSourceAdvisor
+MethodMatcher为TransactionAttributeSourcePointcut
+MethodBeforeAdviceAdapter
+AfterReturningAdviceAdapter
+ThrowsAdviceAdapter
+TransactionProxyFactoryBean
+AnnotationTransactionAttributeSource.determineTransactionAttribute获取方法属性。
+
+select @@tx_isolation;
+set tx_isolation = 'repeatable-read';
+
+Spring事务在数据库事务的基础上进行封装扩展，其主要特性如下：
+	1. 支持原有的数据库事务隔离级别，加入了事务传播的概念；
+	2. 提供多个事务的合并或隔离的功能；
+	3. 提供声明式事务，让业务代码与业务分离，事务变得更易用。
+
+Spring提供了事务相关接口：
+	1. TransactionDefiniton: 事务定义，事务的隔离级别和事务的传播行为；
+	2. TransactionAttribute:事务属性，实现了对回滚规则的扩展(处理异常);
+	3. PlatformTransactionManager：事务管理器；
+	4. TransactionStatus: 事务运行时状态；
+相关的实现类：
+	TransactionInterceptor: 事务拦截器，实现了MethodInterceptor
+	TransactionAspectSupport: 事务切面支持， 内部类TransactionInfo封装了事务相关属性
+
+/* Base class for transactional aspects, such as the #TransactionInterceptor or an AspectJ aspect.
+This enables the underlying Spring transaction infrastructure to be used easily to implement an aspect for any aspect system.
+Subclasses are responsible for calling methods in this class in the correct order.
+
+If no transaction name has been specified in the #TransactionAttribute, the exposed name will be the fully-qualified class name + "." + method name(by default).
+
+Uses the Strategy design pattern. A PlatformTransactionManager implementation will perform the actual transaction management, and a #TransactionAttributeSource is used for determining transaction definitions.
+A transaction aspect is serializable if its #PlatformTransactionManager and #TransactionAttributeSource are serializable.
+*/
+public abstract class TransactionAspectSupport implements BeanFactoryAware, InitializingBean {
+	...
+	//Opaque object used to hold Transaction information. Subclasses must pass
+	//it back to methods on this class, but not see its internals
+	protected final class TransactionInfo {
+		@Nullable 
+		private final PlatformTransactionManager transactionManager;
+		@Nullable 
+		private final TransactionAttribute transactionAttribute;
+		private final String joinpointIdentification;
+		@Nullable 
+		private TransactionStatus transactionStatus;
+		@Nullable 
+		private TransactionInfo oldTransactionInfo;
+		...
+	}
+	...
+}
+
+7种事务传播属性：
+	1. PROPAGATION_REQUIRED
+	2. PROPAGATION_REQUIRES_NEW
+	3. PROPAGATION_NOT_SUPPORTED
+	4. PROPAGATION_SUPPORTS
+	5. PROPAGATION_NESTED
+	6. PROPAGATION_MANDATORY 
+	7. SYNCHRONIZATION_NEVER
+
+
+public interface TransactionStatus extends SavepointManager, Flushable {
+	boolean isNewTransaction();
+	boolean hasSavepoint();
+	void setRollbackOnly();
+	boolean isRollbackOnly();
+	@Override 
+	void flush();
+	boolean isCompleted();
+}
+-----------------------------------------------
+当线程池里面的线程异常后：执行方式是execute时，可以看到堆栈异常的输出。当执行方式是submit时，堆栈异常没有输出，但是调用Future.get()方法时，可以捕获到异常。不会影响线程池里面其他线程的正常执行。线程池会把这个线程移除掉，并创建一个新的线程放到线程池中。
+
+public class FutureTask<V> implements RunableFuture<V> {
+	...
+	public void run() {
+		if (state != NEW || !UNSAFE.compareAndSwapObject(this, runnerOffset, null, 
+															Thread.currentThread())) {
+			return;
+		}
+		
+		try {
+			Callable<V> c = callable;
+			if (c != null && state == NEW) {
+				V result;
+				boolean ran;
+				try {
+					result = c.call();
+					ran = true;
+				} catch (Throwable ex) {
+					result = null;
+					ran = false;
+					setException(ex);
+				}
+				if (ran) {
+					set(result);
+				}
+			}
+		} finally {
+			// runner must be non-null until state is settled to 
+			// prevent concurrent calls to run()
+			runner = null;
+			// state must be re-read after nulling runner to prevent 
+			// leaked interrupts.
+			int s = state;
+			if (s >= INTERRUPTING) {
+				handlePossibleCancellationInterrupt(s);
+			}
+		}
+	}
+	...
+}
+
+MyCat的应用场景:
+	1. 读写分离;
+	2. 分库分表；
+	3. 多租户；
+	4. 黑白名单限制；
+
+Classes such as DataSourceUtils(for JDBC), EntityManagerFactoryUtils(for JPA), SessionFactoryUtils(for Hibernate), PersistenceManagerFactoryUtils(for JDO), and so on exist at a lower level. 
+
+At the very lowest level exists the TransactionAwareDataSourceProxy class. This is a proxy for a target DataSource, which wraps the target DataSource to add awareness of Spring-managed transactions. In this respect, it is similar to transactional JNDI DataSource as provided by a Java EE server.
+It should almost never be necessary or desirable to use this class, except when existing code must be called and passed a standard JDBC DataSourc interface implementation. In that case, it is possible that this code is usable, but participating in Spring managed transactions. It is preferable to write your new code by using the higher level abstractions mentioned above.
+------------------------------------
+Where is TransactionProxyFactoryBean?
+Declarative transaction configuration in versions of Spring2.0 and above differs considerably from previous versions of Spring. The main difference is that there is no longer any need to configure TransactionProxyFactoryBean beans.
+The pre-Spring2.0 configuration style is still 100% valid configuration; think of the new <tx:tags/> as simply defining TransactionProxyFactoryBean beans on your behalf.
+------------------------------------
+The most import concepts to grasp with regard to the Spring Framework's declarative transaction support are that this support is enabled via AOP proxies, and that the transactional advice is driven by metadata(currently XML or annotation-based). The combination of AOP with transactional metadata yields an AOP proxy that uses a TransactionInterceptor in conjunction with an appropriate PlatformTransactionManager implementation to drive transactions around method invocations.
+
+Method visibility and @Transactional
+When using proxies, you should apply the @Transactional annotation only to with public visibility. If you do annotate protected, private or package-visible methods with the @Transactional annotation, no error raised, but the annotated method does not exhibit the configured transactional settings. Consider the use of AspectJ if you need to annotate non-public methods. 
+
+Keepalived使用的vrrp协议方式，虚拟路由冗余协议 (Virtual Router Redundancy Protocol，简称VRRP)；Heartbeat或Corosync是基于主机或网络服务的高可用方式；简单的说就是，Keepalived的目的是模拟路由器的高可用，Heartbeat或Corosync的目的是实现Service的高可用。所以一般Keepalived是实现前端高可用，常用的前端高可用的组合有，就是我们常见的LVS+Keepalived、Nginx+Keepalived、HAproxy+Keepalived。而Heartbeat或Corosync是实现服务的高可用，常见的组合有Heartbeat v3(Corosync)+Pacemaker+NFS+Httpd 实现Web服务器的高可用、Heartbeat v3(Corosync)+Pacemaker+NFS+MySQL 实现MySQL服务器的高可用。总结一下，Keepalived中实现轻量级的高可用，一般用于前端高可用，且不需要共享存储，一般常用于两个节点的高可用。而Heartbeat(或Corosync)一般用于服务的高可用，且需要共享存储，一般用于多节点的高可用。这个问题我们说明白了，又有博友会问了，那heartbaet与corosync我们又应该选择哪个好啊，我想说我们一般用corosync，因为corosync的运行机制更优于heartbeat，就连从heartbeat分离出来的pacemaker都说在以后的开发当中更倾向于corosync，所以现在corosync+pacemaker是最佳组合。
+
+public interface Filter {
+	public void init(FilterConfig filterConfig) throws ServletException;
+	public void doFilter(ServletRequest request, ServletResponse response,
+							FilterChain chain) throws IOException, ServletException;
+	public void destroy();
+}
+
+public interface HandlerInterceptor {
+	default boolean preHandle(HttpServletRequest request, HttpServletResponse response, 
+								Object handler) throws Exception {
+		return true;
+	}
+	
+	default void postHandle(HttpServletRequest request, HttpServletResponse response, 
+			Object handler, @Nullable ModelAndView modelAndView) throws Exception {}
+	
+	default void afterCompletion(HttpServletRequest request, HttpServletResponse response,
+			Object handler, @Nullable Exception ex) throws Exception {}
+}
+
+A HandlerInterceptor gets called before the appropriate HandlerAdapter triggers the execution of the handler itself. This mechanism can be used for a large field of preprocessing aspects, e.g. for authorization checks, or common handler behavior like locale or theme changes. Its main purpose is to allow for factoring out repetitive handler code. 
+
+public interface AsyncHandlerInterceptor extends HandlerInterceptor {
+	default void afterConcurrentHandlingStarted(HttpServletRequest request, HttpServletResponse response,
+					Object handler) throws Exception {}
+}
+
+/*  A ServletContextInitializer to register Filters in a Servlet 3.0+ container. Similar to 
+	the ServletContext#addFilter(String, Filter) registration features provided by ServletContext 
+	but with a Spring Bean friendly design.
+	
+	The #setFilter(Filter) Filter must be specified before calling #onStartup(ServletContext). Registrations 
+	can be associated with #setUrlPatterns URL patterns and/or servlets (either by #setServletNames or via 
+	a #setServletRegistrationBeans ServletRegistrationBeans. When no URL pattern or servlets are specified 
+	the filter will be associated to '/*'. The filter name will be deduced if not specified.
+*/
+public class FilterRegistrationBean extends AbstractFilterRegistrationBean {
+	public static final int REQUEST_WRAPPER_FILTER_MAX_ORDER = 	
+		AbstractFilterRegistrationBean.REQUEST_WRAPPER_FILTER_MAX_ORDER;
+	private Filter filter;
+	public FilterRegistrationBean() {}
+	public FilterRegistrationBean(Filter filter, ServletRegistrationBean... servletRegistrationBeans) {
+		super(servletRegistrationBeans);
+		Assert.notNull(filter, "Filter must not be null");
+		this.filter = filter;
+	}
+	
+	@Override
+	public Filter getFilter() {
+		return this.filter;
+	}
+	public void setFilter(Filter filter) {
+		Assert.notNull(filter, "Filter must not be null");
+		this.filter = filter;
+	}
+}
+
+/* Defines callback methods to customize the Java-based configuration for Spring MVC enabled via @EnableWebMvc.
+	@EnableWebMvc-annotated configuration classes may implement this interface to be called back and given a 
+	chance to customize the default configuration.
+*/
+public interface WebMvcConfigurer {
+	default void configurePathMatch(PathMatchConfigurer configurer) {}
+	default void configureContentNegotiation(ContentNegotiationConfigurer configurer) {}
+	default void configureAsyncSupport(AsyncSupportConfigurer configurer) {}
+	default void configureDefaultServletHandling(DefaultServletHandlerConfigurer configurer) {}
+	default void addFormatters(FormatterRegistry registry) {}
+	/* Add Spring MVC lifecycle interceptors for pre- and post-processing of controller method invocations.
+		Interceptors can be registered to apply to all requests or be limited to a subset of URL patterns.
+		Note that interceptors registered here only apply to controllers and not to resource handler requests.
+		To intercept requests for static resources either declare a MappedInterceptor bean or switch to advenced
+		configuration mode by extending WebMvcConfigurationSupport and then override #resourceHandlerMapping.
+	*/
+	default void addInterceptors(InterceptorRegistry registry) {}
+	default void addResourceHandlers(ResourceHandlerRegistry registry) {}
+	default void addCorsMappings(CorsRegistry registry) {}
+	default void addViewControllers(ViewControllerRegistry registry) {}
+	default void configureViewResolvers(ViewResolverRegistry registry) {}
+	/* Add resolvers to support custom controller method argument types. This does not override 
+		the built-in support for resolving handler method arguments. To customize the built-in support 
+		for argument resolution, configure #RequestMappingHandlerAdapter directly.
+	*/
+	default void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {}
+	default void addReturnValueHandlers(List<HandlerMethodReturnValueHandler> handlers) {}
+	/** Configure the {@link HttpMessageConverter HttpMessageConverters} to use for reading or writing
+	 * to the body of the request or response. If no converters are added, a
+	 * default list of converters is registered.
+	 * <p><strong>Note</strong> that adding converters to the list, turns off
+	 * default converter registration. To simply add a converter without impacting
+	 * default registration, consider using the method
+	 * {@link #extendMessageConverters(java.util.List)} instead.
+	*/
+	default void configureMessageConverters(List<HttpMessageConverter<?>> converters) {}
+	default void extendMessageConverters(List<HttpMessageConverter<?>> converters) {}
+	default void configureHandlerExceptionResolvers(List<HandlerExceptionResolver> resolvers) {}
+	default void extendHandlerExceptionResolvers(List<HandlerExceptionResolver> resolvers) {}
+	@Nullable 
+	default Validator getValidator() {
+		return null;
+	}
+	@Nullable
+	default MessageCodesResolver getMessageCodesResolver() {
+		return null;
+	}
+}
+
+高并发缓存的设计要点：
+	1. 数据一致性;
+	2. 缓存穿透;
+	3. 缓存击穿;
+	4. 缓存雪崩;
+	5. 热点缓存问题：多个副本存储；多级缓存；
+	6. 缓存的扩容/缩容：一致性Hash；
+	7. 缓存的分片；
+	8. 缓存的靠前原则；
+
+在软件系统设计层面，很多地方用了缓存：
+	-浏览器会缓存页面的元素，这样在重复访问网页时，就避开了要从互联网上下载数据（例如大图片）
+	-web服务会把静态的东西提前部署在CDN上，这也是一种缓存
+	-数据库会缓存查询，所以同一条查询第二次就是要比第一次快
+	-内存数据库（如redis）选择把大量数据存在内存而非硬盘里，这可以看作是一个大型缓存，只是把整个数据库缓存了起来
+	-应用程序把最近几次计算的结果放在本地内存里，如果下次到来的请求还是原请求，就跳过计算直接返回结果	
+
+轮询可以使服务器的请求更加均衡，而一致性哈希可以提升应用Nginx的缓存命中率，相对于轮询，一致性哈希会存在单机热点问题，一种解决方法是热点直接推送到接入层Nginx，一种办法是设置一个阈值，当超过阈值，改为轮询算法。
+应用Nginx读取本地缓存(本地缓存可以使用Lua Shared Dict, Nginx Proxy Cache(磁盘/内存), Local Redis实现)，如果本地缓存命中则直接返回，使用应用Nginx本地缓存可以提升整体的吞吐量，降低后端的压力，尤其应对热点问题非常有效。
+------------------------------------------------------
+Cache Aside模式的缺陷：比如一个读操作，但是没有命中缓存，然后就到数据库中读取数据，此时来了一个写操作，写完数据库后，让缓存失效，然后之前的那个读操作再把老的数据放进去，这样会造成脏数据。
+
+Read Through模式是指应用程序始终从缓存中请求数据。 如果缓存没有数据，则它负责使用底层提供程序插件从数据库中检索数据。 检索数据后，缓存会自行更新并将数据返回给调用应用程序。使用Read Through 有一个好处。
+我们总是使用key从缓存中检索数据, 调用的应用程序不知道数据库， 由存储方来负责自己的缓存处理，这使代码更具可读性， 代码更清晰。但是这也有相应的缺陷，开发人员需要给编写相关的程序插件，增加了开发的难度性。
+
+Write Through模式和Read Through模式类似，当数据发生更新的时候，先去Cache里面进行更新，如果命中了，则先更新缓存再由Cache方来更新database。如果没有命中的话，就直接更新Cache里面的数据。
+
+Write Behind Caching 这种模式通常是先将数据写入到缓存里面，然后再异步的写入到database中进行数据同步，这样的设计既可以直接的减少我们对于数据的database里面的直接访问，降低压力，同时对于database的多次修改可以进行合并操作，极大的提升了系统的承载能力。
+但是这种模式处理缓存数据具有一定的风险性，例如说当cache机器出现宕机的时候，数据会有丢失的可能。
+------------------------------------------------------
+浏览器缓存是指使用浏览器访问一些网站页面或者HTTP服务时，根据服务端返回的缓存设置响应头将响应内容缓存到浏览器，下次可以直接使用缓存内容或者仅需要去服务端验证内容是否过期即可。这样的好处可以减少浏览器和服务端之间来回传输的数据量，节省带宽提升性能。
+
+1. 服务端响应的Last-Modified会在下次请求时以If-Modified-Since请求头带到服务端进行文档是否修改的验证，如果没有修改返回304，浏览器可以直接使用缓存内容；
+2. Cache-Control:max-age和Expire用于决定浏览器端内容缓存多久，即多久过期，过期后则删除缓存重新从服务端获取最新；另外可以用于from cache场景；
+3. HTTP/1.1规范定义的Cache-Control优先级高于HTTP/1.0规范定义的Expires;
+4. 一般情况下Expires = 当前系统时间+缓存时间(Cache-Control:max-age)；
+5. HTTP/1.1规范定义了ETag来通过文档摘要的方式控制。
+
+Last-Modified与ETag同时使用时，浏览器在验证时会同时发送If-Modified-Since和If-None-Match，按照HTTP/1.1规范，如果同时使用If-Modified-Since和If-None-Match则服务端必须两个都验证通过后才能返回304，并且Nginx就是这样做到。
+
+分布式系统怎么保证某个节点挂了，系统仍然正常运行：
+	1. 节点的健康检查/探测，及时剔除异常节点；
+	2. 节点下线的主动通知；
+	3. 集群容错：Failover Cluster;Failfast Cluster;Failsafe Cluster;Failback Cluster;Forking Cluster;
+
+synchronized和Lock的区别：
+	1. Lock是interface接口，synchronized是Java关键字，synchronized由JDK实现，不需要编写代码控制加锁和释放；
+	2. synchronized修饰的代码在执行异常时，JDK会自动释放线程占用的锁，不需要手动控制；当Lock出现异常时，需要手动unlock，不然很有可能死锁。Lock一般在finally块中释放锁；
+	3. Lock可以让等待线程响应中断处理，比如tryLock(long time, TimeUnit unit)，而synchronized却不行，使用synchronized的线程会一直等待，不能够中断，无法控制；
+	4. synchronized是非公平锁，Lock支持公平锁和非公平锁，默认非公平锁；
+	5. Lock的实现类ReentrantReadWriteLock提供了读写锁的语义；StampedLock；
+	6. Lock锁的范围有局限性，仅适用于代码块范围，而synchronized可以锁住代码块、对象实例、类、方法；
+	7. Lock可以绑定条件，实现分组唤醒需要的线程；synchronized要么随机唤醒一个，要么唤醒全部线程。
+
+现在的系统如何提升100倍的请求，架构怎么演化：
+	1. 微服务划分的粒度是否合理；
+	2. 哪些具备横向扩展能力，哪些不具备，瓶颈点在哪里；
+	3. 单服务内的优化：并发、异步、锁粒度、流程优化；
+	4. 高并发缓存设计；
+	5. 熔断降级的设计；
+	6. 业务优化；实时改批量等；
+	7. 分库分表；ES，MongoDB；
+
+/**
+ * Bootstrap listener to start up and shut down Spring's root {@link WebApplicationContext}.
+ * Simply delegates to {@link ContextLoader} as well as to {@link ContextCleanupListener}.
+ *
+ * <p>As of Spring 3.1, {@code ContextLoaderListener} supports injecting the root web
+ * application context via the {@link #ContextLoaderListener(WebApplicationContext)}
+ * constructor, allowing for programmatic configuration in Servlet 3.0+ environments.
+ * See {@link org.springframework.web.WebApplicationInitializer} for usage examples.
+ * @see org.springframework.web.WebApplicationInitializer
+ */
+public class ContextLoaderListener extends ContextLoader implements ServletContextListener {
+	public ContextLoaderListener() {}
+	public ContextLoaderListener(WebApplicationContext context) {
+		super(context);
+	}
+	@Override 
+	public void contextInitialized(ServletContextEvent event) {
+		initWebApplicationContext(event.getServletContext());
+	}
+	@Override 
+	public void contextDestroyed(ServletContextEvent event) {
+		closeWebApplicationContext(event.getServletContext());
+		ContextCleanupListener.cleanupAttributes(event.getServletContext());
+	}
+}
+--------------------------------
+对于Web类的Spring的启动流程：
+	1.首先，对于一个web应用，其部署在web容器中，web容器提供其一个全局的上下文环境，这个上下文就是ServletContext，其为后面的spring IoC容器提供宿主环境；
+
+	2.其 次，在web.xml中会提供有contextLoaderListener。在web容器启动时，会触发容器初始化事件，此时 contextLoaderListener会监听到这个事件，其contextInitialized方法会被调用，在这个方法中，spring会初始 化一个启动上下文，这个上下文被称为根上下文，即WebApplicationContext，这是一个接口类，确切的说，其实际的实现类是 XmlWebApplicationContext。这个就是spring的IoC容器，其对应的Bean定义的配置由web.xml中的 context-param标签指定。在这个IoC容器初始化完毕后，spring以WebApplicationContext.ROOTWEBAPPLICATIONCONTEXTATTRIBUTE为属性Key，将其存储到ServletContext中，便于获取；
+
+	3.再 次，contextLoaderListener监听器初始化完毕后，开始初始化web.xml中配置的Servlet，这里是DispatcherServlet，这个servlet实际上是一个标准的前端控制器，用以转发、匹配、处理每个servlet请 求。DispatcherServlet上下文在初始化的时候会建立自己的IoC上下文，用以持有spring mvc相关的bean。在建立DispatcherServlet自己的IoC上下文时，会利用WebApplicationContext.ROOTWEBAPPLICATIONCONTEXTATTRIBUTE先从ServletContext中获取之前的根上下文(即WebApplicationContext)作为自己上下文的parent上下文。有了这个 parent上下文之后，再初始化自己持有的上下文。这个DispatcherServlet初始化自己上下文的工作在其initStrategies方 法中可以看到，大概的工作就是初始化处理器映射、视图解析等。这个servlet自己持有的上下文默认实现类也是 XmlWebApplicationContext。初始化完毕后，spring以与servlet的名字相关(此处不是简单的以servlet名为 Key，而是通过一些转换，具体可自行查看源码)的属性为属性Key，也将其存到ServletContext中，以便后续使用。这样每个servlet 就持有自己的上下文，即拥有自己独立的bean空间，同时各个servlet共享相同的bean，即根上下文(第2步中初始化的上下文)定义的那些 bean。
+--------------------------------
+MySQL行转列：一般通过case when语句 + group by来实现。也可以通过Sql Server的运算符pivot来实现。用传统的方法，比较好理解，层次清晰。但是pivot,unpivot提供的语法比一系列复杂的select...case when...group by语句中所指定的语法更简单、更具可读性。
+
+在 Java 虚拟机中，每个 Java 对象都有一个对象头 （object header） ，由标记字段和类型指针构成，标记字段用来存储对象的哈希码， GC 信息， 持有的锁信息，而类型指针指向该对象的类 Class ，在 64 位操作系统中，标记字段占有 64 位，而类型指针也占 64 位，也就是说一个  Java  对象在什么属性都没有的情况下要占有 16 字节的空间，当前 JVM 中默认开启了压缩指针，这样类型指针可以只占 32 位，所以对象头占 12 字节， 压缩指针可以作用于对象头，以及引用类型的字段。
+
+JVM 为了内存对齐，会对字段进行重排序，这里的对齐主要指  Java  虚拟机堆中的对象的起始地址为 8 的倍数，如果一个对象用不到 8N 个字节，那么剩下的就会被填充，另外子类继承的属性的偏移量和父类一致，以 Long 为例，他只有一个非 static 属性 value ，而尽管对象头只占有 12 字节，而属性 value 的偏移量只能是 16， 其中 4 字节只能浪费掉，所以字段重排就是为了避免内存浪费， 所以我们很难在 Java 字节码被加载之前分析出这个 Java 对象占有的实际空间有多大，我们只能通过递归父类的所有属性来预估对象大小，而真实占用的大小可以通过  Java agent 中的 Instrumentation获取。
+
+当然内存对齐另外一个原因是为了让字段只出现在同一个 CPU 的缓存行中，如果字段不对齐，就有可能出现一个字段的一部分在缓存行 1 中，而剩下的一半在 缓存行 2 中，这样该字段的读取需要替换两个缓存行，而字段的写入会导致两个缓存行上缓存的其他数据都无效，这样会影响程序性能。
+
+通过内存对齐可以避免一个字段同时存在两个缓存行里的情况，但还是无法完全规避缓存伪共享的问题，也就是一个缓存行中存了多个变量，而这几个变量在多核 CPU 并行的时候，会导致竞争缓存行的写权限，当其中一个 CPU 写入数据后，这个字段对应的缓存行将失效，导致这个缓存行的其他字段也失效。
+
+在 Disruptor 中，通过填充几个无意义的字段，让对象的大小刚好在 64 字节，一个缓存行的大小为64字节，这样这个缓存行就只会给这一个变量使用，从而避免缓存行伪共享，但是在 jdk7 中，由于无效字段被清除导致该方法失效，只能通过继承父类字段来避免填充字段被优化，而 jdk8 提供了注解@Contended 来标示这个变量或对象将独享一个缓存行，使用这个注解必须在 JVM 启动的时候加上 -XX:-RestrictContended 参数，其实也是用空间换取时间。
+---------------------------------------------
+与东西流量有关的问题：
+流量管理(服务发现、负载均衡、路由、限流、熔断、容错等)、可观测性(监控、日志聚合、计量、跟踪)、安全(认证、授权)，设置更高级的动态配置、故障注入、镜像流量等。
+相比来说，Sidecar模式更为巧妙并更进一步。通过容器机制，在进程上是隔离的，基于L7代理通讯，运行微服务由多语言开发。
+---------------------------------------------
+DefaultListableBeanFactory
+XmlBeanDefinitionReader
+AbstractBeanDefinition
+Resource 
+BeanDefinition:描述了XML中一个bean节点及其子节点的所有属性，将xml中的描述转变为内部的field信息，例如:scope, lazyinit,ContructorArgumentValues,PropertyValues等，是一个包罗万象的接口，其子类实现包括GenericBeanDefintion,RootBeanDefinition, ChildBeanDefintion等。
+EncodeResource
+InputSource
+Document 
+BeanDefinitionDocumentReader
+XmlReaderContext
+BeanDefinitionParserDelegate
+ConfigurableListableBeanFactory
+ConversionService
+PropertyPlaceholderConfigurer
+LoadTimeWeaverAware
+RootBeanDefinition
+FactoryBean
+SmartFactoryBean
+SmartInitializingSingleton
+AbstractBeanFactory
+AbstractAutowireCapableBeanFactory
+BeanPostProcessor 
+DefaultSingletonBeanRegistry
+InstantiationAwareBeanPostProcessor 
+BeanWrapper
+BeanFactoryAware 
+PropertyDescriptor
+ReaderContext:Bean Definition解析过程中的上下文对象，封装了Resource, ProblemReporter, EventListener, SourceExtrator等；
+Element
+BeanDefinitionHolder:包含一个BeanDefinition, 同时包含了beanName和aliases，更好的封装了一次。
+BeanDefinitionDocumentReader:定义了从Document对象中解析BeanDefinition并且注册到Registry中涉及到的接口，其默认实现类是DefaultBeanDefinitionDocumentReader，主要是被XmlBeanDefinitionReader委派去处理Document对象。
+BeanDefinitionParserDelegate: Stateful delegate class used to parse XML bean definitions. Intended for use both the main parser and any extension #BeanDefintionParser or #BeanDefinitionDecorators.
+----------------------
+public interface SmartInitializingSingleton {
+	void afterSingletonsInstantiated();
+}
+
+首先初始化名字为"conversionService"的Bean,为什么是conversionService呢? 原因是注册这个bean之后，类似于前端传给后端的非基础类型和基础类型的包装类之外，其他的就可以考虑采用ConversionService来进行类型的转换，初始化这个"conversionService"是在上面源码中的beanFactory.getBean(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class)进行的。
+
+Dubbo集群扩展:已知扩展：
+	1. FailoverCluster;
+	2. FailfastCluster;
+	3. FailsafeCluster;
+	4. FailbackCluster;
+	5. ForkingCluster;
+	6. AvailableCluster;
+	7. BroadcastCluster
+
+Dubbo序列化扩展接口:
+	1. org.apache.dubbo.common.serialize.Serialization;
+	2. org.apache.dubbo.common.serialize.ObjectInput;
+	3. org.apache.dubbo.common.serialize.ObjectOutput;
+已知扩展:
+	1. org.apache.dubbo.common.serialize.dubbo.DubboSerialization;
+	2. org.apache.dubbo.common.serialize.hession.Hession2Serialization;
+	3. org.apache.dubbo.common.serialize.java.JavaSerialization;
+	4. org.apache.dubbo.common.serialize.java.CompactedJavaSerialization;
+
+SQL中的in和exists：小表驱动大表；in适合于外表大而内表小的情况，exists适合于外表小而内表大的情况。
+in和exists的适用场景：
+	1. in查询在内部表和外部表上都可以使用到索引；
+	2. exists查询仅在内部表上可以使用到索引；
+	3. 当子查询结果集很大，而外部表较小的时候，exists的Block Nested Loop(Block嵌套循环)的作用开始显现，并弥补外部表无法用到索引的缺陷，查询效率会优于in；
+	4. 当查询结果集较小，而外部表很大的时候，exists的Block嵌套循环优化效果不明显,in的外表索引优势占主要作用，此时in的查询效率会优于exists;
+	5. 网上的说法不准确。其实“表的规模”不是看内部表和外部表，而是外部表和子查询结果集。
+
+in和exists执行时，in是先执行子查询中的查询，然后再执行主查询。而exists查询它是先执行主查询，即外层表的查询，然后再执行子查询。exists 和 in 在执行时效率单从执行时间来说差不多，exists要稍微优于in。在使用时一般应该是用exists而不用in如果子查询得出的结果集记录较少，主查询中的表较大且又有索引时应该用in,反之如果外层的主查询记录较少，子查询中的表大，又有索引时使用exists。IN时不对NULL进行处理。
+
+Spring Cloud Circuit Breaker支持的实现：
+	1. Netflix Hystrix;
+	2. Resilience4J;
+	3. Sentinel;
+	4. Spring Retry;
+The following starters are available with the Spring Cloud BOM:
+	- Hystrix:org.springframework.cloud:spring-cloud-starter-netflix-hystrix
+	- Resilience4J:org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j
+	- Reactive Resilience4J:org.springframework.cloud:spring-cloud-starter-circuitbreaker-reator-resilience4j
+	- Spring Retry:org.springframework.cloud:spring-cloud-starter-circuitbreaker-spring-retry
+	- Sentinel:org.springframework.cloud:spring-cloud-starter-circuitbreaker-sentinal
+
+重写的规则：
+	1. 访问修饰符一定要不小于被重写方法的访问修饰符；
+	2. 参数列表必须与被重写方法相同；
+	3. 重写的方法返回值必须和被重写的方法的返回一致或者兼容；
+	4. 重写的方法所抛出的异常必须和被重写方法的抛出异常一致，或者是其子类；
+	5. 被重写的方法不能是private，子类再写一个同名的方法并不是对父类方法进行重写，而是重新生成一个新的方法；
+	6. 静态方法不能重写；
+	7. 不能重写final方法，子类中必须重写父类中的abstract方法；
+
+方法是静态的，它的行为就不具有动态性。静态方法是类、而非单个对象相关联的。重写依赖于类的实例，而静态方法和类实例并没有什么关系；而且静态方法在编译时就已经确定，而方法重写是在运行时确定的(动态绑定)；
+	1)父类的静态方法不能被子类覆盖为非静态方法（编译出错）
+	2)父类的非静态方法不能被子类覆盖为静态方法；
+	3)构造方法不能被重写；因为构造方法是隐式的static方法。其实这个问题切入点很多，首先构造方法没有返回值、方法名必须和所在类名相同，这点注定子类无法重写父类构造方法。另外多态方面、重写是多态的一种体现方式，假设在子类重写构造方法是成立的，那么子类何谈实例成父类。另外重要一点，子类可以使用super()调用父类的构造方法，且必须放在子类构造方法内的第一行。
+
+ 
