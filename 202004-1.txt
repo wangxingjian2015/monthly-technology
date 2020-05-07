@@ -1,0 +1,603 @@
+参数innodb_autoinc_lock_mode不同取值：
+	0:这是MySQL5.1.22版本之前自增长的实现方式，即通过表锁的AUTO-INC-Locking方式，因为有了新的自增长实现方式，0这个选项不应该是新版用户的首选项。
+	1:这是该参数的默认值。对于"simple inserts",该值会用互斥量(mutex)去对内存中的计数器进行累加的操作。对于"bulk inserts"，还是使用传统表锁的AUTO INC Locking方式。在这种配置下，如果不考虑回滚操作，对于自增值列的增长还是连续的。并且在这种方式下，statement-based方式的replication还是能很好地工作。需要注意的是，如果已经使用AUTO-INC Locking方式去产生自增长的值，而这时需要再进行"simple inserts"的操作时，还是需要等待AUTO-INC Locking的释放。
+	2: 在这个模式下，对于所有"INSERT-like"自增长值的产生都是通过互斥量，而不是AUTO-INC Locking的方式。显然，这是性能最高的方式。然而，这会带来一定的问题。因为并发插入的存在，在每次插入时，自增长的值可能不是连续的。此外，最重要的是，基于Statement-Base Replication会出现问题。因此，使用这个模式，任何时候应该使用row-base replication。这样才能保证最大的并发性能及replication主从数据的一致。
+
+由于在show processlist的结果里面，session A的Command列是“Sleep”，导致查找起来很不方便。不过有了performance_schema和sys系统库以后，就方便多了。（MySQL启动时需要设置performance_schema=on，相比于设置为off会有10%左右的性能损失)
+通过查询sys.schema_table_lock_waits这张表，我们就可以直接找出造成阻塞的process id，把这个连接用kill命令断开即可。
+> select blocking_pid from sys.schema_table_lock_waits;
+如果使用MySQL5.7，可以通过sys.innodb_lock_waits表查看锁定的表：
+>select * from sys.innodb_lock_waits where locked_table='db.table';
+----------------------------------
+为什么有了ReentrantReadWriteLock,还要引入StampedLock:
+ReentrantReadWriteLock使得多个读线程同时持有读锁(只要写锁未被占用)，而写锁是独占的。
+但是，读写锁如果使用不当，很容易产生饥饿问题：比如读线程非常多，写线程很少的情况下，很容易导致写线程饥饿，虽然使用公平策略可以一定程度上缓解这个问题，但是公平策略是以牺牲系统吞吐量为代价的。
+StampedLock的特点：
+	1. 所有获取锁的地方，都返回一个邮戳Stamp，Stamp为0表示获取失败，否则表示成功；
+	2. 所有释放锁的地方，都需要一个邮戳Stamp,这个Stamp必须和成功获取锁时得到的stamp一致；
+	3. StampedLock是不可重入的；如果一个线程已经持有写锁，再去获取写锁会造成死锁；
+	4. StampedLock有三种访问模式：
+		1. reading:和ReentrantReadWriteLock读锁类似；
+		2. writing:和ReentrantReadWrtieLock写锁类似；
+		3. optimistic reading:乐观读模式，这是一种优化的读模式。
+	5. StampedLock支持读锁和写锁的互相转换
+	6. 无论写锁还是读锁，都不支持Condition条件等待。
+在ReentrantReadWriteLock中，当读锁被使用时，如果有线程尝试获取写锁，该写线程会阻塞。
+但是，StampedLock在Optimistic reading中，即使读线程获取到了读锁，写线程尝试获取写锁也不会阻塞，这相当于对读模式的优化，但是可能会导致数据不一致的问题。所以，当使用Optimistic reading获取到读锁时，必须对获取结果进行校验。
+StampedLock虽然不像其它锁一样定义了内部类来实现AQS框架，但是StampedLock的基本实现思路还是利用CLH队列进行线程的管理，通过同步状态值来表示锁的状态和类型。
+StampedLock内部定义了很多常量，定义这些常量的根本目的还是和ReentrantReadWriteLock一样，对同步状态值按位切分，以通过位运算对State进行操作.
+对于StampedLock来说，写锁被占用的标志是第8位为1，读锁使用0-7位，正常情况下读锁数目为1-126，超过126，使用一个名为readerOverflow的int整型保存超出数目。
+StampedLock的等待队列与CLH队列相比，有以下特点：
+	1. 当入队一个线程时，如果队尾是读节点，不会直接链接到队尾，而是链接到该读节点的cowait链中，cowait链本质是一个栈；
+	2. 当入队一个线程时，如果队尾是写节点，则直接链接到队尾。
+	3. 唤醒线程的规则和AQS类似，都是首先唤醒队首节点。区别是StampedLock中，当唤醒的节点是读节点时，会唤醒该读节点的cowait链中的所有读节点。
+使用StampedLock需小心，避免锁重入的操作，在使用乐观读锁时也需要遵循相应的调用模板，防止数据不一致的问题。
+WAL(Write-Ahead Logging)：WAL是预写式日志，关键点在于先写日志再写磁盘。在对数据页进行修改时，通过将"修改了什么"这个操作记录在日志中，而不必马上将更改内容刷新到磁盘，从而将随机写转换为顺序写，提高了性能。但由此带来的问题是，内存中的数据页会和磁盘中的数据页内容不一致，此时将内存中的这种数据页称为脏页。
+
+innodb_buffer_pool_size
+innodb_old_blocks_time
+而对于InnoDB引擎内部，由于有淘汰策略，大查询也不会导致内存暴涨。并且，由于InnoDB对LRU算法做了改进，冷数据的全表扫描，对Buffer Pool的影响也能做到可控。
+Tomcat实现自己ClassLoader的目的：
+	1. 对于各个webapp中的class和lib，需要互相隔离，不能出现一个应用加载的类库影响其他应用的情况；对于多应用共享的lib，放在共享tomcat/lib中。
+	2. 安全性问题。使用单独的classLoader去装载tomcat自身的类库，以免被恶意破坏或篡改。
+	3. 热部署。
+Tomcat的classloader结构：
+	1. BootstrapClassLoader
+		2. ExtClassLoader
+			3. AppClassLoader
+				4. CommonClassLoader
+					5. CatalinaClassLoader
+					6. SharedClassLoader
+						7. WebAppCloasLoader
+							8. JasperLoader
+Traefik是一个为了让部署微服务更加便捷而诞生的现代HTTP反向代理、负载均衡工具。它支持多种后台(Docker, Swarm, Kubernetes, Marathon,Mesos, Consul, Etcd, Zookeeper, BoltDB, Rest API...)来自动化、动态的应用它的配置文件设置。
+简单的说，ingress就是从kubernetes集群外访问集群的入口，将用户的URL请求转发到不同的service上。Ingress相当于nginx、apache等负载均衡反向代理服务器，其中还包括规则定义，即URL的路由信息，路由信息的刷新由 Ingress controller 来提供。
+Ingress Controller 实质上可以理解为是个监视器，Ingress Controller 通过不断地跟 kubernetes API 打交道，实时的感知后端 service、pod 等变化，比如新增和减少 pod，service 增加与减少等；当得到这些变化信息后，Ingress Controller 再结合下文的 Ingress 生成配置，然后更新反向代理负载均衡器，并刷新其配置，达到服务发现的作用。
+
+Spring Cloud Zuul的rateLimit限流功能：开源的GAV:com.marcosbarbero.cloud#spring-cloud-zuul-ratelimit#<version>，支持几种存储类型：consul, redis, jpa, memory, buket4j_jcache, buket4j_hazelcast, buket4j_infinispan, buket4j_ignite。限流类型:origin, user, url, role, http_method。
+
+春晚红包架构要点：
+	1. 底层计算资源的弹性伸缩；
+	2. 自动化测试，全链路压测，高并发压测，稳定性压测，压力洪峰；
+	3. 高可用，混沌工程；
+	4. 前端拦截，优化；
+	5. CDN：所有静态资源提前下载到客户端，避免高峰期拉取请求。
+	6. 流量切分，根据地域划分到不同的数据中心，每个数据中心预留隔离红包。不足时，进行就近获取。
+	7. 异步化，提高吞吐量；
+	8. 前端保护后端：
+		尽量缩减往后端透传的流量，每一层优先做预判和检测逻辑。
+		接入层保护红包系统，限定客户端流量。
+	9. 架构简单可靠，异步化：主逻辑灵活伸缩/重试模块异步保证可靠请求
+	10. 缓存化。
+	11. 数据库分表，快速入库，主服务无阻塞。
+	12. 限流 
+	13. 不同地域/数据中心的配额预先分配，不同服务实例配额，不够后才去共享存储申请。
+	14. 写数据保证最终一致性；完善的日志，对账功能；静态数据提前构建高效缓存；读写分离，读不要求强一致性；热点数据预处理；业务流程异步化；
+	15. 有损服务、柔性可用、大系统小做。
+	16. 过载保护策略。
+	17. 分组：从切分的角度，将所有红包分为50个分组，放在50个单独的set上互不影响，单组set出问题最多只影响1/50用户，保证多数人服务不受干扰。分组set化也是柔性可用的一个重要技术手段，这一思维非常类似于集装箱思维-通过标准化，规模化的箱体设计，应对复杂多样的货物，使每个流通环节既独立又不失灵活。
+
+traefik提供了适配各个类型服务编排的部署方式，Kubernetes启动方式支持Deployment和DaemonSet。
+
+innodb_io_capacity:该参数用于告知InnoDB磁盘的能力，通常建议设置为磁盘的写IOPS。
+innodb_max_dirty_pages_pct：指的是脏页比例上限，内存中的脏页比例越是接近该值，则InnoDB刷盘速度回接近全力。
+innodb_flush_neighbors:当刷脏页时, 若脏页旁边的数据页也是脏页, 则会连带刷新, 注意这个机制是会蔓延的.
+
+有向无环图是描述含有公共子式的表达式的有效工具。如果用二叉树表示，会有重复子树。若利用有向无环图，则可实现对相同子式的共享，从而节省存储空间。
+AOV网(Activity On Vertex Network)：拓扑排序
+AOE网(Activity On Edge)：关键路径
+迪杰斯特拉(Dijkstra)提出了一个按路径长度递增的次序产生最短路径的算法。
+弗洛伊德(Floyd)算法解决每一对顶点之间的最短路径。
+最小生成树:普里姆(Prim)算法和克鲁斯卡尔(Kruskal)算法
+
+Nginx如何设置session粘滞：在编译时，./configure --prefix=/opt/nginx --with-http_ssl_module --with-http_stub_status_module --with-threads --with-file-aio --add-module=/root/nginx-sticky-module-ng 
+./nginx -t检查语法
+http {
+...
+	upstream webxxx{
+		#ip_hash;
+		sticky; #粘滞算法
+		server 1.2.3.4:80;
+		server 1.2.3.5:80;
+		server 1.2.3.6:80 backup;
+	}
+...
+}
+Sticky是nginx的一个模块，它是基于cookie的一种nginx的负载均衡解决方案，通过分发和识别cookie，来使同一个客户端的请求落在同一台服务器上，默认标识名为route。
+1.客户端首次发起访问请求，nginx接收后，发现请求头没有cookie，则以轮询方式将请求分发给后端服务器。
+2.后端服务器处理完请求，将响应数据返回给nginx。
+3.此时nginx生成带route的cookie，返回给客户端。route的值与后端服务器对应，可能是明文，也可能是md5、sha1等Hash值
+4.客户端接收请求，并保存带route的cookie。
+5.当客户端下一次发送请求时，会带上route，nginx根据接收到的cookie中的route值，转发给对应的后端服务器。
+
+Nginx调用lua模块指令：
+1. set_by_lua 设置nginx变量，实现复杂的赋值逻辑
+2. set_by_lua_file
+3. access_by_lua 请求访问阶段处理，用于访问控制
+4. access_by_lua_file
+5. content_by_lua 内容处理器，接收请求处理并输出响应
+6. content_by_lua_file
+7. ngx.var nginx变量
+8. ngx.req.get_headers 获取请求头
+9. ngx.req.get_uri_args 获取url请求参数
+10. ngx.redirect 重定向
+11. ngx.print 输出响应体
+12. ngx.say 同ngx.print，但是会最后输出换行符
+13. ngx.header输出响应头
+利用nginx的lua模块进行灰度发布。
+
+ConfigMap是存储通用的配置变量的，类似于配置文件，使用户可以将分布式系统中用于不同模块的环境变量统一到一个对象中管理；而它与配置文件的区别在于它是存在集群的“环境”中的，并且支持K8S集群中所有通用的操作调用方式。
+从数据角度来看，ConfigMap的类型只是键值组，用于存储被Pod或者其他资源对象（如RC）访问的信息。这与secret的设计理念有异曲同工之妙，主要区别在于ConfigMap通常不用于存储敏感信息，而只存储简单的文本信息。
+ConfigMap可以保存环境变量的属性，也可以保存配置文件。
+创建pod时，对configmap进行绑定，pod内的应用可以直接引用ConfigMap的配置。相当于configmap为应用/运行环境封装配置。
+pod使用ConfigMap，通常用于：设置环境变量的值、设置命令行参数、创建配置文件。
+
+k8s现在提供的暴露服务的方式: 
+	1. LoadBalancer(受限于云平台，且通常云平台部署ELB需要额外费用), 
+	2. NodePort, 
+	3. Ingress, 
+	4. ClusterIP(只能在集群内部使用)。
+NodePort会在每个node上暴露对应的port，不便管理。
+对于Ingress Nginx：Ingress Controller通过Kubernetes API交互，能够动态获取cluster中Ingress rules的变化，生成一段Nginx配置，再写到Nginx-ingress-control的Pod里，reload pod使规则生效，从而实现注册的service及其对应域名IP:Port的动态添加和解析。
+当集群服务很多的时候，NodePort方式最大的缺点是会占用很多集群机器的端口；LB方式最大的缺点则是每个service一个LB又有点浪费和麻烦，并且需要k8s之外的支持； 而ingress则只需要一个NodePort或者一个LB就可以满足所有service对外服务的需求。
+Ingress包括Ingress Controller和Ingress Resources：
+Ingress Controller:核心是一个deployment，实现方式有很多，比如nginx, Contour, Haproxy, traefik, Istio，需要编写的yaml有:Deployment, Service, ConfigMap, ServiceAccount(Auth)，其中service类型可以是NodePort或LoadBalancer。
+Ingress Resources:这个就是一个类型是Ingress的k8s api对象了，这部分是面向开发人员。
+-------------------------------------------------
+Ingress的三种部署方式:
+1. Deployment+LoadBalancer模式的Service
+	如果要把ingress部署在公有云，这种方式比较合适。用Deployment部署ingress-controller，创建一个type为LoadBalancer的service关联这组pod。大部分公有云，都会为LoadBalancer的service自动创建一个负载均衡器，通常还绑定了公网地址。只要把域名解析指向该地址，就实现了集群服务的对外暴露。
+2. Deployment+NodePort模式的Service
+	同样用deployment模式部署ingress-controller，并创建对应的服务，但是type为NodePort。这样，ingress就会暴露在集群节点ip的特定端口上。由于nodeport暴露的端口是随机端口，一般会在前面再搭建一套负载均衡器来转发请求。该方式一般用于宿主机是相对固定的环境ip地址不变的场景。NodePort方式暴露ingress虽然简单方便，但是NodePort多了一层NAT，在请求量级很大时可能对性能会有一定影响。
+3. DaemonSet+HostNetwork+nodeSelector
+	用DaemonSet结合nodeselector来部署ingress-controller到特定的node上，然后使用HostNetwork直接把该pod与宿主机node的网络打通，直接使用宿主机的80/433端口就能访问服务。这时，ingress-controller所在的node机器就很类似传统架构的边缘节点，比如机房入口的nginx服务器。该方式整个请求链路最简单，性能相对NodePort模式更好。缺点是由于直接利用宿主机节点的网络和端口，一个node只能部署一个ingress-controller pod。比较适合大并发的生产环境使用。
+-------------------------------------------------
+第一范式(1NF)的目标是去除实体中的重复分组和非原子数据。当且仅当数据表的所有列只包含原子值时，即满足第一范式。要想使数据模型符合1NF，必须将重复的分组分裂成单个实体以消除分组。换句话说，在单个实体中不要使用多个属性来存储相似的数据。
+第二范式(2NF)确保每个实体的所有属性都依赖主码。将1NF转换成2NF，要为那些适用于多条记录的属性创建单独的实体，并为该新实体分配外码使之与原来的实体相关。简单来说，实体实例不应依赖实体主码以外的任何东西。第二范式确保每个实体的所有属性都是依赖的。当且仅当满足第一范式，并且每一个非主属性都完全依赖主码时，即满足第二范式。
+第三范式(3NF)确保实体的属性间不存在关联，该实体内的每一个属性都只依赖主码。对于满足第三范式的数据模型：每个属性都依赖码，唯一的码，除了码就没有别的了。第三范式确保实体的属性间不存在关联。当且仅当满足第二范式且每一个非主属性既不依赖码也不传递依赖码时，即满足第三范式。一种检测是否违背3NF的经验法则是：查看所有的属性是否适用于不止一个实体实例。如果有这样的属性，将它们转移到单独的实体。
+BC范式BCNF是修正的3NF。当且仅当每一个决定因素都是候选码，即满足BCNF。大多数满足3NF的实体都满足BCNF。
+第四范式(4NF)指出如果"一对多"的属性彼此独立，就没有任何实体可以有超过一个"一对多"的关联。当且仅当满足3NF且没有多个多值依赖时，即满足4NF。
+第五范式(5NF)指出实体的每一个连接依赖必须是候选码的结果。决定因素可以是任何属性值，它能够决定实体实例中其他属性值。
+-------------------------------------------------
+Kafka源码:
+RecordAccumulator
+RecordAccumulator#append
+ProducerBatch
+RecordAppendResult
+FutureRecordMetadat
+ProducerBatch#tryAppend
+ConcurrentMap<TopicPartition, Deque< ProducerBatch>> batches;
+Sender:
+	private final KafkaClient client;
+	private final RecordAccumulator accumulator;
+	private final Metadata metadata;
+	private final boolean guaranteeMessageOrder;
+	private final int maxRequestSize;
+	private final short acks;
+	private final int retries;
+	private final Time time;
+	private volatile boolean running;
+	private volatile boolean forceClose;
+	private final SenderMetrics sensors;
+	private final int requestTimeoutMs;
+	private final long retryBackoffMs;
+	private final ApiVersions apiVersions;
+	private final TransactionManager transactionManager;
+	private final Map<TopicPartion, List<ProducerBatch>> inFlightBatches;
+-------------------------------------------------
+mongod在不同的部署方案中(单机部署，副本集部署，分片集部署)，通过不同的配置，可以扮演不同的角色。
+
+控制器管理pod的几种方式：
+	1. Deployment:无状态部署，例如web,微服务, API；
+	2. StatefulSet:有状态部署，例如数据库，ZK, etcd；
+	3. DaemonSet: 守护进程部署，例如监控Agent, 日志Agent；
+	4. Job&CronJob: 批处理，例如数据库备份，邮件通知。
+
+docker inspect: 获取容器/镜像的元数据
+docker inspect -f='{{.NetworkSettings.IPAddress}}' <containerID>  #获取容器的IP
+
+Netty是一个提供异步的、事件驱动的网络应用程序框架和工具，用以快速开发高性能、高可靠性的网络服务器和客户端程序。
+Netty特性：
+	1. 设计
+		- 统一的API，适用于不同的协议(阻塞和非阻塞)；
+		- 基于灵活、可扩展的事件驱动模型(SEDA);
+		- 高度可定制的线程模型；
+		- 可靠的无连接数据Socket支持(UDP)
+	2. 性能
+		- 更好的吞吐量，低延迟；
+		- 更节省资源；
+		- 尽量减少不必要的内存拷贝；
+	3. 安全：完整的SSL/TLS和STATTLS的支持；
+	4. 易用
+		- 完善的Java Doc，用户指南和样例；
+		- 仅依赖JDK1.6(Netty4.x)
+Netty主要组件：
+	1. BootStrap和ServerBootStrap:Netty服务端和客户端启动类；(对应NIO中的Selector, ServerSocketChannel等的创建、配置、注册、启动等)；
+	2. ByteBuf:对应于NIO中的ByteBuffer，对NIO Buffer进行了优化和封装；
+	3. Transport Channel：Netty处理客户端和服务端之间的连接通道，对应NIO中的Channel；
+	4. ChannelHandler和ChannelPipeline: 实现协议编解码以及业务物理。对应NIO中的客户逻辑实现handleRead/handleWrite。
+
+Netty服务端创建流程：
+	1. 创建ServerBootstrap;
+	2. 设置并绑定Reactor线程池:EventLoopGroup;
+	3. 设置并绑定服务端Channel：NioServerSocketChannel；
+	4. TCP连接建立时，创建ChannelPipeline;
+	5. 添加并设置ChannelHandler；
+	6. 绑定监听端口并启动服务端；
+	7. select()轮询操作；
+	8. IO读写网络事件通知；
+	9.ChannelHandler的调度和执行。
+Netty Server的执行流程：
+	1. bossGroup中的NioEvnetLoop不断轮询NioServerSocketChannel上是否有新的客户端请求，如果有client发起连接CONNECT请求，ACCEPT事件触发；
+	2. ACCEPT事件触发后，bossGroup中NioEventLoop会通过NioServerSocketChannel获取到对应的客户端的NioSocketChannel，并将其注册到workGroup的NioEventLoop上(一个NioEventLoop可以管理多个客户端NioSocketChannel)。
+	3. workGroup中的NioEventLoop不断检测自己管理的NioSocketChannel是否有读写事件准备就绪，如果有的话，调用对应的ChannelHandler进行处理。
+Netty中的Channel的类层次：
+- Channel 
+	- AbstractChannel
+		- NioSocketChannel
+		- NioServerSocketChannel 
+		- NioDatagramChannel
+		- LocalChannel
+		- EmbeddedChannel
+		- OioSocketChannel
+		- OioServerSocketChannel
+		- OioDatagramChannel
+		- LocalServerChannel
+Netty ChannelHandler:业务处理核心逻辑，用户自定义。
+Netty提供了两个重要的ChannelHandler子接口：
+	- ChannelInboundHandler:处理进站数据和所有状态更改事件；
+	- ChannelOutboundHandler:处理出站数据，允许拦截各种操作；
+ChannelInboundHandlerAdapter
+ChannelHandlerContext
+ChannelFutureListener
+ChannelFuture 
+SimpleChannelInboundHandler
+在Netty中每个Channel都会被分配一个EventLoop，一个EventLoop可以服务于多个Channel。每个EventLoop会占用一个Thread，同时这个Thread会处理EventLoop上面发生的所有IO操作和事件。
+ChannelPipeline为ChannelHandler链提供了容器，在Channel被创建的时候，会被Netty框架自动分配到ChannelPipeline上。
+ChannelPipeline保证ChannelHandler按照一定顺序处理事件，当事件触发以后，会将数据通过ChannelPipeline按照一定的顺序通过ChannelHandler。也就是，ChannelPipeline负责排队。ChannelPipeline也可以添加或者删除ChannelHandler，管理整个队列。
+ChannelPipeline和ChannelHandler，前者管理后者的排列顺序。那么它们之间的关联就由 ChannelHandlerContext来表示。每当有ChannelHandler添加到ChannelPipeline时，同时会创建 ChannelHandlerContext。ChannelHandlerContext的主要功能是管理ChannelHandler和ChannelPipeline的交互。
+Netty内存池管理以Allocate对象的形式出现。一个Allocate对象由多个Arean组成，每个Arena能执行内存块的分配和回收。
+Arena内有三类管理单元：
+	- TinySubPage
+	- SmallSubPage
+	- ChunkList
+Tiny和Small符合Slab系统的管理策略，ChunkList符合伙伴系统的管理策略。
+当用户申请内存介于tinySize和smallSize之间时，从TinySubPage中获取内存块。申请内存介于smallSize和pageSize之间时，从SmallSubPage中获取内存块;介于pageSize和chunkSize之间时，从ChunkList 中获取内存;大于ChunkSize(不知道分配内存的大小)的内存块不通过池化分配。
+
+Gossip的特点(优势):
+	1. 扩展性：网络可以允许节点的任意增加和减少，新增加的节点的状态最终会与其他节点一致。
+	2. 容错：网络中任何节点的宕机和重启都不会影响Gossip消息的传播，Gossip协议具有天然的分布式系统容错性；
+	3. 去中心化：Gossip协议不要求任何中心节点，所有节点都可以是对等的，任何一个节点无需知道整个网络状况，只要网络是连通的，任意一个节点都可以把消息散播到全网；
+	4. 一致性收敛：Gossip协议中的消息会以一传十、十传百的指数级速度在网络中快速传播，因此系统状态的不一致可以在很快的时间内收敛一致。消息传播速度达到了logN；
+	5. 简单：Gossip协议的过程极其简单，实现起来几乎没有太多复杂性。
+Gossip协议的缺陷：
+	1. 消息的延迟：由于Gossip协议中，节点只会随机向少数几个节点发送消息，消息最终是通过多个轮次的散播而到达全网的，因此使用Gossip协议会造成不可避免的消息延迟。不适合用在对实时性要求较高的场景下。
+	2. 消息容易：Gossip协议规定，节点会定期随机选择周围节点发送消息，而收到消息的节点会重复该步骤，因此就不可避免的存在消息重复发送给同一个节点的情况，造成了消息的冗余，同时也增加了收到消息的节点的处理压力。而且，由于是定期发送而且不反馈，因此，即使节点收到了消息，还是会重复收到重复消息，加重了消息的冗余。
+Gossip有两种类型：
+	1. Anti-Entropy(反熵): 以固定的概率传播所有的数据；
+	2. Rumor-Mongering(谣言传播): 仅传播新到达的数据。
+
+排查高CPU占用的一般思路：通过jstack多次（>5次）打印线程栈，一般可以定位到消耗CPU较多的线程堆
+栈。或者通过Profiling的方式（基于事件采样或者埋点），得到应用在一段时间内的on-CPU火焰图，也能较快定位问题。
+还有一种可能的情况，此时应用存在频繁的GC（包括Young GC、Old GC、Full GC），这也会导致CPU利用率
+和负载都升高。排查思路：使用jstat -gcutil持续输出当前应用的GC统计次数和时间。频繁GC导致的负载升高，一般还伴随着可用内存不足，可用free或者top等命令查看下当前机器的可用内存大小。
+CPU利用率高，也有可能是CPU本身性能瓶颈导致的，可以进一步通过vmstat查看详细的CPU利用率。用户态CPU利用率(us)较高，说明用户态进程占用了较多的CPU，如果这个值大于50%，应该着重排查应用本身的性能问题。内核态CPU利用率(sy)较高，说明内核态占用了较多的CPU，所以应该着重排查内核线程或者系统调用的性能问题。如果us+sy的值大于80%，说明CPU可能不足。
+-------------------------------------------
+CPU上下文切换次数变高：
+先用vmstat查看系统的上下文切换次数，然后通过pidstat查看进程的自愿上下文切换(cswch)和非自愿上下文切换(nvcswch)情况。自愿上下文切换，是因为应用内部线程状态发生切换所致，比如调用sleep(),join(),wait()等方法，或使用了Lock或synchronized锁结构；非自愿上下文切换，是因为线程由于被分配的时间片用完或由于执行优先级被调度器调度所致。
+如果自愿上下文切换次数较高，意味着CPU存在资源获取等待，比如，IO，内存等系统资源不足等。如果是非自愿上下文切换次数较高，可能的原因是应用内线程数过多，导致CPU时间片竞争激烈，频频被系统强制调度，此时可以结合jstack统计的线程数和线程状态分布加以佐证。
+
+常见内存溢出种类及分析思路如下：
+1. java.lang.OutOfMemoryError: Java heap space。原因：堆中（新生代和老年代）无法继续分配对象了、某些对象的引用长期被持有没有被释放，垃圾回收器无法回收、使用了大量的Finalizer对象，这些对象并不在GC的回收周期内等。一般堆溢出都是由于内存泄漏引起的，如果确认没有内存泄漏，可以适当通过增大堆内存。
+2. java.lang.OutOfMemoryError：GC overhead limit exceeded。原因：垃圾回收器超过98%的时间用来垃圾回收，但回收不到2%的堆内存，一般是因为存在内存泄漏或堆空间过小。
+3. java.lang.OutOfMemoryError: Metaspace或java.lang.OutOfMemoryError: PermGen space。排查思路：检查是否有动态的类加载但没有及时卸载，是否有大量的字符串常量池化，永久代/元空间是否设置过小等。
+4. java.lang.OutOfMemoryError : unable to create new native Thread。原因：虚拟机在拓展栈空间时，无法申请到足够的内存空间。可适当降低每个线程栈的大小以及应用整体的线程个数。此外，系统里总体的进程/线程创建总数也受到系统空闲内存和操作系统的限制，请仔细检查。注：这种栈溢出，和StackOverflowError不同，后者是由于方法调用层次太深，分配的栈内存不够新建栈帧导致。
+此外，还有Swap分区溢出、本地方法栈溢出、数组分配溢出等OutOfMemoryError类型。
+
+此外，通过配置GC参数，可以帮助我们获取很多GC调优所需的关键信息，如配置-XX:+PrintGCApplicationStoppedTime -XX:+PrintSafepointStatistics -XX:+PrintTenuringDistribution，分别可以获取GC Pause分布、安全点耗时
+统计、对象晋升年龄分布的信息，加上-XX:+PrintFlagsFinal可以让我们了解最终生效的GC参数。
+
+磁盘I/O问题排查思路：
+	1. 使用工具输出磁盘相关的输出的指标，常用的有%wa（iowait）、%util，根据输判断磁盘I/O是否存在异常，譬如 %util 这个指标较高，说明有较重的I/O行为；
+	2. 使用pidstat定位到具体进程，关注下读或写的数据大小和速率；
+	3. 使用lsof+进程号，可查看该异常进程打开的文件列表（含目录、块设备、动态库、网络套接字等），结合业务代码，一般可定位到I/O的来源，如果需要具体分析，还可以使用perf等工具进行trace定位I/O源头。
+需要注意的是，%wa（iowait）的升高不代表一定意味着磁盘I/O存在瓶颈，这是数值代表CPU上I/O操作的时间占用的百分比，如果应用进程的在这段时间内的主要活动就是I/O，那么也是正常的。
+
+火焰图生成:需要安装perf、perf-map-agent、FlameGraph这三个项目
+------------------------------------------------
+在自旋锁中的三种常见形式：TicketLock, CLHLock, MCSLock(还有一种Native lock)
+
+NativeLock:最简单的想法是，搞一个volatile类型的共享变量flag，值可以是flase（无锁）或者true（有锁），竞争线程监听flag，一旦发现flag为false，那么尝试cas更新flag为true，更新成功则说明占有了这个锁，更新失败说明临界区已经被其他线程占领，继续监听flag并尝试更新。占有锁的线程退出的时候，将flag修改为false，表示释放锁。
+NativeLock的缺点：无法保证公平性，某些线程可能轮询很长时间也拿不到锁，无法做到按竞争线程顺序的次序占用锁。
+
+TicketLock：为了提供公平，提出了TicketLock。线程想要竞争某个锁，需要先领一个ticket，然后监听flag,发现flag被更新为自己的ticket值了，才去占用锁。
+TicketLock存在问题：没有了公平性的问题，但是所有的线程都在监听flag变量，而且由于为了保证flag变量的可见性，它必须是volatile。也就是说如果某个线程修改了flag，都会引起其他所有监听线程所在的CPU所对应的flag变量的cache line缓存行被设为invalide，那么这些线程下一次查询flag时，就必须从内存重新加载flag变量，由于主存带宽有限，这个开销较为昂贵(相比监听线程数成正比)。
+
+CLHLock:为了减少缓存一致性带来的开销，CLHLock被发明了。CLH是三个人名字首字母。CLHLock锁的核心思想是：1. 竞争线程排队；2. 监听变量拆分；CLH锁维护了一个链表waitingList的head和tail。
+CLHLock特点：极大的减少了缓存一致性协议带来的开销。CLH锁的变种被应用与JUC中的AbstractQueuedSynchronizer
+
+MCSLock:CLHLock锁并不是完美的，因为每个线程都是在前驱节点的locked字段上自旋，而在NUMA体系中，有可能多个线程工作在多个不同的socket上的core里。如果前驱节点的内存跟监听线程的Core距离过远，会有性能问题。于是MCSLock诞生了。MCS也是三个人首字母。MCHLock与CLHLock最大的不同在于：CLH是在前驱节点的locked域上自旋，MCSLock是在自己节点上的locked域上自旋。具体实现是：前驱节点释放锁之后，会主动将后继节点的locked域更新。也就是把多次对远端内存的监听+一次对本地内存的更新，简化成了多次对本队内存的监听+一次对远端内存的更新。
+
+Ticket Lock虽然解决了公平性的问题，但是多处理器系统上，每个进程/线程占用的处理器都在读写同一个变量serviceNum ，每次读写操作都必须在多个处理器缓存之间进行缓存同步，这会导致繁重的系统总线和内存的流量，大大降低系统整体的性能。下面介绍的CLH锁和MCS锁都是为了解决这个问题的，它们不再在一个全局变量上自旋，而是在自身本地变量上自旋。
+CLHLock锁是一种基于链表的可扩展、高性能、公平的自旋锁，申请线程只在本地变量上自旋，它不断轮询前驱的状态，如果发现前驱释放了锁就结束自旋。
+对于CLH锁实现如下：
+	1. 创建一个QNode，将其中的locked设置为true表示需要获取锁；
+	2. 线程对tail域调用getAndSet()，使自己成为队列的尾部，同时获取一个指向其前驱节点的引用pred;
+	3. 该线程就在前驱节点的locked字段上自旋，直到前驱节点释放锁；
+	4. 当一个线程需要释放锁时，将当前节点的locked域设置为false，同时回收前驱节点。
+CLHLock分析：CLH队列锁的优点是空间复杂度低(如果有n个线程，L个锁，每个线程每次只能获取一个锁，那么需要的存储空间是O(L+n))，CLH的变体应用到了AQS中。CLH在SMP系统结构下是非常有效的。但在NUMA系统结构下，每个线程有自己的内存，如果前驱节点的内存位置比较远，自旋判断前驱节点的locked域，性能将大打折扣，一种解决NUMA系统结构的思路是MCS队列锁。
+MCS与CLH最大的不同并不是链表是显式还是隐式，而是线程自旋的规则不同：CLH是在前驱节点的locked域上自旋等待，而MCS是在自己的节点的locked域上自旋等待。正因为如此，它解决了CLH在NUMA系统架构中获取locked域状态内存过远的问题。
+
+从代码上看，CLH要比MCS更简单，
+CLH的队列是隐式的队列，没有真实的后继结点属性。
+MCS的队列是显式的队列，有真实的后继结点属性。
+JUC ReentrantLock默认内部使用的锁 即是CLH锁（有很多改进的地方，将自旋锁换成了阻塞锁等等）。
+------------------------------------------------
+BeanClassLoaderAware;
+AnnotatedBeanDefinition;
+BeanDefinition;
+BeanDefinitionHolder;
+AbstractBeanDefintion;
+BeanDefinitionBuilder;
+BeanDefinitionReaderUtils;
+BeanDefinitionRegistry;
+ConfigurableApplicationContext;
+ResourceLoaderAware;
+ClassPathScanningCandidateComponentProvider;
+ImportBeanDefinitionRegistry;
+AnnotationAttributes;
+ResourceLoader;
+AnnotationMetadata;
+ClassMetadata;
+MetadataReader;
+MetadataReaderFactory;
+AbstractClassTestingTypeFilter;
+AnnotationTypeFilter;
+TypeFilter;
+
+FMEA:失效模式与影响分析即"潜在失效模式及后果分析"。FMEA是在产品设计和过程设计阶段，对构成产品的子系统、零件，对构成过程的各个工序逐一分析，找出所有潜在的失效模式，并分析其可能的后果，从而预先采取必要的措施，以提高产品的质量和可靠性的一种系统化的活动。
+
+Zuul:当路由数据变化后，不需要手动刷新路由，只需要给Zuul发送一个RoutesRefreshedEvent(实际上继承了Spring的ApplicationEvent)事件即可，Zuul自己有个ZuulRefreshListender会监听事件然后刷新路由。(实际上使用了Spring的事件机制)
+--------------------------------------------------
+-XX:+UseParallelGC:选择垃圾收集器为并行收集器。此配置只对年轻代有效。可以同时并行多个垃圾收集线程，但此时用户线程必须停止。
+-XX:+UseParNewGC:设置年轻代为多线程收集。可与CMS同时使用。在Serial基础上实现的多线程收集器。
+-XX:+UseParallelGC:指定在新生代使用parallel collector并行收集，暂停应用线程，同时启动多个垃圾收集线程，不能和CMS一起使用。系统吞吐量优先，但是会有较长时间的STW，后台任务可以使用此GC。
+-XX:+UseParNewGC:指定在新生代使用paralle GC，是UseParallelGC的升级版本，有更好的性能或优点，可以和CMS一起使用。
+--------------------------------------------------
+-XX:ReservedCodeCacheSize=32m
+-XX:ThreadStackSize=
+新生代收集器：
+Serial收集器：是新生代的单线程的GC，进行GC时，停掉所有用户线程，直至回收结束，STW。但是单线程简单高效，没有线程交互的开销，常被运行在client模式下的默认新生代收集器。
+ParNew:并行收集器，是Serial收集器的多线程版本，是Server模式下首选的新生代收集器。
+ParallelScavenge:新生代收集器，多线程，并行收集。与之前的收集器的目标不同：达到一个可控制的吞吐量。吞吐量=用户代码时间/CPU总运行时间。用于精确控制吞吐量的参数：1. 控制最大垃圾收集停顿时间参数-XX:MaxGCPauseMillis；2. 之间设置吞吐量大小的参数-XX:GCTimeRatio。ParallelScavenge收集器与ParNew收集器的重要区别：垃圾自适应调节策略。
+
+[GC[PSYongGen:表示年轻代使用Parallel Scavenge收集器
+[GC[ParNew: 表示年轻代使用ParNew收集器
+[GC[DefNew: 表示年轻代使用Serial收集器
+[GC[PSOldGen：表示老年代使用Paralle Old收集器
+
+1.跟踪类的加载和卸载：
+-XX:+TraceClassLoading:跟踪类的加载
+-XX:+TraceClassUnloading:跟踪类的卸载
+-verbose:class:等于-XX:+TraceClassLoading和-XX:+TraceClassUnloading两个功能。
+2. 查看系统内类的分布情况
+	1. 可以加上-XX:+PrintClassHistogram
+	2. jmap -histo <pid>
+3. 系统参数查看: -XX:+PrintCommandLineFlags打印传递给虚拟机的显式和隐式参数。
+
+-XX:+PrintTenuringDistribution:指定JVM在每次新生代GC时，输出幸存区中对象的年龄分布。
+
+K8S集群节点失效服务反向代理(kube-proxy)的方法，目前主要有三种：userspace, iptables以及ipvs。
+
+public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
+	implements BeanFactoryAware, InitializingBean {
+	// MethodFilter that matches @InitBinder methods.
+	public static final MethodFilter INIT_BINDER_METHODS = method ->
+		AnnotatedElementUtils.hasAnnotation(method, InitBinder.class);
+	
+	public static final MethodFilter MODEL_ATTRIBUTE_METHODS = method ->
+		(!AnnotatedElementUtils.hasAnnotation(method, RequestMapping.class) && 
+			AnnotatedElementUtils.hasAnnotation(method, ModelAttribute.class));
+	
+	@Nullable
+	private List<HandlerMethodArgumentResolver> customArgumentResolvers;
+	@Nullable 
+	private HandlerMethodArgumentResolverComposite argumentResolvers;
+	@Nullable 
+	private HandlerMethodArgumentResolverComposite initBinderArgumentResolvers;
+	@Nullable 
+	private List<HandlerMethodReturnValueHandler> customerReturnValueHandlers;
+	@Nullable 
+	private HandlerMethodReturnValueHandlerComposite returnValueHandlers;
+	
+	@Nullable 
+	private List<ModelAndViewResolver> modelAndViewResolvers;
+	private ContentNegotiationManager contentNegotiationManager = new ContentNegotiationManager();
+	private List<HttpMessageConverter<?>> messageConverters;
+	private List<Object> requestResponseBodyAdvice = new ArrayList<>();
+	@Nullable 
+	private WebBindingInitializer webBindingInitializer;
+	private AsyncTaskExecutor taskExecutor = new SimpleAsyncTaskExecutor("MvcAsync");
+	@Nullable 
+	private long asyncRequestTimeout;
+	private CallableProcessingInterceptor[] callableInterceptors = new CallableProcessingInterceptor[0];
+	private DeferredResultProcessingInterceptor[] deferredResultInterceptors 
+		= new DeferredResultProcessingInterceptor[0];
+	private ReactiveAdapterRegistry reactiveAdapterRegistry = ReactiveAdapterRegistry.getSharedInstance();
+	private boolean ignoreDefaultModelOnRedirect = false;
+	private int cacheSecondsForSessionAtrributeHandlers = 0;
+	private boolean synchronizeOnSession = false;
+	private SessionAttributeStore sessionAttributeStore = new DefaultSessionAttributeStore();
+	private ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
+	@Nullable
+	private ConfigurableBeanFactory beanFactory;
+	
+	private final Map<Class<?>, SessionAttributesHandler> sessionAttributesHandlerCache = new ConcurrentHashMap<>(64);
+	private final Map<Class<?>, Set<Method>> initBinderCache = new ConcurrentHashMap<>(64);
+	private final Map<ControllerAdviceBean, Set<Method>> initBinderAdviceCache = new LinkedHashMap<>();
+	private final Map<Class<?>, Set<Method>> modelAttributeCache = new ConcurrentHashMap<>(64);
+	private final Map<ControllerAdviceBean, Set<Method>> modelAttributeAdviceCache = new LinkedHashMap<>();
+	...
+}
+
+//Strategy interface that specifies a converter that can convert from and to HTTP requests and responses.
+public interface HttpMessageConverter<T> {
+	boolean canRead(Class<?> clazz, @Nullable MediaType mediaType);
+	boolean canWrite(Class<?> clazz, @Nullable MediaType mediaType);
+	List<MediaType> getSupportedMediaTypes();
+	T read(Class<? extends T> clazz, HttpInputMessage inputMessage) throws IOException,
+				HttpMessageNotReadableException;
+	void write(T t, @Nullable MediaType contentType, HttpOutputMessage outputMessage)
+		throws IOException, HttpMessageNotWritableException;
+}
+
+/*A base class for resolving method argument values by reading from the body of 
+	a request with #HttpMessageConverter
+*/
+public abstract class AbstractMessageConverterMethodArgumentResolver 
+	implements HandlerMethodArgumentResolver {
+	private static final Set<HttpMethod> SUPPORTED_METHODS =
+		EnumSet.of(HttpMethod.POST, HttpMethod.PUT, HttpMethod.PATCH);
+	private static final Object NO_VALUE = new Object();
+	protected final Log logger = LogFactory.getLog(getClass());
+	protected final List<HttpMessageConverter<?>> messageConverters;
+	protected final List<MediaType> allSupportedMediaTypes;
+	private final RequestResponseBodyAdviceChain advice;
+	...
+}
+
+/* Extends #AbstractMessageConverterMethodArgumentResolver with the ability to handle method 
+	return values by writing to the response with #HttpMessageConverter.
+*/
+public abstract class AbstractMessageConverterMethodProcessor 
+			extends AbstractMessageConverterMethodArgumentResolver 
+			implements HandlerMethodReturnValueHandler {
+			implements HandlerMethodReturnValueHandler {
+
+	/* Extensions associated with the built-in message converters */
+	private static final Set<String> WHITELISTED_EXTENSIONS = new HashSet<>(Arrays.asList(
+			"txt", "text", "yml", "properties", "csv",
+			"json", "xml", "atom", "rss",
+			"png", "jpe", "jpeg", "jpg", "gif", "wbmp", "bmp"));
+
+	private static final Set<String> WHITELISTED_MEDIA_BASE_TYPES = new HashSet<>(
+			Arrays.asList("audio", "image", "video"));
+
+	private static final MediaType MEDIA_TYPE_APPLICATION = new MediaType("application");
+
+	private static final Type RESOURCE_REGION_LIST_TYPE =
+			new ParameterizedTypeReference<List<ResourceRegion>>() { }.getType();
+
+
+	private static final UrlPathHelper decodingUrlPathHelper = new UrlPathHelper();
+	private static final UrlPathHelper rawUrlPathHelper = new UrlPathHelper();
+
+	static {
+		rawUrlPathHelper.setRemoveSemicolonContent(false);
+		rawUrlPathHelper.setUrlDecode(false);
+	}
+
+
+	private final ContentNegotiationManager contentNegotiationManager;
+	private final PathExtensionContentNegotiationStrategy pathStrategy;
+	private final Set<String> safeExtensions = new HashSet<>();
+	...
+}
+
+/* Resolves method arguments annotated with @RequestBody and handles return values from 
+	methods annotated with @ResponseBody by reading and writing to the body of the request 
+	or response with an #HttpMessageConverter.
+	An @RequestBody method argument is also validated if it is annotated with @javax.validation.Valid. In case of validation failure, #MethodArgumentNotValidException 
+	is raised and results in an HTTP 400 response status code if 
+	#DefaultHandlerExceptionResolver is configured. 
+*/
+public class RequestResponseBodyMethodProcessor extends AbstractMessageConverterMethodProcessor {
+	...
+	/**
+	 * Complete constructor for resolving {@code @RequestBody} and handling
+	 * {@code @ResponseBody}.
+	 */
+	public RequestResponseBodyMethodProcessor(List<HttpMessageConverter<?>> converters,
+			@Nullable ContentNegotiationManager manager, @Nullable List<Object> requestResponseBodyAdvice) {
+
+		super(converters, manager, requestResponseBodyAdvice);
+	}
+
+
+	@Override
+	public boolean supportsParameter(MethodParameter parameter) {
+		return parameter.hasParameterAnnotation(RequestBody.class);
+	}
+
+	@Override
+	public boolean supportsReturnType(MethodParameter returnType) {
+		return (AnnotatedElementUtils.hasAnnotation(returnType.getContainingClass(), ResponseBody.class) ||
+				returnType.hasMethodAnnotation(ResponseBody.class));
+	}
+
+	/**
+	 * Throws MethodArgumentNotValidException if validation fails.
+	 * @throws HttpMessageNotReadableException if {@link RequestBody#required()}
+	 * is {@code true} and there is no body content or if there is no suitable
+	 * converter to read the content with.
+	 */
+	@Override
+	public Object resolveArgument(MethodParameter parameter, @Nullable ModelAndViewContainer mavContainer,
+			NativeWebRequest webRequest, @Nullable WebDataBinderFactory binderFactory) throws Exception {
+
+		parameter = parameter.nestedIfOptional();
+		Object arg = readWithMessageConverters(webRequest, parameter, parameter.getNestedGenericParameterType());
+		String name = Conventions.getVariableNameForParameter(parameter);
+
+		if (binderFactory != null) {
+			WebDataBinder binder = binderFactory.createBinder(webRequest, arg, name);
+			if (arg != null) {
+				validateIfApplicable(binder, parameter);
+				if (binder.getBindingResult().hasErrors() && isBindExceptionRequired(binder, parameter)) {
+					throw new MethodArgumentNotValidException(parameter, binder.getBindingResult());
+				}
+			}
+			if (mavContainer != null) {
+				mavContainer.addAttribute(BindingResult.MODEL_KEY_PREFIX + name, binder.getBindingResult());
+			}
+		}
+
+		return adaptArgumentIfNecessary(arg, parameter);
+	}
+
+	@Override
+	protected <T> Object readWithMessageConverters(NativeWebRequest webRequest, MethodParameter parameter,
+			Type paramType) throws IOException, HttpMediaTypeNotSupportedException, HttpMessageNotReadableException {
+
+		HttpServletRequest servletRequest = webRequest.getNativeRequest(HttpServletRequest.class);
+		Assert.state(servletRequest != null, "No HttpServletRequest");
+		ServletServerHttpRequest inputMessage = new ServletServerHttpRequest(servletRequest);
+
+		Object arg = readWithMessageConverters(inputMessage, parameter, paramType);
+		if (arg == null && checkRequired(parameter)) {
+			throw new HttpMessageNotReadableException("Required request body is missing: " +
+					parameter.getExecutable().toGenericString(), inputMessage);
+		}
+		return arg;
+	}
+
+	protected boolean checkRequired(MethodParameter parameter) {
+		RequestBody requestBody = parameter.getParameterAnnotation(RequestBody.class);
+		return (requestBody != null && requestBody.required() && !parameter.isOptional());
+	}
+
+	@Override
+	public void handleReturnValue(@Nullable Object returnValue, MethodParameter returnType,
+			ModelAndViewContainer mavContainer, NativeWebRequest webRequest)
+			throws IOException, HttpMediaTypeNotAcceptableException, HttpMessageNotWritableException {
+
+		mavContainer.setRequestHandled(true);
+		ServletServerHttpRequest inputMessage = createInputMessage(webRequest);
+		ServletServerHttpResponse outputMessage = createOutputMessage(webRequest);
+
+		// Try even with null return value. ResponseBodyAdvice could get involved.
+		writeWithMessageConverters(returnValue, returnType, inputMessage, outputMessage);
+	}
+}
+
+HandlerMethod -> InvocableHandlerMethod -> ServletInvocableHandlerMethod 

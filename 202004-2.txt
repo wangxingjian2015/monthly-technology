@@ -1,0 +1,359 @@
+
+年轻代优化算法：在实际运行中，由于Eden区总是会保存大量的新对象，所以HotSpot虚拟机为了加快此空间的内存分配，而使用"Bump-The-Pointer"和"TLAB(Thread-Local-Allocation-Buffers)"两种技术。
+Bump-The-Pointer：该技术的主要特点是跟踪在Eden区保存的最后一个对象，这个最后保存的对象一般会保存在Eden区的顶部，这样在每次创建新对象时只需要检查最后保存的对象后面是否有足够的空间就可以很快的判断出Eden区中是否还有剩余空间，这个做法可以极大的提高内存分配速度
+TLAB(Thread-Local-Allocation-Buffers):虽然Bump-The-Pointer算法可以提高内存的分配速度，但是这种做法并不适合多线程操作情况。所以又采用了TLAB算法将Eden区分为多个数据块，每个数据块分别使用Bump-The-Pointer技术进行对象保存与分配。
+
+@SuppressWarnings("serial")
+public class DispatchcerServlet extends FrameworkServlet {
+	...
+	@Override
+	protected void onRefresh(ApplicationContext context) {
+		initStrategies(context);
+	}
+	//Initialize the strategy objects that this servlet uses.
+	//May be overridden in subclasses in order to initialize further strategy objects.
+	protected void initStrategies(ApplicationContext context) {
+		initMultipartResolver(context);
+		initLocaleResolver(context);
+		initThemeResolver(context);
+		initHandlerMappings(context);
+		initHandlerAdapter(context);
+		initHandlerExceptionResolvers(context);
+		initRequestToViewNameTranslator(context);
+		initViewResolvers(context);
+		initFlashMapManager(context);
+	}
+	...
+}
+/**
+ * Default implementation of the {@link ParameterNameDiscoverer} strategy interface,
+ * using the Java 8 standard reflection mechanism (if available), and falling back
+ * to the ASM-based {@link LocalVariableTableParameterNameDiscoverer} for checking
+ * debug information in the class file.
+ *
+ * <p>If a Kotlin reflection implementation is present,
+ * {@link KotlinReflectionParameterNameDiscoverer} is added first in the list and used
+ * for Kotlin classes and interfaces. When compiling or running as a Graal native image,
+ * no {@link ParameterNameDiscoverer} is used.
+ *
+ * <p>Further discoverers may be added through {@link #addDiscoverer(ParameterNameDiscoverer)}.
+ */
+public class DefaultParameterNameDiscoverer extends PrioritizedParameterNameDiscoverer {
+
+	public DefaultParameterNameDiscoverer() {
+		if (!GraalDetector.inImageCode()) {
+			if (KotlinDetector.isKotlinReflectPresent()) {
+				addDiscoverer(new KotlinReflectionParameterNameDiscoverer());
+			}
+			addDiscoverer(new StandardReflectionParameterNameDiscoverer());
+			addDiscoverer(new LocalVariableTableParameterNameDiscoverer());
+		}
+	}
+
+}
+
+/**
+ * A controller method return value type for asynchronous request processing
+ * where the application can write directly to the response {@code OutputStream}
+ * without holding up the Servlet container thread.
+ *
+ * <p><strong>Note:</strong> when using this option it is highly recommended to
+ * configure explicitly the TaskExecutor used in Spring MVC for executing
+ * asynchronous requests. Both the MVC Java config and the MVC namespaces provide
+ * options to configure asynchronous handling. If not using those, an application
+ * can set the {@code taskExecutor} property of
+ * {@link org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter
+ * RequestMappingHandlerAdapter}.
+ *
+ * @author Rossen Stoyanchev
+ * @since 4.2
+ */
+@FunctionalInterface
+public interface StreamingResponseBody {
+	// A callback for writing to the response body.
+	void writeTo(OutputStream outputStream) throws IOException;
+}
+
+readWithMessageConverters:192, AbstractMessageConverterMethodArgumentResolver (org.springframework.web.servlet.mvc.method.annotation)
+readWithMessageConverters:150, RequestResponseBodyMethodProcessor (org.springframework.web.servlet.mvc.method.annotation)
+resolveArgument:128, RequestResponseBodyMethodProcessor (org.springframework.web.servlet.mvc.method.annotation)
+resolveArgument:121, HandlerMethodArgumentResolverComposite (org.springframework.web.method.support)
+getMethodArgumentValues:158, InvocableHandlerMethod (org.springframework.web.method.support)
+invokeForRequest:128, InvocableHandlerMethod (org.springframework.web.method.support)
+// 下面的调用栈重点关注，处理请求和返回值的分叉口就在这里
+invokeAndHandle:97, ServletInvocableHandlerMethod (org.springframework.web.servlet.mvc.method.annotation)
+invokeHandlerMethod:849, RequestMappingHandlerAdapter (org.springframework.web.servlet.mvc.method.annotation)
+handleInternal:760, RequestMappingHandlerAdapter (org.springframework.web.servlet.mvc.method.annotation)
+handle:85, AbstractHandlerMethodAdapter (org.springframework.web.servlet.mvc.method)
+doDispatch:967, DispatcherServlet (org.springframework.web.servlet)
+
+CopyOnWrtieArraySet使用CopyOnWriteArrayList来实现。
+public class CopyOnWriteArraySet<E> extends AbstractSet<E>
+        implements java.io.Serializable {
+    private final CopyOnWriteArrayList<E> al;
+    public CopyOnWriteArraySet() {
+        al = new CopyOnWriteArrayList<E>();
+    }
+	...
+}
+
+偏向锁在JDK6和JDK7里默认是启用的，但是它在应用程序启动几秒后才激活，可以使用JVM参数来关闭延迟:-XX:BiasedLockingStartupDelay=0。如果确定应用程序里的所有的锁通常情况下处于竞争状态，可以通过JVM参数关闭偏向锁，-XX:UseBiasedLocking=false，程序默认会进入轻量级锁状态。
+
+CMS的几个阶段：
+	1. initial-mark 初始标记（CMS的第一个STW阶段），标记GC Root直接引用的对象，GC Root直接引用的对象不多，所以很快。
+	2. concurrent-mark 并发标记阶段，由第一阶段标记过的对象出发，所有可达的对象都在本阶段标记。
+	3. concurrent-preclean 并发预清理阶段，也是一个并发执行的阶段。在本阶段，会查找前一阶段执行过程中,从新生代晋升或新分配或被更新的对象。通过并发地重新扫描这些对象，预清理阶段可以减少下一个stop-the-world重新标记阶段的工作量。
+	4. concurrent-abortable-preclean 并发可中止的预清理阶段。这个阶段其实跟上一个阶段做的东西一样，也是为了减少下一个STW重新标记阶段的工作量。增加这一阶段是为了让我们可以控制这个阶段的结束时机，比如扫描多长时间（默认5秒）或者Eden区使用占比达到期望比例（默认50%）就结束本阶段。
+	5. remark 重标记阶段（CMS的第二个STW阶段），暂停所有用户线程，从GC Root开始重新扫描整堆，标记存活的对象。需要注意的是，虽然CMS只回收老年代的垃圾对象，但是这个阶段依然需要扫描新生代，因为很多GC Root都在新生代，而这些GC Root指向的对象又在老年代，这称为“跨代引用”。
+	6. concurrent-sweep ，并发清理。
+	
+CMS初始标记：可以通过-XX:+CMSParallelInitialMarkEnabled开启该阶段的并行标记，使用多个线程进行标记，减少暂停时间。
+-XX:+CMSScavengeBeforeRemark 最终标记之前强制进行一个Minor GC
+
+/* Subinterface of #BeanPostProcessor that adds a before-instantiation callback,
+	and a callback after instantiation but before explicit properties are set or 
+	autowiring occurs.
+	Typically used to suppress default instantiation for specific target beans,
+	for example to create proxies with special TargetSources(pooling targets,
+	lazily initializing targets, etc), or to implement additional injection strategies
+	such as field injection.
+	NOTE: This interface is special purpose interface, mainly for internal use within 
+	the framework. It is recommended to implement the plain #BeanPostProcessor interface 
+	as far as possible, or to derive from #InstantiationAwareBeanPostProcessorAdapter 
+	in order to be shielded from extensions to this interface. 
+*/
+public interface InstantiationAwareBeanPostProcessor extends BeanPostProcessor {
+	@Nullable
+	default Object postProcessBeforeInstantiation(Class<?> beanClass, String beanName) 
+		throws BeansException {
+		return null;
+	}
+	default boolean postProcessAfterInstantiation(Object bean, String beanName) 
+		throws BeansException {
+		return true;
+	}
+	@Nullable 
+	default PropertyValues postProcessProperties(PropertyValues pvs, Object bean, String beanName)
+		throws BeansException {
+		return null;
+	}
+	@Deprecated
+	@Nullable
+	default PropertyValues postProcessPropertyValues(PropertyValues pvs, 
+		PropertyDescriptor[] pds, Object bean, String beanName) throws BeansException {
+		return pvs;
+	}
+}
+
+-verbose:jni Displays information about the use of native methods and other Java Native Interface(JNI) activity.
+
+通过添加-XX:+PrintJNIGCStalls可以打印进入临界区的线程信息。
+
+
+G1中提供了三种模式垃圾回收模式：young GC, mixed GC和full GC，在不同的条件下被触发。
+-XX:MaxGCPauseMillis(设置G1收集过程目标时间，默认值200ms)
+-XX:G1NewSizePerecnt(新生代最小值,默认值50%)
+-XX:G1MaxNewSizePercent(新生代最大值，默认值60%)
+在mixed GC中有一个阈值参数: -XX:InitiatingHeapOccupancyPercent, 当老年代占整个堆大小百分比达到该阈值时，会触发一次mixed GC。 
+
+Condition接口在JDK中只有两个实现，分别是AbstractQueuedSynchroinizer和AbstractQueuedLongSynchronizer中的ConditionObject。
+
+Condition解决了Object#wait(), Object#notify存在的两个问题:
+	1. 解决早唤醒问题:Condition可以通过Lock.newConditon()方法创建多个Condition实例，来实现不同类型/条件线程的等待/唤醒，所以只要使用合理，就不会存在通知到不应该通知的线程而导致的线程资源竞争和不必要的线程上下文。
+	2. Object.wait(long)是否为超时唤醒问题：Condition中提供了awaitUnitl(Date)方法，这个方法可以用于实现带超时时间限制的等待，其返回boolean值用来区分是等待超时还是被通知唤醒。true表示被通知唤醒，false表示等待超时唤醒。
+实际应用中推荐使用Condition来代替wait/notify。
+	
+ThreadPoolExecutor中的Worker继承AQS，获取锁的原因：
+	1. runWorker方法在执行一个task之前会获取该锁。
+	2. 中断空闲线程的interruptIdleWorkers方法，会获取该资源区别并没有在执行任务而是阻塞在getTask方法中。
+	3. interruptWorkers方法会调用Worker对象内部方法interruptIfStarted来设置线程的中断状态。通过getState()>=0来判断线程是启动的(初始值是-1, lock是1, unlock是0)。
+Redis4.0新增了2种淘汰策略：
+	1. allkeys-lfu: 根据最近不经常使用算法，淘汰所有key。
+	2. volatile-lfu: 根据最近不经常使用算法，淘汰带有有效期属性的key及其数据。
+---------------------------------------------------
+SparkConf
+JavaStreamingContext ssc = new JavaStreamingContext(conf, new Duration(1000));
+JavaSparkContext
+After JavaStreamingContext is defined, you have to do the following:
+	1. Define the input sources by creating input DStreams.
+	2. Define the streaming computations by applying transformation and output operations to DStreams.
+	3. Start receiving data dan processing it using streamingContext.start();
+	4. Wait for the processing to be stopped(manually or due to any error) using streamingContext.awaitTermination().
+	5. The processing can be manually stopped using streamingContext.stop().
+
+streamingContext.fileStream<keyClass, valueClass, InputFormatClass>(dataDirectory);
+streamingContext.textFileStream(dataDirectory);
+streamingContext.queueStream(queueOfRDDs)。
+
+Function2<List<Integer>, Optional<Integer>, Optional<Integer>> updateFunction =
+	(values, state) -> {
+		Integer newSum = ... //add the new values with previous running count to get the new count 
+		return Optional.of(newSum);
+	};
+JavaPairDStream<String, Integer> runningCounts = pairs.updateStateByKey(updateFunction);
+//Reduce last 30 seconds of data, every 10 seconds
+JavaPairDStream<String, Integer> windowedWordCounts = pairs.reduceByKeyAndWindow((i1, i2) -> i1 + i2, Durations.seconds(30), Durations.seconds(10));
+---------------------------------------------------
+jhat是jdk内置的工具之一，主要用来分析java堆，可以将堆中的对象以html的形式显示出来，包括对象的数量、大小等，并支持对象查询语言(Object Query Language)。
+
+MyBatis仅可以针对ParameterHandler,ResultSetHandler,StatementHandler,Executor这4种接口的插件，MyBatis使用JDK的动态代理，为需要拦截的接口生成代理对象以实现接口方法拦截功能，每当执行这4个接口对象的方法时，就会进入拦截方法，具体就是InvocationHandler的invoke()方法，当然只会拦截你指定需要拦截的方法。
+编写插件：实现MyBatis的Interceptor接口并复写intercept()方法，然后再给插件编写注解，指定要拦截哪个接口的哪些方法即可。最后，在配置文件配置编写的插件。
+
+Kafka有哪些情形会造成重复消费：
+	1. 在没有事务支持时，producer重试发送消息；
+	2. consumer先处理消息，后提交offset：处理消息后，出现异常，没有提交offset。
+	3. consumer自动提交offset，在max.poll.interval.ms时间内，有新的消费者加入/退出，导致consumer rebalance，新的消费者再次poll到已经消费过的数据。
+	4. consumer每次拉取的数据过大(max.partition.fetch.bytes)，导致消费时间大于session.timeout.ms，无法和broker保持心跳，导致broker认为退出，发生rebalance。
+
+11种行为型模式，除了模板方法模式和解释器模式是类行为型模式，其他的全部属于对象行为型模式。
+
+为什么TIME-WAIT状态需要等2*MSL之后才能返回CLOSED状态：
+	因为虽然双方都同意关闭连接了，而且挥手的4次报文都发送完毕，按理可以直接CLOSED状态，但是网络的不可靠性，无法保证最后发送的ACK报文一定被被动方收到，就是说对方处于LAST-ACK状态下的Socket可能会因为超时未收到ACK报文，而重发FIN报文，所以这个TIME-WAIT状态的作用是用来重发可能丢失的ACK报文。
+MySQL5.6对索引做了哪些优化:
+	1. MRR: Mulit-Range Read Optimization;
+	2. ICP: Index Condition Pushdown Optimization(索引下推)
+	3. 覆盖索引
+	4. BKA(Batched Key Access)
+	
+Netty中的零拷贝与操作系统层面上的零拷贝不完全一样，Netty的零拷贝完全是在用户态(Java层面)的，更多的是数据操作的优化。Netty的零拷贝主要体现在5方面：
+	1. Netty的接收和发送ByteBuf使用直接内存进行Socket读写，不需要进行字节缓冲区的二次拷贝。如果使用JVM的堆内存进行Socket读写，JVM会将堆内存Buffer拷贝一份到直接内存中，然后才写入Socket中。相比于使用直接内存，消息在发送过程中多了一次缓冲区的内存拷贝。
+	2. Netty的文件传输调用FileRegion包装的transferTo方法，可以直接将文件缓冲区的数据发送到目标Channel，避免通过循环while方式导致的内存拷贝问题。
+	3. Netty提供CompositeByteBuff类，可以将多个ByteBuf合并为一个逻辑上的ByteBuf，避免了各个ByteBuf之间的拷贝。
+	4. 通过wrap操作，可以将byte[]数组、ByteBuf、ByteBuffer等包装成一个Netty ByteBuf对象，进而避免拷贝操作。
+	5. ByteBuf支持slice操作，可以将ByteBuf分解为多个分享同一个存储区域的ByteBuf，避免内存的拷贝。
+
+Paralle Scavenge(-XX:+UseParallelGC)提供了两个参数用于精确控制吞吐量:
+1. -XX:MaxGCPauseMillis 设置垃圾收集的最大停顿时间
+2. -XX:GCTimeRatio 设置吞吐量大小 
+
+自适应目标设定(默认情况下，JVM会自动调整Young Gen与Tenured Gen的比例，Eden Space与Surivor的比例来达到性能目标)
+-XX:GCTimeLimit=****，花费在GC上的时间上限，默认是98，当超过上限时，会抛出OOM异常
+-XX:GCHeapFreeLimit=***,Heap空闲空间的最低比例下限，默认是2，当超过下限时，抛出OOM异常。
+GC的的处理优先级是MaxGCPauseMillis最高，GCTimeRatio次之，其他的空间大小设置优先级最低。
+
+-XX:UseGCOverheadLimit:
+Enable the use of a policy that limits the proportion of time spent by the JVM on GC before an OutofMemoryError exception is thrown. This option is enabled, by default and the paralle GC will throw an OutOfMemoryError if more than 98% of the total time is spent on garbage collection and less than 2% of the heap is recovered. When the heap is small, this feature can be used to prevent applications from running for long periods of time with little or no progress. To disable this option, specify -XX:-UseGCOverheadLimit. 	
+	
+InnoDB的非唯一索引的自增列(auto_increment)如果到达最大值后，后续再插入新记录，此列的值将一直保持最大值。
+InnoDB唯一索引(主键)的自增列,如果到最大值后，后续再插入新记录，将会报错(主键值冲突)。
+对于没有显式设置主键，也没有非空的唯一索引的，InnoDB添加的默认row_id为主键列，此row_id的自增是全局的计数器，用6个字节表示，如果到最大值后，会报错，不能插入数据。
+------------------------------------
+where条件可以分为三大类：Index Key(First Key, Last Key)，Index Filter以及Table Filter。
+SQL语句中的where条件，最终都会被提取到index key(first key & last key)，index filter和table filter之中。
+index first key,只是用来定位索引的起始范围，因此只在索引第一次search path(沿着索引B+树的根节点一直遍历，到索引正确的叶子节点位置)时使用，一次判断即可。
+
+index last key,用来定位索引的终止范围，因此对于起始范围之后读到的每一条索引记录，均需要判断是否超过了index last key的范围，若超过，则当前查询结束。
+
+index filter，用于过滤索引查询范围中不满足查询条件的记录，因此对于索引范围中的每一条记录。均需要与index filter进行对比，若不满足index filter则直接丢弃，继续读取索引下一条记录。
+
+table filter,则是最后一道where条件的防线，用于过滤通过前面索引的层层考验的记录，此时的记录已经满足了index first key与index last key构成的范围，并且满足index filter的条件，回表读取了完整的记录，判断完整记录是否满足table filter中的查询条件，若不满足，跳过。继续读取索引的下一条记录，若满足，则返回记录。
+
+MySQL5.6中引入的Index Condition Pushdown，工作在index filter。在MySQL5.6之前，并不区分index filter和table filter，统统将index first key与index last key范围内的索引记录，回表读取完整记录，然后返回MySQL server层进行过滤。而在MySQL5.6之后，index filter与table filter分离，index filter下降到InnoDB的索引层面进行过滤，减少了回表与返回MySQL Server层的记录交互开销，提高了SQL的执行效率。
+------------------------------------
+-XX:ConcGCThreads:早期JVM版本也叫-XX:ParallelCMSThreads定义并发CMS过程运行时的线程数。比如4意味着CMS周期的所有阶段以4个线程来执行。尽管更多的线程会加快CMS过程，但也会带来额外的同步开销。因此，对于特定的应用程序，应该通过测试来判断增加CMS线程数是否真的能够带来性能的提升。
+如果此标志没有设置，JVM会根据并行收集器中的-XX:ParalleGCThreads参数的值来计算出默认的并行CMS线程数。该公式是ConcGCThreads=(ParallelGCThreads + 3)/4。因此，对于CMS收集器，-XX:ParallelGCThreads不仅影响STW垃圾收集阶段，还影响并发阶段。
+总之，有不少方法配置CMS收集器的多线程执行。建议第一次运行CMS收集器时使用其默认设置, 然后根据需要调优再进行测试。只有在生产系统中测量(或类生产测试系统)发现应用程序的暂停时间的目标没有达到 , 可以通过这些标志应该进行GC调优。
+------------------------------------
+MySQL5.5之前，只支持一种表间关联方式，就是嵌套循环(Nested Loop)。如果关联表的数据量很大，则join关联的执行时机会很长。从MySQL5.5开始，通过引入BNL算法来优化嵌套执行。
+
+在MySQL实现中，Nested-Loop Join有3种实现：
+	1. Simple Nested-Loop Join: SNLJ，简单嵌套循环连接;
+	2. Index Nested-Loop Join: INLJ, 索引嵌套循环连接；
+	3. Block Nested-Loop Join: BNLJ，缓存块嵌套循环连接；
+-----------------------------------
+-XX:ParGCCardsPerStrideChunk=4096 ： The number of cards in each chunk of the parallel chunks used during card table scanning.
+
+发生YGC时，有一个特殊的GC Root，就是Old区中的对象，当Old Gen的对象引用了Young Gen的对象，那么对象是不能被回收的。
+要在old gen中找出所有引用了Young Gen的对象），怎么找呢？最暴力的办法就是遍历所有的old gen对象，显然这种方式效率很低下，在HotSpot实现中，提供了一种叫CardTable的数据结构，用来表示一块内存区域，一般是512字节，如果这块内存中有对象引用了young gen对象，那么就标识这个CardTable为Dirty的，这样在内存扫描时，只需要扫描标识为Dirty的内存区域中的对象即可，避免了全old gen的扫描，大大提升了扫描效率。
+在ParNew算法中，扫描Old Gen的CardTable由多个线程完成，其中ParGCCardsPerStrideChunk参数就是每个线程处理的CardTable数量，默认是256，意思是每个线程每次处理大小为256*512byte=128k的StridChunk，如果old gen大小4G，那么一共要处理4G/128K = 32K个StrideChunk，这么多的StrideChunk要分配给GC线程，假设有4个线程在并发执行，必然存在任务的调度和分配问题，影响到扫描效率。
+
+如果把这个参数调大，那么每个线程每次处理的StrideChunk也相应变大，总的StrideChunk个数相应的减少，GC线程在不同的StrideChunk切换次数也会减少。
+-----------------------------------
+/* One or more variables that together maintain a running #long value updated using a supplied function.
+When updates(method #accumulate) are contended across threads, the set of variables may grow dynamically 
+to reduce contention. Method #get(or equivalently, #longValue) returns the current value across the 
+variables maintaining updates. 
+This class is usually preferable to #AtomicLong when multiple threads update a common value that is used 
+for purposes such as collecting statistics, not for fine-grained synchronization control. Under low 
+update contention, the two classes have similar characteristics. But under high contention, expected 
+throughput of this class is significantly higher, at the expense of higher space consumption.
+The order of accumulation within or across threads is not guaranteed and cannot be depended upon, so 
+this class only applicable to functions for which the order of accumulation does not matter. The supplied 
+accumulator function should be side-effect-free, since it may be re-applied when attempted updates fail 
+due to contention among threads. The function is applied with the current value as its first argument, 
+and the given update as second argument. For example, to maintian a running maximum value, you could 
+supply #Long:max along with #Long.MIN_VALUE as the identity.
+Class #LongAdder provides analogs of the functionality of this class for the common special case 
+of maintaining counts and sums. The call new LongAdder() is equivalent to 
+new LongAccumulator((x,y) -> x + y, 0L).
+This class extends #Number, but does not define methods such as #equals, #hashCode and #compareTo 
+because instances are expected to be mutated, and so are not useful as collection keys. 
+*/
+public class LongAccumulator extends Striped64 implements Serializable {
+	private static final long serialVersionUID = **L;
+	private final LongBinaryOperator function;
+	private final long identity;
+	...
+}
+
+Batched Key Access:当被join的表能够使用索引时，就先排好序，然后再去检索被join的表。对这些行按照索引进行排序，因此减少了随机IO。如果被join的表上没有索引，则使用老版本的BNL(Blocked Nested-Loop Join)。
+
+MRR(Multi-Range Read):将随机IO转化为顺序IO以降低查询过程中IO开销的一种手段。
+MRR的使用过程：先通过二级索引取出满足条件的二级索引和主键放在缓冲区(大小由参数read_rnd_buffer_size控制)中，当该缓冲区满了之后，再通过主键进行排序，最后按照排序后的结果集取表中的数据。(由于此时表是顺序读取的，就将随机IO转换为顺序IO，多页记录可一次性读入或根据此次的主键范围分次读入，以减少IO操作，提高查询效率)。
+MRR的优点：
+	1. MRR使数据行按照索引元组顺序而不是随机访问；
+	2. MRR允许批量处理需要通过索引元组访问数据行的操作请求(如：范围索引扫描和连接属性索引等连接)。
+	
+为了减少第二次暂停的时间，开启并行remark:-XX:+CMSParallelRemarkEnabled. 如果remark还是很长的话，可以开启-XX:+CMSScavengeBeforeRemark选项，强制remark之前开始一次Minor GC，减少remark的暂停时间，但是在remark之后也将立即开始又一次Minor GC。 	
+	
+在初始化标记阶段，为了最大限度地减少STW的时间开销，可以使用: -XX:+CMSParallelInitialMarkEnabled开启初始标记过程中的并行化，进一步提升初始化标记效率。
+
+从应用逻辑架构角度来看架构：
+	1. 从架构的总原则的角度：尽可能简单(在当前场景下尽可能简单便于扩展和维护)，但是不能太简单(相对而言太过于简单可能在场景上有所遗漏)。
+	2. 从架构的目的角度来考虑：既要解决过去的问题，也要解决现在的问题，还能适度解决未来的我那天，这些问题既包括技术问题，更包含业务问题。
+	3. 从形态之二维的角度来考虑：架构就是横的问题和竖的问题。横就是分层，竖就是分区，横竖都有抽象的事情要做。
+	4. 从形态之三维的角度来考虑：架构是三维的，在x轴和y轴上有横竖的问题，在z轴上还有粒度的问题。
+	5. 从时间轴的角度来考虑：架构不是一成不变的，是随着业务的发展在不断变化的。
+
+public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor 
+		implements ScheduledExecutorService {
+	/* This class specializes ThreadPoolExecutor implements by 
+		1. Using a custom task type, ScheduledFutureTask for tasks, even those 
+		that don't require scheduling(i.e., those submitted using ExecutorService 
+		execute, not ScheduledExecutorService methods) which are treated as 
+		delayed tasks with a delay of zero.
+		2. Using a custom queue(DelayedWorkQueue), a variant of unbounded DelayQueue.
+		The lack of capacity constraint and the fact that corePoolSize and maximumPoolSize 
+		are effectively identical simplifies some execution mechanics(see delayedExecute) 
+		compared to ThreadPoolExecutor.
+		3. Supporting optional run-after-shutdown parameters, which leads to overrides of 
+		shutdown methods to remove and cancel tasks that should NOT be run after shutdown, 
+		as well as different recheck logic when task (re)submission overlaps with a shutdown.
+		4. Task decoration methods to allow interception and instrumentation, which are 
+		needed because subclasses cannot otherwise override submit methods to get this effect. 
+		These don't have any impact on pool control logic though.
+	*/
+	...
+	
+	/* Specialized delay queue. To mesh with TPE declarations, this class must be 
+		declared as a BlockingQueue<Runnable> event though it can only hold 
+		RunnableScheduledFutures.
+	*/
+	static class DelayedWorkQueue extends AbstractQueue<Runnable> 
+		implements BlockingQueue<Runnable> {
+		/* A DelayedWorkQueue is based on a heap-based data structure like 
+			those in DelayQueu and PriorityQueu, except that every ScheduledFutureTask 
+			also records its index into the heap array. This eliminates the need to find 
+			a task upon cancellation, greatly speeding up removal (down from O(n) to O(log n)), 
+			and reducing garbage retention that would otherwise occur by waiting for the element 
+			to rise to top before clearing. But because the queue may also hold RunnableScheduledFutures 
+			that are not ScheduledFutureTasks, we are not guaranteed to have such indices available, 
+			in which case we fall back to linear search. (We expect that most tasks will not be 
+			decorated, and that the faster cases will be much more common.)
+			All heap operations must record index changes -- mainly within siftUp and siftDown. 
+			Upon removal, a task's heapIndex is set to -1. Note that ScheduledFutureTasks can appear 
+			at most once in the queue (this need no be true for other kinds of tasks or work queue), 
+			so are uniquely identified by heapIndex.
+		*/
+	}
+}
