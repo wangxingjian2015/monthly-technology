@@ -1,0 +1,423 @@
+---------------------------------------------------------------
+JavaReceiverInputDStream<String> lines = ssc.socketTextStream(
+	<ip>, <port>, StorageLevels.MEMORY_AND_DISK_SER);
+---------------------------------------------
+binlog_cache_size:在事务过程中容纳二进制日志SQL语句的缓存大小。二进制日志缓存是服务器支持事务存储引擎并且服务器启用了二进制日志(-log-bin选项)的前提下为每个客户端分配的内存。注意，是每个client都可分配设置大小的binlog cache空间。如果系统中经常会出现多语句事务的话，可以尝试增加该值的大小，以获得更好的性能。可以通过两个状态变量判断当前的binlog_cache_size的状况: binlog_cache_use和binlog_cache_disk_use。
+max_binlog_cache_size:和binlog_cache_size对应，代表的是binlog能够使用的最大cache内存大小。当执行多语句事务时，max_binlog_cache_size如果不够大的话，会报出"Multi-statement transaction required more than 'max_binlog_cache_size' bytes of storage"的错误。
+max_binlog_size: binlog日志最大值，一般为512M或1G，但不能超过1G.该大小并不能严格控制binlog大小，尤其是当binlog比较靠近尾部但又遇到一个较大事务的时候，系统为了保证事务的完整性，不会切换日志，只能将该事务的所有SQL都记录到当前日志，直到该事务结束。
+sync_binlog：影响到binlog对MySQL所带来的性能损耗，还影响到MySQL数据的完整性。sync_binlog参数设置如下:
+sync_binlog=0:当事务提交之后，不做fsync，而让文件系统决定什么时候做同步，或者cache满了之后才同步到磁盘。
+sync_binlog=n:每当n次事务之后，将进行一次fsync磁盘同步将binlog_cache中的数据强制写磁盘。
+
+MySQL中系统默认的设置是sync_binlog=0，也就是不做任何强制性的磁盘刷新，性能最好，但是风险最大。因为一旦系统崩溃，在binlog_cache中的所有信息将会丢失。而当设置为1时，是最安全但是性能最差。因为当设置为1时，即使系统crash，也最多丢失binlog_cache中未完成的一个事务，对实际数据没有影响。对于高并发事务的系统来说，sync_binlog设置为0和1的写入性能差距会达到5倍甚至更多。
+
+在MySQL复制中，有8个参数可以控制需要复制或者需要忽略而不进行复制的数据库或者表，如下(前两个参数应用于master端，后面六个应用于slave端)：
+	1. Binlog_Do_DB: 设定哪些数据库(schema)需要记录binlog；
+	2. Binlog_Ignore_DB：设定哪些数据库（ Schema）不要记录Binlog；
+	3. Replicate_Do_DB：设定需要复制的数据库（ Schema），多个DB用逗号（ “ ,”）分隔；
+	4. Replicate_Ignore_DB：设定可以忽略的数据库（ Schema）；
+	5. Replicate_Do_Table：设定需要复制的Table；
+	6. Replicate_Ignore_Table：设定可以忽略的Table；
+	7. Replicate_Wild_Do_Table：功能同Replicate_Do_Table，但可以带通配符来进行设置；
+	8. Replicate_Wild_Ignore_Table：功能同Replicate_Ignore_Table，可带通配符设置；
+通过8个参数，可以按照实际需求，控制从master端到slave端的binlog量尽可能少，从而减少master到slave的网络流量，减少IO线程的IO量，还能较少SQL线程的解析与应用SQL的数量，最终达到改善slave上的数据延时问题。
+虽然前面两个参数和后面六个参数在功能上并没有非常直接的关系，但是对于优化MySQL的
+Replication来说都可以起到相似的功能。其主要区别如下：
+	- 如果在Master端设置前面两个参数，不仅仅会让Master端的Binlog记录所带来的IO量减少，还会让Master端的IO线程就可以减少Binlog的读取量，传递给Slave端的IO线程的Binlog量自然就会较少。这样做的好处是可以减少网络IO，减少Slave端IO线程的IO量，减少Slave端的SQL线程的工作量，从而最大幅度的优化复制性能。当然，在Master端设置也存在一定的弊端，因为MySQL的判断是否需要复制某个Event不是根据产生该Event的Query所更改的数据所在的DB，而是根据执行Query时刻所在的默认Schema，也就是我们登录时候指定的DB或者运行“ USE DATABASE” 中所指定的DB。只有当前默认DB和配置中所设定的DB完全吻合的时候 IO线程才会将该Event读取给Slave的IO线程。所以如果在系统中出现在默认DB和设定需要复制的DB不一样的情况下改变了需要复制的DB中某个Table的数据的时候，该Event是不会被复制到Slave中去的，这样就会造成Slave端的数据和Master的数据不一致的情况出现。同样，如果在默认Schema下更改了不需要复制的Schema中的数据，则会被复制到Slave端，当Slave端并没有该Schema的时候，则会造成复制出错而停止；
+	- 而如果是在Slave端设置后面的六个参数，在性能优化方面可能比在Master端要稍微逊色一点，因为不管是需要还是不需要复制的Event都被会被IO线程读取到Slave端，这样不仅仅增加了网络IO量，也给Slave端的IO线程增加了Relay Log的写入量。但是仍然可以减少Slave的SQL线程在Slave端的日志应用量。虽然性能方面稍有逊色，但是在Slave端设置复制过滤机制，可以保证不会出现因为默认Schema的问题而造成Slave和Master数据不一致或者复制出错的问题。
+---------------------------------------------
+log_slow_queries:ON
+long_query_time:1
+适度使用Query Cache：虽然Query Cache会存在一些负面影响，可以通过一定的手段在使用Query Cache的时候扬长避短，发挥其优势，并有效避免其劣势。
+	1. 根据Query Cache失效机制来判断哪些表适合使用Query哪些表不适合。由于Query Cache的失效主要是因为Query所依赖的Table的数据发生了变化，造成Query的Result Set可能已经有所改变而造成相关的Query Cache全部失效，那么我们就应该避免在查询变化频繁的Table的Query上使用，而应该在那些查询变化频率较小的Table的Query上面使用。MySQL中针对Query Cache有两个专用的SQL Hint: SQL_NO_CACHE和SQL_CACHE,分别代表强制不使用QueryCache和强制使用QueryCache。可以利用这两个SQL Hint，让MySQL知道哪些SQL使用Query Cache而哪些SQL就不要使用了。这样不仅可以让变化频繁Table的Query浪费Query Cache的内存，同时还可以减少Query Cache的检测量。
+	2. 对于那些变化非常小，大部分时候都是静态的数据，可以添加SQL_CACHE的SQL Hint，强制MySQL使用QueryCache，从而提高该表的查询性能。
+	3. 有些SQL的Result Set很大，如果使用Query Cache很容易造成Cache内存不足，或者将之前的老的Cache冲刷出去。对于这一类Query有两种方法可以解决：一是使用SQL_NO_CACHE参数来强制不使用QueryCache而每次都直接从实际数据中去查找，另一种方法是通过设定query_cache_limit参数来控制QueryCache中所Cache的最大ResultSet，系统默认为1M。当某个Query的Result Set大于query_cache_limit所设定的阈值，QueryCache是不会Cache这个Query的。
+
+query_cache_wlock_invalidate:针对于MyISAM存储引擎，设置当write lock在某个Table上面的时候，读请求是要等待write lock释放资源之后再查询还是允许直接从Query Cache中读取结果，默认false(直接从Query Cache中取得结果)。
+max_connections:整个MySQL允许的最大连接数
+max_user_connections:每个用户允许的最大连接数
+net_buffer_length:网络包传输中，传输信息之前的net buffer初始化大小;
+max_allowed_packet:在网络传输中，一次消息传输量的最大值；
+back_log:在MySQL的连接请求等待队列中允许存放的最大连接请求数；
+thread_cache_size:Thread Cache池中应该存放的连接线程数；
+thread_stack:每个连接线程被创建的时候，MySQL给他们分配的内存大小。
+
+/* Bootstrap listener to start up and shutdown Spring's root #WebApplicationContext.
+	Simply delegates to #ContextLoader as well as to #ContextCleanupListener.
+	As of Spring 3.1, #ContextLoaderListener supports injecting the root web application 
+	context via the #ContextLoaderListener(WebApplicationContext) constructor, allowing 
+	for programmatic configuration in Servlet 3.0+ environments.
+*/
+public class ContextLoaderListener extends ContextLoader implements ServletContextListener {
+	public ContextLoaderListener() {}
+	public ContextLoaderListener(WebApplicationContext context) {
+		super(context);
+	}
+	@Override
+	public void contextInitialized(ServletContextEvent event) {
+		initWebApplicationContext(event.getServletContext());
+	}
+	@Override 
+	public void contextDestroyed(ServletContextEvent event) {
+		closeWebApplicationContext(event.getServletContext());
+		ContextCleanupListener.cleanupAttributes(event.getServletContext());
+	}
+}
+
+public interface WebApplicationInitializer {
+	void onStartup(ServletContext servletContext) throws ServletException;
+}
+
+Java的SPI: javax.servlet.ServletContainerInitializer 
+
+@HandlesTypes(WebApplicationInitializer.class)
+public class SpringServletContainerInitializer implements ServletContainerInitializer {
+	@Override 
+	public void onStartup(@Nullable Set<Class<?>> webAppInitializerClasses, ServletContext servletContext)
+						throws ServletException {
+		List<WebApplicationInitializer> initializers = new LinkedList<>();
+
+		if (webAppInitializerClasses != null) {
+			for (Class<?> waiClass : webAppInitializerClasses) {
+				// Be defensive: Some servlet containers provide us with invalid classes,
+				// no matter what @HandlesTypes says...
+				if (!waiClass.isInterface() && !Modifier.isAbstract(waiClass.getModifiers()) &&
+						WebApplicationInitializer.class.isAssignableFrom(waiClass)) {
+					try {
+						initializers.add((WebApplicationInitializer)
+								ReflectionUtils.accessibleConstructor(waiClass).newInstance());
+					}
+					catch (Throwable ex) {
+						throw new ServletException("Failed to instantiate WebApplicationInitializer class", ex);
+					}
+				}
+			}
+		}
+
+		if (initializers.isEmpty()) {
+			servletContext.log("No Spring WebApplicationInitializer types detected on classpath");
+			return;
+		}
+
+		servletContext.log(initializers.size() + " Spring WebApplicationInitializers detected on classpath");
+		AnnotationAwareOrderComparator.sort(initializers);
+		for (WebApplicationInitializer initializer : initializers) {
+			initializer.onStartup(servletContext);
+		}
+	}
+}
+
+public class ContextLoader {
+	...
+}
+
+/* Registers #EventListener methods as individual #ApplicationListener instances.
+Implements #BeanFactoryPostProcessor primarily for early retrieval, avoiding AOP checks 
+for this processor bean and its #EventListenerFactory delegates. 
+*/
+public class EventListenerMethodProcessor 
+	implements SmartInitializingSingleton, ApplicationContextAware, BeanFactoryPostProcessor {
+	...
+}
+
+误操作执行了一个drop库SQL语句，如何完整恢复:
+	1. 停止主从复制，在主库上执行锁表并刷新binlog操作，接着恢复之前的全量备份文件(比如零点的全量备份文件).
+	2. 将零点的binlog文件与零点到故障期间的binlog文件合并并导出成sql语句：
+		mysqlbinlog --no-defaults mysql-bin.000011 mysql-bin.000012 > bin.sql
+	3. 将导出的sql语句中drop语句删除，恢复到数据库中
+		mysql -uroot -p123 < bin.sql 
+-Xbatch:Disable background compilation. By default, the JVM compiles the method as a background task, running the method in interpreter mode until the background compilation is finished. The -Xbatch flag disables background compilation so that compilation of all methods proceeds as a foreground task until completed.
+This option is equivalent to -XX:-BackgroundCompilation.
+
+-XX:+BackgroudCompilation:Enables background compilation. This option is enabled by default. To disable background compilation, specify -XX:-BackgroundCompilation (this is equivalent to specifying -Xbatch).
+---------------------------------
+架构推导逻辑
+自底向上和自顶向下的两种架构思考方式
+从几个角度描述应用逻辑架构：
+	1. 从架构的总原则的角度: 尽可能简单(在当前场景下要尽可能简单便于扩展和维护)，但是不能太简单(相对而言太过于简单可能在场景上有所遗漏)。
+	2. 从架构的目的角度来考虑：既要解决过去的问题，也要解决现在的问题，还能适度解决未来的问题，这些问题既包含技术问题，更包含业务问题。
+	3. 从二维的角度来考虑：架构就是横的问题和竖的问题。横就是分层，竖就是分区，横竖都有抽象的事情要做。
+	4. 从三维的角度来考虑：架构是三维的，在X轴和Y轴上有横竖的问题，在Z轴上还有粒度的问题。
+	5. 从时间轴的角度来考虑：架构不是一成不变的，是随着业务的发展在不断变化的。
+在ISO/IEC 42010:20072中对架构的定义: 
+	Architecture = Structure of Components + Relationships + Principles & Guidelines
+在架构中需要:
+	1. 职责明确的模块或者组件；
+	2. 组件直接的关联关系非常明确；
+	3. 需要有约束和指导原则；
+应用逻辑架构:软件设计本身，模块、粒度、职责、复用等等，在讲解软件设计的时候，使用应用逻辑架构，这个架构图是通过系统模型和业务概念架构推导而来。所以系统模型和应用逻辑架构都是用在软件设计阶段。
+应用逻辑架构包含的内容：阐述架构中各模块的职责：如系统模型，技术模块，技术模块的关系，技术模块的核心抽象，如何用设计模式来让架构符合软件设计原则等等。
+
+产品方的详细需求出来之后，首先和产品方讨论产品方案的合理性，在产品方案合理的基础上，开始识别用例，开始一系列软件工程领域方面的措施。
+软件研发分成了两个阶段:
+	1. 分析阶段：即常说的问题空间领域建模，关键的一步是业务概念模型的输出，而业务概念模型输出的前置条件是从需求中分解出合理的用例集合。
+	2. 设计阶段：即解决方案空间建模，以及应用逻辑架构。
+自底向上的推导过程：底层的模型是通过建模方法演绎出来，逻辑架构中的各个模块是通过归纳的方法推导出来。
+------------------------------------------------
+自顶向下和自底向上两个方法的区别：
+自顶向下推导的一个前置条件就是你需要知道猪长什么样，在架构上就是你需要知道这个架构的原来是是什么样子的，解决什么问题的。如果都不知道猪长什么样，那么就无从判断猪是不是适合当宠物了。此处需要有一定的业务领域理解力和领域经验（包含：客户的问题和痛点是什么，怎么分析出来的，当前的架构方案是什么，当前的架构方案是如何解决这个问题的，未来的架构方案如何更好的解决这个问题）。
+而自底向上推导则没有这个问题，因为是看着猪来做推导的，知道猪的细节，这个细节的特点如何演绎，如何归纳，最后得出结论。
+
+所以当不熟悉一个大的业务的时候，我们自顶向下推导架构的难度是极大的，几乎不能完成。不了解业务或技术情况时定义出来的问题也未必是一个被正确定义的问题，容易给人造成一个印象：瞎指挥。
+这个时候如何在没有知识背景的情况下快速落地就得自底向上的来推导架构。在自底向上的过程中慢慢熟悉业务。
+但是如果工作中每每都是纯粹的自底向上的推导架构，是无法帮助我们来做技术的前瞻性布局的，此时架构师的成长就遇到的瓶颈，所以此时又要使用自顶向下的架构推导方式。
+综上所述，不管是自底向上，还是自顶向下，都是架构师需要掌握的技能。
+---------------------------------
+应用逻辑架构来源于系统模型、数据模型、业务概念架构，还有流程。
+
+基本上应用逻辑架构的推导有4个子路径：
+	1. 业务概念架构：业务概念架构来自于业务概念模型和业务流程；
+	2. 系统模型：来自于业务概念模型；
+	3. 系统流程：来自业务流程；
+	4. 非功能性的系统支撑：来自对性能，稳定性，成本的需要。
+
+架构约束分成了基本约束和业务约束：
+	1. 逻辑架构基本约束：是软件工程领域常见的各种软件设计原则；
+	2. 逻辑架构的职责约束：是模块，子模块，模型的职责相关约束，尤其是核心的模型和核心主模块是在一定时间内是比较稳定的，所以此时对其定义它的约束范围有助于这段时间内研发效率。
+	3. 各种架构的非业务功能性约束，如稳定性、性能、成本等等。
+
+如何用设计模式来让模块间的集成符合软件设计原则，从而降低维护和扩展的成本。架构中的模块之间，模块和子模块，子模块和子模块要遵守软件设计的相关约束。如何遵守呢，领域建模和设计模式是两个具体的方法。
+
+即使不考虑模块之间边界和约束，光考虑模块内部的设计，软件设计原则和设计模式就已然是我们软件工程师的必修课。再加上模块之间的依赖或者边界更加需要软件设计原则和设计模式，那它们的地位就更加神圣不可替代。值得不断的深入学习，实践，思考和总结，这也是为设计逻辑架构打基础，架构师必修课。
+逻辑架构粒度树的3条原则：
+	1. 纵向上，任何一层次的模块的职责，都必须是下一层职责的概括；
+	2. 横向上，同一层次的模块职责属于同一范畴；
+	3. 横向上，同一层次的模块的边界清晰；
+public class ScheduledTheadPoolExecutor 
+	extends ThreadPoolExecutor
+	implements ScheduledExecutorService {
+	...
+	/* Specialized delay queue. To mesh with TPE declarations, this class 
+		must be declared as a BlockingQueue<Runable> even though 
+		it can only hold RunnableScheduledFutures.
+	*/
+	static class DelayedWorkQueue extends AbstractQueue<Runnable> 
+			implements BlockingQueue<Runnable> {
+		private static final int INITIAL_CAPACITY = 16;
+		private RunnableScheduledFuture<?>[] queue = 
+			new RunnableScheduledFuture<?>[INITIAL_CAPACITY];
+		private final ReentrantLock lock = new ReentrantLock();
+		private int size = 0;
+		private Thread leader = null;
+		private final Condition available = lock.newCondition();
+		
+	}
+	...
+}
+-------------------------------------
+相关性能指标:
+Eureka: 大概7000多实例，再多就报连接报错，网络IO也基本快满了(具体和机器指标有关)。
+Config: 大概600并发，因Config Server可横向扩展，瓶颈点在gitlab，在服务大量启动时，同时去gitlab拉取配置，因gitlab配置较低。
+zuul 1.0：4000到13000多，根据不同的并发和报文长度有关，还跟设置的filter有关和后端的响应时间有关。还和相关参数的优化
+单个微服务: 300-500多，和业务复杂度有关
+Cloud Gateway: 5000到接近20000，根据不同的并发和报文长度相关，以及设置Predict, Route有关，整体上比Zuul 1高一点。
+-------------------------------------
+Stream操作分类:
+	1. 中间操作: Intermediate operations
+		1.1 无状态 Stateless: unordered(), filter(), map(), mapToInt(), mapToLong(), mapToDouble(), flatMap(), flatMapToInt(), flatMapToLong(), flatMapToDouble(), peek()
+		1.2 有状态 Stateful: distinct(), sorted(), limit(), skip()
+	2. 结束操作: Terminal operations 
+		2.1 非短路操作: forEach(), forEachOrdered(), toArray(), reduce(), collect(), max(), min(), count()
+		2.2 短路操作 short-circuiting: anyMatch(), allMatch(), noneMatch(), findFirst(), findAny()
+------------------------------------------
+Stream实现原理:
+	1. 主要用于对应的各种工厂类
+		SliceOps, SortedOps, ReduceOps, Tripwire, DistinctOps, FindOps, ForEachOps, MatchOps, Collectors, Nodes, Streams, StreamSpliterators
+	2. 主要用于流的惰性求值实现
+		PipelineHelper, BaseStream, StreamShape, StreamOpFlag, StreamSupport, AbstractPipeline, LongStream, IntStream, Stream, DoubleStream, LongPipeline, IntPipeline, ReferencePipeline, DoublePipeline, 
+	3. 主要用于并行流的实现
+		ForJoinTask, CountedCompleter, ForEacheOrderedTask, ForEacheTask, AbstractTask, ReduceTask, AbstractShortCircuitTask, MatchTask, FindTask
+	4. 主要用于存储并行流计算的中间结果会尽量避免申请新的存储，减少元素的复制
+		Sink, Consumer, Node, SpinedBuffer, AbstractSpinedBuffer
+	5. 主要用于终结操作的实现
+		Collector, TerminalOp, Supplier, TerminalSink
+------------------------------------------
+JDK8中java.util.stream中的所有类：
+1. AbstractPipeline 
+2. AbstractShortCircuitTask 
+3. AbstractSpinedBuffer 
+4. AbstractTask 
+5. BaseStream 
+6. Collector 
+7. Collectors 
+8. DistinctOps 
+9. DoublePipeline 
+10. DoubleStream 
+11. FindOps 
+12. ForEachOps 
+13. IntPipeline 
+14. IntStream 
+15. LongPipeline 
+16. LongStream 
+17. MatchOps 
+18. Node 
+19. Nodes 
+20. PipelineHelper 
+21. ReduceOps 
+22. ReferencePipeline 
+23. Sink 
+24. SliceOps 
+25. SortedOps 
+26. SpinedBuffer 
+27. Stream 
+28. StreamOpFlag 
+29. Streams 
+30. StreamShape 
+31. StreamSpliterators 
+32. StreamSupport 
+33. TerminalOp 
+34. TerminalSink 
+35. Tripwire 
+
+数据库可扩展设计原则：设计一个良好的Scalability的数据库应用系统架构，需要遵循的原则：
+	1. 事务相关性最小化原则
+		第一:进行Scale Out设计的时候合理设计切分规则，尽可能保证事务所需数据在同一个MySQL Server上，避免分布式事务。
+		第二:大事务切分成小事务，数据库保证各个小事务的完整性，应用控制各个小事务之间的整体事务完整性。
+		第三：结合上述两种解决方案，整合各自的优势，避免各自的弊端。
+	2. 数据一致性原则；
+	3. 高可用及数据安全原则；
+
+在MyBatis中使用Criteria式条件查询
+--------------------------------------
+SparkSession spark = SparkSession()
+						.builder()
+						.appName("JavaWordCount")
+						.getOrCreate();
+JavaRDD<String> lines = spark.read().textFile(fileName).javaRDD();
+JavaRDD<String> words = lines.flatMap(l -> Arrays.asList(l.split(" ")).iterator());
+JavaPairRDD<String, Integer> ones = words.mapToPair(w -> new Tuple2<>(w, 1));
+JavaPairRDD<String, Integer> counts = ones.reduceByKey((i1, i2) -> i1 + i2);
+List<Tuple2<String, Integer>> output = counts.collect();
+for (Tuple2<?, ?> tuple : output) {
+	System.out.println(tuple._1() + ":" + tuple._2());
+}
+spark.stop();
+--------------------------------------
+Replication架构解决了:
+	1. 数据多点备份，提高数据可用性；
+	2. 读写分流，提高集群的并发能力(非负载均衡)；
+	3. 让一些非实时的数据操作，转移到slaves上进行；
+Replication架构简单，易于管理；Fabric是Replication模式的完善和补充，增加了自动Failover和sharding机制，以支撑更大规模的数据访问，减少人工干预；Cluster是一个全分布式架构，是面向大规模数据存储的解决方案。
+Replication支持两种模式:asynchonous(异步)和semi-synchronous(半同步)；synchronous复制只有Cluster才支持。
+
+GTID：Global Transaction Identifiers,全局事务性ID，每个事务都用一个ID标识，用于跟踪master和slavers上事务提交的进度，意味着在Failover时，slaves可以不需要向新的master传递自己已经执行的log的positions(binlog的offset)，只需要告知新的master自己已经执行的最后一条事务ID即可，极大的简化了failover、日志replication的复杂度。因为GTID完全基于事务，可以非常简单的判断master与slavers是否一致，只要slaves与master上的事务提交均按照相同的顺序提交，数据一致性是可以得到保证的，为了更加安全，建议使用Row based replication+GTID。
+在没有GTID时，slave需要告知master，其已经复制的binlog文件的offset；当使用GTID时，GTID就向binlog的主键索引一样，slave只需要交付GTID即可继续进行replication，在使用“CHANGE MASTER TO”命令做failover时也不要指定“MASTER_LOG_FILE”/“MASTER_LOG_POS”选项，而是直接在命令中使用“MASTER_AUTO_POSITION”选项即可，这对运维操作非常便捷。
+
+MySQL主从复制故障如何解决：首先根据show slave status;查看Last_Error列，确认具体的原因。然后具体情况具体解决。
+如果评估没有影响，可跳过当前出错的语句，如下步骤：
+stop slave;
+set global sql_slave_skip_counter=1;
+start slave;
+
+show master logs;可查看master的当前binlog的大小。
+
+Spark RDD的容错机制可以从两个方面：lineage和checkpoint。
+Lineage容错原理：
+	1. 在容错机制中，假设一个节点宕机/不可用，并且计算窄依赖。则仅仅要把丢失的父RDD分区重新计算就可以，不依赖于其他节点。而宽依赖要父RDD的全部分区都存在，计算相对昂贵。
+	2. 在窄依赖中，在子RDD的分区丢失、重算父RDD分区时，父RDD相应分区的全部数据都是子RDD分区的数据，并不存在冗余计算。在宽依赖情况下，丢失一个子RDD分区重算的每一个父RDD的每一个分区的全部数据并非都给丢失的子RDD用，会有一部分数据相当于未丢失的子RDD分区中需要的数据，这样就会产生冗余计算开销，这也是宽依赖开销更大的原因。因此假设使用Checkpoint算子来做检查点，不仅要考虑lineage是否足够长，也要考虑是否有宽依赖，对宽依赖加Checkpoint是比较值得的。
+
+RDD checkpoint读取流程：
+	1. 在做完checkpoint后，获取原来RDD的依赖以及partitions数据都将从CheckpointRDD中获取。也就是说获取原来RDD中每个partition数据以及partitioner等对象，都将转移到CheckpointRDD中。
+	2. 在CheckpointRDD的一个具体实现ReliableRDDCheckpointRDD中的compute方法中可以看到，将会从HDFS的checkpoint目录中恢复之前写入的partition数据。而partitioner对象(如果有)也会从之前写入HDFS的partitioner对象恢复。
+
+RDD的checkpoint与cache/persist的区别：
+	1. persist/cache与checkpoint的区别在于，前者持久化只是将数据保存在BlockManager中但是其lineage是不变的，但是后者checkpoint执行完后，RDD已经没有依赖RDD，只有一个CheckpointRDD,checkpoint之后，RDD的lineage就改变了。
+	2. persist/cache持久化的数据丢失的可能性更大，因为可能磁盘或内存被清理，但是checkpoint的数据通常保存在HDFS上，放在了高容错文件系统。
+
+show engine innodb status;
+
+public interface TransferQueue<E> extends BlockingQueue<E> {
+	boolean tryTransfer(E e);
+	boolean transfer(E e) throws InterruptedException;
+	boolean tryTransfer(E e, long timeout, TimeUnit unit)
+			throws InterruptedException;
+	boolean hasWaitingConsumer();
+	int getWaitingConsumerCount();
+}
+
+public LinkedTransferQueue<E> extends AbstractQueue<E> 
+	implements TransferQueue<E>, java.io.Serializable {
+	
+}
+
+TransferQueue相比SynchronousQueue用处更广、更好用，因为可以决定是使用BlockingQueue的方法(即put方法)还是确保一次传递完成(即transfer方法)。在队列中已有元素的情况下，调用transfer方法，可以确保队列中被传递元素之前的所有元素都能被处理。Doug Lea说从功能角度来讲，LinkedTransferQueue实际上是ConcurrentLinkedQueue, SynchronousQueue(公平模式)和LinkedBlockingQueue的超集。而且LinkedTransferQueue更好用，因为它不仅仅综合了这几个类的功能，同时也提供了更高效的实现。
+经过性能测试，LinkedTransferQueue算法，优于JDK5中的那些类(ConcurrentLinkedQueue, SynchronousQueue, LinkedBlockingQueue)。LinkedTransferQueue性能是SynchronousQueue的3倍(非公平模式)和14倍(公平模式)。通常ThreadPoolExecutor使用SynchronousQueue，如果替换为LinkedTransferQueue，会让ThreadPoolExecutor得到相应的性能提升。
+
+JDK中有8种阻塞队列:
+	1. ArrayBlockingQueue
+	2. BlockingDeque
+	3. DelayQueue
+	4. DelayedWorkQueue in ScheduledThreadPoolExecutor 
+	5. LinkedBlockingDeque
+	6. LinkedBlockingQueue 
+	7. LinkedTransferQueue 
+	8. PriorityBlockingQueue
+	9. SynchronousQueue 
+
+大数据计算服务(MaxCompute, 原ODPS)是一种快速、完全托管的EB级数据仓库解决方案。MaxCompute致力于批量结构化数据的存储和计算，提供海量数据仓库的解决方案及分析建模服务。MaxCompute提供完善的数据导入方案以及多种经典的分布式计算模型，不必关心分布式计算和维护细节，便可以轻松完成大数据分析。
+DataWorks和MaxCompute关系紧密:DataWorks为MaxCompute提供一站式的数据同步、业务流程设计、数据开发、管理和运维功能。
+MaxCompute支持多种计算模型:MaxCompute支持SQL, MapReduce, UDF(Java/Python), Graph, 基于DAG的处理, 交互式，内存计算，机器学习等计算类型及MPI迭代类算法，简化了企业大数据平台的应用架构。
+MaxCompute的数据通道：
+	1. 批量历史数据通道
+		Tunnel是MaxCompute提供的数据传输服务，提供高并发的离线数据上传下载服务。支持每天TB/PB级别的数据导入导出，特别适合于全量数据或历史数据的批量导入。Tunnel提供Java编程接口，并且在MaxCompute的客户端工具中，提供对应的命令实现本地文件与服务数据的交互。
+	2. 实时增量数据通道
+		针对实时数据上传的场景，MaxCompute提供了延迟低、使用方便的DataHub服务，特别适用于增量数据的导入。DataHub还支持多种数据传输插件，例如Logstash, Flume, Fluentd, Sqoop等，同时支持日志服务Log Service中投递日志到Maxcompute，进而使用DataWorks进行日志分析和挖掘。
+目前MaxCompute支持直接处理非结构化数据(包含OSS和Table Store)，前提条件之一是需要在RAM中授予MaxCompute访问OSS或Table Store的权限。
+数据仓库是面向主题(数据综合、归类并进行分析利用的抽象)的应用。数据仓库模型设计除横向的分层外，通常也需要根据业务情况进行纵向划分数据域。数据域是联系较为紧密的数据主题的集合，是业务对象高度概括的概念层次归类，目的是便于数据的管理和应用。
+
+明确每个数据域下有哪些业务过程后，需要开始定义维度，并基于维度构建总线矩阵。
+----------------------------------------------------------------
+在阿里的数据体系中，建议将数据仓库分为三层：数据引入层(ODS, Operation Data Store)，数据公共层(CDM, Common Data Model)和数据应用层(ADS, Application Data Service)。
+数据引入层ODS:Operation Data Store，存放未经处理的原始数据至数据仓库系统，结构上与源系统保持一致，是数据仓库的数据准备区。主要完成基础数据引入到MaxCompute的职责，同时记录基础数据的历史变化。
+数据公共层CDM:Common Data Model，又称通用数据模型层，包括DIM维度表、DWD和DWS，由ODS层数据加工而成。主要完成数据加工与整合，建立一致性的维度，构建可复用的面向分析和统计的明细事实表，以及汇总公共粒度的指标。
+	- 公共维度层(DIM): 基于维度建模理念思想，建立整个企业的一致性维度。降低数据计算口径和算法不统一风险。公共维度层的表通常也被称为逻辑维度表，维度和维度逻辑表通常一一对应。
+	- 公共汇总粒度事实层(DWS):以分析的主题对象作为建模驱动，基于上层的应用和产品的指标需求，构建公共粒度的汇总指标事实表，以宽表化手段物理化模型。构建命名规范、口径一致的统计指标，为上层提供公共指标，建立汇总宽表、明细事实表。
+	公共汇总粒度事实层通常也被称为汇总逻辑表，用于存放派生指标数据。
+	- 明细粒度事实层(DWD):以业务过程作为建模驱动，基于每个具体的业务过程特点，构建最细粒度的明细层事实表。可以结合企业的数据使用特点，将明细事实表的某些重要维度属性字段做适当冗余，即宽表化处理。
+	明细粒度事实层的表通常也被称为逻辑事实表。
+数据应用层ADS(Application Data Service):存放数据产品个性化的统计指标数据。根据CDM与ODS加工生成。
+----------------------------------------------------------------
+为了满足历史数据分析需求，可以在ODS层表中添加时间维度作为分区字段。实际应用中，可以选择采用增量存储、全量存储或者拉链存储方式。
+Stream和Collections的不同点：
+	1. 无存储：Stream不是一种数据结构，它只是某种数据源的一个视图，数据源可以是一个数组，Java容器或IO Channel等。
+	2. 为函数式编程而生：对Stream的任何修改都不会修改背后的数据源，比如对Stream执行过滤操作并不会删除被过滤的元素，而是会产生一个不包含被过滤元素的新Stream。
+	3. 惰式执行：Stream上的操作并不会立即执行，只有等到用户真正需要结果的时候才会执行。
+	4. 可消费性：Stream只能被消费一次，一旦遍历就会失效，就像容器的迭代器那样，想要再次遍历必须重新生成。
+
+规约操作(reduce operation)又被称为折叠操作(fold)，是通过某个连接动作将所有元素汇总成一个汇总结果的过程。元素求和、求最大值或最小值、求元素总个数、将所有元素转换成一个列表或集合，都属于规约操作。Stream类库有两个通用的规约操作reduce()和collect()，也有一些为简化书写而设计的专用规约操作，比如sum(),max(),min(),count()等。 
+
+binlog的写入机制：
+binlog的写入逻辑比较简单：事务执行过程中，先把日志写到binlog cache,事务提交的时候，再把binlog cache写到binlog文件中。
+一个事务的binlog是不能被拆开的，因此不论这个事务多大，也要确保一次性写入。这就涉及到了binlog cache的保存问题。
+系统给binlog cache分配了一片内存，每个线程一个，参数binlog_cache_size用于控制单个线程内binlog cache所占内存的大小。如果超过了这个参数规定的大小，就要暂存到磁盘。
+事务提交的时候，执行器把binlog cache里的完整事务写入到binlog中，并清空binlog cache。
+在出现IO瓶颈的场景里，将sync_binlog设置成一个比较大的值，可以提升性能。在实际的业务场景里，考虑到丢失日志量的可控性，一般不建议将这个参数设成0，比较常见的是将其设置成100-1000中的某个值。
+但是，将sync_binlog设置为N，对应的风险是：如果主机发生异常重启，会丢失最近N个事务的binlog日志。
+
+事务在执行过程中，生成的redo log是要先写到redo log buffer，redo log buffer里面的内容，每次生成后不需要直接持久化到磁盘。
+为了控制redo log的写入策略，InnoDB提供了innodb_flush_log_at_trx_commit参数，有三种可能取值：
+	1. 设置为0时，表示每次事务提交时都只是把redo log留在redo log buffer中；
+	2. 设置为1时，表示每次事务提交时将redo log直接持久化到磁盘；
+	3. 设置为2时，表示每次事务提交时都只是把redo log写到page cache。 
+InnoDB有个后台线程，每隔1秒，就会把redo log buffer中的日志，调用write写到page cache，然后调用fsync持久化到磁盘。
+注意，事务执行中间过程的redo log也是直接写在redo log buffer中的，这些redo log也会被后台线程一起持久化到磁盘。也就是说，一个没有提交的事务的redo log，也是可能已经持久化到磁盘的。
+实际上，除了后台线程每秒一次的轮询操作外，还有两种场景会让一个没有提交的事务的redo log写入到磁盘中。
+	1. 一种是，redo log buffer占用的空间即将达到innodb_log_buffer_size一半的时候，后台线程会主动写盘。注意，由于这个事务并没有提交，所以这个写盘动作只是write，而没有fsync，也就是只留在文件系统的page cache。 
+	2. 另一种是，并行的事务提交的时候，顺带将这个事务的redo log buffer持久化到磁盘。假设一个事务A执行到一半，已经写了一些redo log到buffer中，这时候有另外一个线程的事务B提交，如果innodb_flush_log_at_trx_commit设置的是1，那么按照这个参数的逻辑，事务B要把redo log buffer里的日志全部持久化到磁盘。这时候，就会带上事务A在redo log buffer里的日志一起持久化到磁盘。
+日志逻辑序列号(log sequence number, LSN)：LSN是单调递增的，用来对应redo log的一个个写入点。每次写入长度为length的redo log，LSN的值就会加上length。LSN也会写到InnoDB的数据页中，来确保数据页不会被执行重复的redo log。
+
+通常情况下redo log prepare的fsync执行会很快，所以binlog和fsync间的间隔时间很短，导致能集合到一起持久化的binlog比较少，因此binlog的组提交的效果通常不如redo log的效果那么好。
+如果想提升binlog组提交的效果，可以通过设置binlog_group_commit_sync_delay和binlog_group_commit_sync_no_delay_count来实现：
+	1. binlog_group_commit_sync_delay参数，表示延迟多少微妙才调用fsync。
+	2. binlog_group_commit_sync_no_delay_count参数，表示累积多少次以后才调用fsync。
+这两个条件是或的关系，只要有一个满足条件就会调用fsync。
+
+WAL机制主要得益于两个方面：
+	1. redo log和binlog都是顺序写，磁盘的顺序写比随机写速度要快；
+	2. 组提交机制，可以大幅度降低磁盘的IOPS消耗。
+如果MySQL现在出现了性能瓶颈，而且瓶颈在IO上，可以通过哪些方法来提升性能呢？
+针对这个问题，可以考虑以下三种方法：
+	1. 设置 binlog_group_commit_sync_delay 和 binlog_group_commit_sync_no_delay_count参数，减少binlog的写盘次数。这个方法是基于“额外的故意等待”来实现的，因此可能会增加语句的响应时间，但没有丢失数据的风险。
+	2. 将sync_binlog 设置为大于1的值（比较常见是100~1000）。这样做的风险是，主机掉电时会丢binlog日志。
+	3. 将innodb_flush_log_at_trx_commit设置为2。这样做的风险是，主机掉电的时候会丢数据。
+不建议把innodb_flush_log_at_trx_commit设置成0。因为把这个参数设置成0，表示redo log只保存在内存中，这样的话MySQL本身异常重启也会丢数据，风险太大。而redo log写到文件系统的page cache的速度也是很快的，所以将这个参数设置成2跟设置成0其实性能差不多，但这样做MySQL异常重启时就不会丢数据了，相比之下风险会更小。

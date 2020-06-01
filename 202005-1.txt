@@ -1,0 +1,507 @@
+-XX:+UseCMSInitiatingOccupancyOnly: 用此标志来命令JVM不基于运行时收集的数据来启动CMS垃圾收集周期。而是，当该标志被开启时，JVM通过CMSInitiatingOccupancyFraction的值进行每一次CMS收集，而不仅仅是第一次。大多数情况下，JVM能做出更好的垃圾收集策略。
+---------------------------------------
+-XX:-HandlePromotionFailure: 在发生MinorGC之前，JVM会计算Survivor区移至老年代的对象的平均大小，虚拟机会检查老年代最大可用的连续空间是否大于需要转移的对象大小。
+如果大于，则此次MinorGC是安全的。
+如果小于，JDK1.6之前：虚拟机会查看HandlePromotionFailure设置值是否允许担保失败。如果HandlePromotionFailure=true，那么会继续检查老年代最大可用连续空间是否大于历次晋升到老年代的对象的平均大小。
+	如果大于，则尝试进行一次MinorGC，但这次MinorGC依然有风险，失败后会重新发起一次MajorGC(FGC)。
+	如果小于或者HandlePromotionFailure=false，则改为直接进行一次Major GC(FGC)。
+但是在JDK1.6U24之后-XX:-HandlePromotionFailure不再其作用，只要老年代的连续空间大于新生代对象的大小或者历次晋升到老年代的对象的平均大小就进行MinorGC，否则FGC。
+--------------------------------
+MySQL InnoDB引擎的4大特性：
+	1. 插入缓冲(insert buffer);
+	2. 二次写(double write);
+	3. 自适应哈希索引;
+	4. 预读(read ahead);
+数据库为什么使用B+树而不是B树：
+	1. B树只适合随机检索，而B+树同时支持随机检索和顺序检索；
+	2. B+树空间利用率更高，可减少IO次数，磁盘读写代价更低。一般来说，索引本身也很大，不可能全部存储在内存中，因此索引往往以索引文件的形式存储在磁盘上。这样的话，索引查找过程中就要产生磁盘IO消耗。B+树的内部节点并没有指向关键字具体信息的指针，只是作为索引使用，其内部结点比B树小，盘块能容纳的结点中关键字数量更多，一次性读入内存中可用查找的关键字也就越多，相对的，IO读写次数也就降低了。而IO读写次数是影响索引检索效率的最大因素。
+	3. B+树的查询效率更加稳定。B树搜索有可能会在非叶子结点结束，越靠近根节点的记录查找时间越短，只要找到关键字即可确定记录的存在，其性能等价于关键字全集内做一次二分查找。而在B+树中，顺序检索比较明显，随机检索时，任何关键字的查找都必须走一条从根节点到叶节点的路，所有关键字的查找路径长度相同，每一个关键字的查询效率相当。
+	4. B树在提高磁盘IO的同时并没有解决元素遍历的效率低下的问题。B+树的叶子节点使用指针顺序连接在一起，只要遍历叶子节点就可以实现整个树的遍历。而且在数据库中基于范围的查询是非常频繁的，而B树不支持这样的操作。
+	5. 增删节点时，效率更高。因为B+树的叶子节点包含所有的关键字，并以有序的链表结构存储，这样可很好提高增删效率。
+
+java.util.Timer的实现原理: 使用堆保存TimerTask,使用Object.wait(long timeout)来实现时间等待。
+Timer中的TimerThread并没有对任务的run方法可能抛出的异常进行捕获，就会导致一旦某个TimerTask任务抛出异常，就会导致TimerThread不可用。所以在使用Timer的时候，自己实现的TimerTask要对可能的异常进行捕获和处理。
+Timer是单线程的。
+-XX:PretenureSizeThreshold:超过这个值的对象直接在Old区分配内存，默认值是0，意思是不管多大都是先在Eden中分配内存
+PretenureSizeThreshold参数只对Serial和ParNew两款收集器有效，Parallel Scavenge收集器不认识这个参数，Parallel Scavenge收集器一般并不需要设置。如果遇到必须使用此参数的场合，可以考虑ParNew加CMS的收集器组合。
+
+MySQL数据库Schema设计的性能优化:
+	1. 适度冗余(反范式)
+	2. 垂直拆分
+		2.1 内容很大，但访问频率低的字段；
+		2.2 频繁更新，导致缓存刷新，但访问频率低的字段； 
+	3. 水平拆分
+	4. 统计表准实时优化
+	5. 选择合适的数据类型
+		5.1 更小的通常更好
+		5.2 简单就好
+		5.3 尽量避免NULL
+
+MySQL的架构：
+	1. MySQL向外提供的交互接口(Connectors)
+		Connectors组件，是MySQL向外提供的交互组件，如java, .net等语言可以通过该组件来操作SQL，实现与MySQL的交互。
+	2. 管理服务组件和工具组件(Management Service & Utilities)
+		提供对MySQL的集成管理，如备份(Backup),恢复(Recovery),安全管理(Security)等。
+	3. 连接池组件(Connection Pool)
+		负责监听客户端对Server端的各种请求，接收请求、转发请求到目标模块。每个成功连接Server的客户请求都会被创建或分配一个线程，该线程负责客户端与Server端的通信，接收客户端发送的命令，传递服务端的结果信息等。
+	4. SQL接口组件(SQL Interface)
+		接收用户SQL命令，如DML,DDL和存储过程等，并将结果返回给用户。
+	5. 查询分析器组件(Parser)
+		首先分析SQL语法的合法性，并尝试将SQL命令分解成数据结构，若分解失败，则提示SQL不合法。
+	6. 优化器组件(Optimizer)
+		对SQL命令按照标准流程进行优化分析。
+	7. 缓存组件(Caches&Buffers)
+		缓存和缓冲组件
+	8. 存储引擎。
+	9. 物理文件(File System)
+		实际存储数据库文件和一些日志文件等的组件。
+
+mvn dependency:resolve
+mvn dependency:tree 
+mvn dependency:analyze
+
+使用MySQL的optimizer trace功能可以方便的查看优化器生成执行计划的整个过程，这个功能的开启与关闭由系统变量optimizer_trace决定。
+
+/* Defines callback methods to customize the Java-based configuration for 
+Spring MVC enabled via @EnableWebMvc
+@EnableWebMvc-annotated configuration classes may implement this interface 
+to be called back and given a chance to customize the default configuration.
+*/
+public interface WebMvcConfigurer {
+	default void configurePathMath(PathMatchConfigurer configurer) {}
+	default void configureContentNegotiation(
+			ContentNegotiationConfigurer configurer) {}
+	default void configureAsyncSupport(AsyncSupportConfigurer configurer) {}
+	default void configureDefaultServletHandling(
+			DefaultServletHandlerConfigurer configurer) {}
+	default void addFormatters(FormatterRegistry registry) {}
+	default void addInterceptors(InterceptorRegistry registry) {}
+	default void addResourceHandlers(ResourceHandlerRegistry registry) {}
+	default void addCorsMapping(CorsRegistry registry) {}
+	default void addViewControllers(ViewControllerRegistry registry) {}
+	default void configureViewResolvers(ViewResolverRegistry registry) {}
+	default void addArgumentResolvers(
+		List<HandlerMethodArgumentResolver> resolvers) {}
+	default void addReturnValueHandler(
+		List<HandlerMethodReturnValueHandler> handlers) {}
+	default void configureMessageConverters(
+		List<HttpMessageConverter<?>> converters) {}
+	default void extendMessageConverters(
+		List<HttpMessageConverter<?>> converters) {}
+	default void configureHandlerExceptionResolvers(
+		List<HandlerExceptionResolver> resolvers) {}
+	default void extendHandlerExceptionResolvers(
+		List<HandlerExceptionResolver> resolvers) {}
+	@Nullable
+	default Validator getValidater() {return null;}
+	@Nullable 
+	default MessageCodesResolver getMessageCodesResolver() {
+		return null;
+	}
+}
+
+Change Buffer是一种特殊的数据结构，缓存对二级索引页面的更改并且这些页面不在Buffer Pool中。缓存的changes可能由insert,delete和update的结果导致。稍后在页面被其他读取操作加载到Buffer Pool的时候合并。
+简而言之：Change Buffer的主要目的是将对二级索引的数据操作缓存下来，以此减少二级索引的随机IO，并达到合并的效果。
+虽然名字叫做change buffer，实际上它是可以持久化的数据。也就是说，change buffer在内存中有拷贝，也会被写入到磁盘上。
+将change buffer中的操作应用到原数据页，得到最新结果的过程称为merge。除了访问这个数据页会触发merge外，系统有后台线程会定期merge。在数据库正常关闭的过程中，也会执行merge操作。
+显然，如果能够将更新操作先记录在change buffer，减少读磁盘，语句的执行速度会得到明显的提升。而且，数据读入内存是需要占用buffer pool的，所以这种方式还能避免占用内存，提高内存利用率。
+
+change buffer的使用场景
+	使用change buffer对更新过程的加速作用，也清楚了change buffer只限于用在普通索引的场景下，而不适用于唯一索引。那么，现在有一个问题就是：普通索引的所有场景，使用change buffer都可以起到加速作用吗？
+	因为merge的时候是真正进行数据更新的时刻，而change buffer的主要目的就是将记录的变更动作缓存下来，所以在一个数据页做merge之前，change buffer记录的变更越多（也就是这个页面上要更新的次数越多），收益就越大。
+	因此，对于写多读少的业务来说，页面在写完以后马上被访问到的概率比较小，此时change buffer的使用效果最好。这种业务模型常见的就是账单类、日志类的系统。
+
+	反过来，假设一个业务的更新模式是写入之后马上会做查询，那么即使满足了条件，将更新先记录在change buffer，但之后由于马上要访问这个数据页，会立即触发merge过程。这样随机访问IO的次数不会减少，反而增加了change buffer的维护代价。所以，对于这种业务模式来说，change buffer反而起到了副作用。
+Https的通信过程：
+	1. 客户端通过发送Client Hello报文开始SSL通信。报文中包含客户端支持的SSL版本、加密组件(Cipher Suite)列表(加密算法及密钥长度等)。
+	2. 服务器可进行SSL通信时，会以Server Hello报文作为应答。和客户端一样，在报文中包含SSL版本以及加密组件。服务器的加密组件内容是从接收到的客户端加密组件中筛选出来的。
+	3. 之后服务器发送Certificate报文。报文中包含公开密钥证书。
+	4. 最后服务器发送Server Hello Done报文通知客户端，最初阶段的SSL握手协商部分结束。
+	5. SSL第一次握手结束之后，客户端以Client Key Exchange报文作为回应。报文中包含通信加密中使用的一种称为Pre-master secret的随机密码串。该报文使用步骤3中的公钥进行加密。
+	6. 接着客户端继续发送Change Cipher Spec报文。该报文会提示服务器，在此报文之后的通信会采用Pre-master secret密钥加密。
+	7. 客户端发送Finished报文。该报文包含连接至今全部报文的整体校验值。这次握手协商是否能够成功，要以服务器是否能够正确解密该报文作为判断标准。
+	8. 服务器同样发送Change Cipher Spec报文。
+	9. 服务器同样发送Finished报文。
+	10. 服务器和客户端的Finished报文交换完毕之后，SSL连接就算建立完成。当然，通信会受到SSL的保护。从此处开始进行应用层协议的通信，即发送HTTP请求。
+	11. 应用层协议通信。
+	12. 最后由客户端断开连接。断开连接时，发送close_notify报文。
+在以上流程中，应用层发送数据时会附加MAC的报文摘要。MAC能够查知报文是否遭到篡改，从而保护报文的完整性。
+
+Get和Post的区别：
+	1. get在浏览器回退时是无害的，而POST会再次提交请求；
+	2. GET产生的URL地址可以被Bookmark，而POST不可以；
+	3. GET请求会被浏览器主动cache，而POST不会，除非手动设置。
+	4. GET请求只能进行URL编码，而POST支持多种编码方式。
+	5. GET请求参数会被完整保留在浏览器历史记录里，而POST中的参数不会被保留。
+	6. GET请求在URL中传送的参数有长度限制的，而POST没有。
+	7. 对参数的数据类型，GET只接受ASCII字符，而POST没有限制。
+	8. GET比POST不安全，因为参数直接暴露在URL上，所以不能用来传递敏感信息。
+	9. GET参数通过URL传递，POST放在Request Body中。
+
+-XX:ParGCCardsPerStrideChunk=4096
+
+Spark Job运行原理：
+	阶段一：编写driver程序，定义RDD的action和transformation操作。这些依赖关系形成操作的DAG。
+	阶段二：根据形成的DAG，DAGScheduler将其划分为不同的stage。
+	阶段三：每个stage中有一个TaskSet，DAGScheduler将TaskSet交给TaskScheduler去执行，TaskScheduler将任务执行完毕之后结果返回给DAGScheduler。
+	阶段四：TaskScheduler将任务分发给每个Woker节点去执行，并将结果返回给TaskScheduler。
+DAG原理：
+	1. sparkContext创建DAGScheduler->创建EventProcessLoop->调用eventLoop.start()方法开启事件监听。
+	2. action调用sparkContext.runJob->eventLoop监听到事件，调用handleJobSubmitted开始划分stage。
+	3. 首先对触发job的finalRDD调用createResultStage方法，通过getOrCreateParentStages获取所有父stage列表，然后创建自己。如：父(stage1, stage2)，再创建stage3。
+	4. getOrCreateParentStages内部会调用getShuffleDependencies获取所有直接宽依赖(从后往前推，窄依赖直接跳过)。
+	5. 接下来会循环宽依赖列表，分别调用getOrCreateShuffleMapStage:
+		--如果某个RDD已经被划分过去会直接返回stageID；否则就执行getMissingAncestorShuffleDependencies方法，继续寻找该RDD的父宽依赖，窄依赖直接加入；
+		--如果返回的宽依赖列表不为空，则继续执行4,5流程直到为空为止；
+		--如果返回的宽依赖依赖列表为空，则说明它没有父RDD或者没有宽依赖，此时可以直接调用createShuffleMapStage将该stage创建出来。
+	6. 因此最终的的划分结果是stage3(B, G), stage2(C,D,E,F), stage1(A)。
+	7. 创建ResultStage,调用submitStage提交这个stage。
+	8. submitStage会首先检查这个stage的父stage是否已经提交，如果没有提交就开始递归调用submitStage提交父stage，最后再提交自己。
+	9. 每一个stage都是一个taskSet，每次提交都会提交一个taskSet给TaskScheduler。
+SparkContext创建流程：
+	1. SparkSubmit反射调用主类的main方法；
+	2. main方法中初始化SparkContext对象；
+	3. SparkContext开始创建Spark通信环境RpcEnv。
+	4. SparkContext创建TaskSchedulerImpl对象。
+	5. SparkContext创建StandaloneSchedulerBackend对象。
+	6. 最后创建DAGScheduler对象。
+
+Stage是由DAGScheduler根据宽窄依赖划分Spark任务所得到的一组可并行执行的task任务集合，存在依赖关系的stage之间是串行的，一个SparkJob可以产生多组Stage。
+Stage有两个子类：ResultStage和ShuffleMapStage。
+ResultStage:在RDD的某些分区上应用函数来计算action操作的结果，对应DAG原理中createResultStage()创建的对象。
+ShuffleMapStage是中间的Stage，为shuffle生产数据。它们在shuffle之前出现。当执行完毕之后，结果数据被保存，以便reduce任务可以获取到。
+
+Spark中可配置的JavaSerializer或者KryoSerializer针对的对象是Shuffle数据，以及RDD Cache等场合，而Spark Task的序列化是通过spark.closuer.serializer来配置，但是目前只支持JavaSerializer。
+
+Spark通过CheckPoint方法将RDD状态保存在高可用存储中，与持久化不同的是，它是对RDD状态的一个复制持久化，执行CheckPoint后不再保存依赖链。此外，持久化存储的缓存当程序运行结束后就会被自动删除，检查点保存的RDD状态只能手动清理。
+
+广播变量：正常情况下，Spark为每个Task都复制一份它需要的数据，如果有大量Task都需要用到一份相同的数据，这种做法就会导致一个节点Executor(内含多个Task)从Driver端拉取大量重复数据，占用网络IO和内存资源。使用广播变量后，Task会惰性加载数据，加载时，先在本地Executor的BlockManager中寻找，如果找不到再到最近节点的BlockManager中查找，直到找到数据后将数据传输到本地存储起来，同一节点的多个Task就可以复用这份数据，大幅减少内存占用和IO时间。
+
+public class Thread implements Runnable {
+	...
+	/* Causes this thread to begin execution; JVM calls the #run() method of this thread.
+		The result is that two threads are running concurrently: the current thread(
+		which returns from the call to the #start method) and the other thread (which 
+		executes its #run method.
+		It is never legal to start a thread more than once.
+		In particular, a thread may not be restarted once it has completed execution.
+	*/
+	public synchronized void start() {
+		// A zero status value corresponds to state "NEW"
+		if (threadStatus != 0)
+			throw new IllegalThreadStateException();
+		/* Notify the group that this thread is about to be started 
+			so that it can be added to the group's list of threads and 
+			the group's unstarted count can be decremented.
+		*/
+		group.add(this);
+		boolean started = false;
+		try {
+			start0();
+			started = true;
+		} finally {
+			try {
+				if (!started) {
+					group.threadStartFailed(this);
+				}
+			} catch (Throwable ignore) {
+				/* do nothing. If start0 threw a Throwable then
+                  it will be passed up the call stack */
+			}
+		}
+	}
+	...
+}
+
+MySQL:distinct实际上和group by的操作非常相似，只不过是group by之后每组中只取出一条记录而已。所以，distinct的实现和group by的实现也基本差不多，没有太大的区别。同样可以通过松散索引扫描或者紧凑索引扫描来实现。当然，在无法仅仅使用索引就能完成distinct的时候，MySQL只能通过临时表来完成。但是，和group by有一点差别的是，distinct并不需要排序。也就是说，在仅仅只是distinct操作的查询中如果无法仅仅利用索引完成操作的时候，MySQL会利用临时表做一次数据的"缓存"，但是不会对临时表中的数据进行filesort操作。当然，如果我们在进行distinct的时候还使用了group by并进行分组，并使用了类似max之类的聚合函数操作，就无法避免filesort了。
+
+Zookeeper保证了如下分布式一致性特性:
+	1. 顺序一致性；
+	2. 原子性；
+	3. 单一视图；
+	4. 可靠性；
+	5. 实时性(最终一致性)。
+
+Zookeeper的Watcher特性总结:
+	1. 一次性:无论是服务端还是客户端，一旦一个Watcher被触发，Zookeeper都会将其从相应的存储中移除。这样的设计有效的减轻了服务端的压力，不然对于更新非常频繁的节点，服务端会不断的向客户端发送事件通知，无论对于网络还是服务端的压力都非常大。
+	2. 客户端串行执行：客户端Watcher回调的过程是一个串行同步的过程。
+	3. 轻量：
+		3.1 Watcher通知非常简单，只会告诉客户端发生了事件，而不会说明事件的具体内容。
+		3.2 客户端向服务端注册Watcher的时候，并不会把客户端真实的Watcher对象实体传递到服务端，仅仅是在客户端请求中使用boolean类型属性进行标记。
+
+Zookeeper三种角色: Leader, Follower, Observer;
+Zookeeper节点的四种工作状态: looking, following, leading, observing;
+Zookeeper的数据同步通常分为四类:
+	1. 直接差异化同步: diff同步;
+	2. 先回滚再差异化同步: trunc+diff同步;
+	3. 仅回滚同步: trunc同步；
+	4. 全量同步：snap同步；
+Zookeeper支持动态扩容吗:3.5版本之前原生不支持；需要挨个重启，并且中间会有leader选举期间的不可用时间。	
+ZAB和Paxos算法的比较:
+	1. 相同点:
+		1.1 两者都存在一个类似于Leader角色，由其负责协调多个Follower进程的运行；
+		1.2 Leader进程都会等待超过半数的Follower做出正确反馈后，才会将提案进行提交；
+		1.3 ZAB协议中，每个Proposal都包含一个epoch值代表当前的leader周期；Paxos中名字为Ballot；
+	2. 不同点:ZAB用来构建高可用的分布式数据主备系统(Zookeeper)，Paxos用来构建分布式一致性状态机系统。
+
+public class ThreadPoolTaskExecutor extends ExecutorConfigurationSupport
+		implements AsyncListenableTaskExecutor, SchedulingTaskExecutor {
+	...
+}
+/* Implementation of Spring's #TaskScheduler interface, wrapping a native
+	java.util.concurrent.ScheduledThreadPoolExecutor.
+*/
+public class ThreadPoolTaskScheduler extends ExecutorConfigurationSupport 
+		implements AsyncListenableTaskExecutor, SchedulingTaskExecutor, TaskScheduler {
+	...
+}
+
+Spring的ThreadPoolTaskExecutor同样提供线程池执行任务，但是可以用xml或者JavaBean形式进行配置初始化。同样，ThreadPoolTaskExecutor内部使用了JDK的ThreadPoolExecutor，对其进行了包装。
+Spring中的ThreadPoolTaskScheduler是JDK中ScheduledThreadPoolExecutor的包装，Spring中的任务调度使用这个类，比如@Scheduled。
+
+in和exist:如果两个表大小相当，那么用in和exist差别不大。如果两个表中一个较小一个较大，则子查询表大的用exists，子查询表小的用in。
+如果查询语句使用了not in，那么对内外表都进行全表扫描，没有用到索引；而not exists的子查询依然能用到表上的索引。所以无论哪个表大，用not exists都比not in要快。
+not in逻辑上不完全等同于not exists。对于not in来说，如果子查询中返回的任意一条记录含有空值，则查询将不返回任何记录。如果子查询字段有非空约束，可以使用not in。不过，建议尽量用not exists。
+
+
+public interface ClassFileTransformer {
+	byte[] transform(ClassLoader loader,
+		String className,
+		Class<?> classBeingRedefined,
+		ProtectionDomain protectionDomain,
+		byte[] classfilebuffer)
+		throws IllegalClassFormatException;
+}
+---------------------------------------------------------
+1. Aspect:一个关注点的模块化，这个关注点实现可能另外横切多个对象。Aspect用Spring的Advisor或者拦截器实现。
+2. Joinpoit:程序执行过程中明确的点，如方法的调用或特定的异常被抛出。
+3. Advice：在特定的连接点Joinpoit，AOP框架执行的动作。各种类型的Advice包括:around, before, throws。很多AOP框架包括Spring都是以拦截器做Advice模型，维护一个围绕连接点的拦截器链。Spring定义了四个advice: BeforeAdvice, AfterAdvice, ThrowAdvice和DynamicIntroductionAdvice。
+4. Pointcut:指定一个Advice将被引发的一系列Joinpoit的集合。AOP框架必须允许开发者指定切入点:比如使用正则表达式。Spring定义了Pointcut接口，用来组合MethodMatcher和ClassFilter，可以通过名字很清楚的理解。MethodMatcher是用来检查目标类的方法是否可以被应用此Advice，而ClassFilter是用来检查Pointcut是否应该应用到目标类上。
+5. Inroduction：添加方法或字段到被Advice的类。Spring允许引入新的接口到任何被通知的对象。例如，可以使用一个引入使任何对象实现IsModified接口，来简化缓存。Spring中要使用Inroduction,可以通过DelegatingIntroductionInterceptor来实现通知，通过DefaultIntroductionAdvisor来配置Advice和代理类要实现的接口。
+6. Target Object:包含连接点的对象。被称为被通知或被代理类。
+7. AOP代理：AOP框架创建的对象，包含代理。在Spring中，AOP代理可以是JDK动态代理或者CGLIB代理。
+---------------------------------------------------------
+Disruptor通过以下设计来解决队列速度慢的问题：
+	1. 环形数组结构：为了避免垃圾回收，采用数组而非链表。同时，数组对处理器的缓存机制更加友好。
+	2. 元素位置定位：数组长度为2^N，通过位运算，加快定位的速度。下标采取递增的形式。不用担心index溢出问题。index是long类型，即使100万QPS的处理速度，也需要30万年才能用完。
+	3. 无锁设计：每个生产者或者消费者线程，会先申请可以操作的元素在数组中的位置，申请到之后，直接在该位置写入或者读取数据。
+
+//Strategy interface that specifies a converter that can convert from and to HTTP requests and responses.
+public interface HttpMessageConverter<T> {
+	boolean canRead(Class<?> clazz, @Nullable MediaType mediaType);
+	boolean canWrite(Class<?> clazz, @Nullable MediaType mediaType);
+	List<MediaType> getSupportedMediaTypes();
+	T read(Class<? extends T> clazz, HttpInputMessage inputMessage)
+		throws IOException, HttpMessageNotReadlableException;
+	void write (T t, @Nullable MediaType contentType, HttpOutputMessage outputMessage)
+		throws IOException, HttpMessageNotWritableException;
+}
+
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.TYPE)
+@Documented
+@Import(DelegatingWebMvcConfiguration.class)
+public @interface EnableWebMvc{
+}
+
+/* A subclass of #WebMvcConfigurationSupport that detects and delegates 
+	to all beans of type #WebMvcConfigurer allowing them to customize the 
+	configuration provided by #WebMvcConfigurationSupport. This is the class 
+	actually imported by @EnableWebMvc.
+*/
+@Configuration
+public class DelegatingWebMvcConfiguration extends WebMvcConfigurationSupport {
+	...
+}
+
+/* This is the main class providing the configuration behind the MVC Java config.
+	It is typically imported by adding @EnableWebMvc to an application @Configuration class.
+	An alternative more advanced option is to extend directly from this class and 
+	override methods as necessary, remembering to add @Configuration to the subclass and 
+	@Bean to overridden @Bean methods.
+*/
+public class WebMvcConfigurationSupport implements ApplicationContextAware, ServletContextAware {
+	...
+	//Adds a set of default HttpMessageConverter instance to the given list.
+	//Subclasses can call this method from #configureMessageConverters 
+	protected final void addDefaultHttpMessageConverters(List<HttpMessageConverter<?>> messageConverters) {
+		StringHttpMessageConverter stringHttpMessageConverter = new StringHttpMessageConverter();
+		stringHttpMessageConverter.setWriteAcceptCharset(false);  // see SPR-7316
+
+		messageConverters.add(new ByteArrayHttpMessageConverter());
+		messageConverters.add(stringHttpMessageConverter);
+		messageConverters.add(new ResourceHttpMessageConverter());
+		messageConverters.add(new ResourceRegionHttpMessageConverter());
+		try {
+			messageConverters.add(new SourceHttpMessageConverter<>());
+		}
+		catch (Throwable ex) {
+			// Ignore when no TransformerFactory implementation is available...
+		}
+		messageConverters.add(new AllEncompassingFormHttpMessageConverter());
+
+		if (romePresent) {
+			messageConverters.add(new AtomFeedHttpMessageConverter());
+			messageConverters.add(new RssChannelHttpMessageConverter());
+		}
+
+		if (jackson2XmlPresent) {
+			Jackson2ObjectMapperBuilder builder = Jackson2ObjectMapperBuilder.xml();
+			if (this.applicationContext != null) {
+				builder.applicationContext(this.applicationContext);
+			}
+			messageConverters.add(new MappingJackson2XmlHttpMessageConverter(builder.build()));
+		}
+		else if (jaxb2Present) {
+			messageConverters.add(new Jaxb2RootElementHttpMessageConverter());
+		}
+
+		if (jackson2Present) {
+			Jackson2ObjectMapperBuilder builder = Jackson2ObjectMapperBuilder.json();
+			if (this.applicationContext != null) {
+				builder.applicationContext(this.applicationContext);
+			}
+			messageConverters.add(new MappingJackson2HttpMessageConverter(builder.build()));
+		}
+		else if (gsonPresent) {
+			messageConverters.add(new GsonHttpMessageConverter());
+		}
+		else if (jsonbPresent) {
+			messageConverters.add(new JsonbHttpMessageConverter());
+		}
+
+		if (jackson2SmilePresent) {
+			Jackson2ObjectMapperBuilder builder = Jackson2ObjectMapperBuilder.smile();
+			if (this.applicationContext != null) {
+				builder.applicationContext(this.applicationContext);
+			}
+			messageConverters.add(new MappingJackson2SmileHttpMessageConverter(builder.build()));
+		}
+		if (jackson2CborPresent) {
+			Jackson2ObjectMapperBuilder builder = Jackson2ObjectMapperBuilder.cbor();
+			if (this.applicationContext != null) {
+				builder.applicationContext(this.applicationContext);
+			}
+			messageConverters.add(new MappingJackson2CborHttpMessageConverter(builder.build()));
+		}
+	}
+	...
+}
+
+RequestResponseBodyMethodProcessor
+/* Allows customizing the response after the execution of an @ResponseBody or a 
+	#ResponseEntity controller method but before the body is written with an 
+	#HttpMessageConverter.
+	Implementations may be registered directly with #RequestMappingHandlerAdapter and 
+	#ExceptionHandlerExceptionResolver or more likely annotated with @ControllerAdvice in 
+	which case they will be auto-detected by both.
+*/
+public interface ResponseBodyAdvice<T> {
+	boolean supports(MethodParameter returnType, Class<? extends HttpMessageConverter<?>> converterType);
+	@Nullable 
+	T beforeBodyWrite(@Nullable T body, MethodParameter returnType, MediaType selectedContentType,
+			Class<? extends HttpMessageConverter<?>> selectedConverterType,
+			ServerHttpRequest request, ServerHttpResponse response);
+}
+
+物理备份:备份数据文件，转储数据库物理文件到某一目录。物理备份恢复速度比较快，但占用空间比较大，MySQL中可以用xtrabackup工具来进行物理备份。
+逻辑备份：对数据库对象利用工具进行导出工作，汇总入备份文件内。逻辑备份恢复速度慢，但占用空间小，更灵活。MySQL中常用的逻辑备份工具为mysqldump。
+
+MySQL的备份类型：
+	1. 逻辑备份:文本表示:SQL语句;
+	2. 物理备份:数据文件的二进制副本;
+	3. 基于快照的备份;
+	4. 基于复制的备份;
+	5. 增量备份(刷新二进制日志);
+	6. 热备份:备份在读取或修改数据的过程中进行，很少中断或者不中断传输或处理数据的功能。使用热备份，系统仍可供读取和修改数据的操作访问。
+	7. 冷备份:备份在用户不能访问数据时进行，因此无法读取或修改数据。这些脱机备份会阻止执行任何使用数据的活动。这些类型的备份不会干扰正常运行的系统的性能。但是，对于某些应用程序，会无法接受一段较长时间里锁定或完全阻止用户访问数据。
+	8. 温备份：备份在读取数据时进行，但在多数情况下，在进行备份时不能修改数据本身。这种备份类型的优点是不必完全锁定最终用户。但是，其不足之处在于无法在进行备份时修改数据集，这会使得温备份不适用于某些应用程序。在备份过程中无法修改数据可能会产生性能问题。
+
+备份工具:
+	1. mysqldump:自带的很好用的逻辑备份工具；
+	2. mysqlbinlog:实现binlog备份的原生态命令；
+	3. xtrabackup:Precona公司开发的性能很高的物理备份工具。
+
+Linux系统日志:一般放在/var/log下面
+	1. /var/log/boot.log: 一般包含系统启动时的日志，包括自启动的服务。
+	2. /var/log/btmp:记录所有失败登陆信息，非文本文件。可以使用last -f /var/log/btmp进行查看。
+	3. /var/log/cron:cron计划任务的日志，每当cron任务被执行的时候都会在这个文件里面记录。
+	4. /var/log/dmesg:包含内核缓冲信息(kernel ring buffer)。在系统启动时，会在屏幕上显示很多与硬件有关的信息。
+	5. /var/log/lastlog：记录所有用户的最近信息。非文本文件，可以使用lastlog进行查看。
+	6. /var/log/maillog:包含着系统运行电子邮件服务器的日志信息。
+	7. /var/log/message: 包括整体系统信息，其中也包括系统启动期间的日志。此外，mail, cron, daemon, kernel和auth等内容也记录在/var/log/messages日志中。
+	8. /var/log/secure:包含验证和授权方面信息。例如，sshd会将所有信息记录(包括失败登陆)在这里。
+	9. /var/log/yum.log:使用yum安装软件包的信息；
+	10. /var/log/anaconda/
+	11. /var/log/audit：包含audit daemon的审计日志。例如：selinux开启的时候，这里就会有关于selinux审计的日志。
+	12. /var/log/sa/:包含每日由sysstat软件包收集的sar文件。
+	13. /var/log/cups:涉及所有打印信息的日志，即cups打印服务运行的日志。
+	14. 其他文件或者目录
+
+SparkConf, StorageLevels, Duration, JavaDStream, JavaPairDStream, JavaReceiverInputDStream, JavaStreamingContext,
+Receiver, scala.Tuple2;
+---------------------------------------------------------------
+package org.apache.spark.examples.streaming;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
+
+import scala.Tuple2;
+
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.serialization.StringDeserializer;
+
+import org.apache.spark.SparkConf;
+import org.apache.spark.streaming.api.java.*;
+import org.apache.spark.streaming.kafka010.ConsumerStrategies;
+import org.apache.spark.streaming.kafka010.KafkaUtils;
+import org.apache.spark.streaming.kafka010.LocationStrategies;
+import org.apache.spark.streaming.Duration;
+
+public final class JavaDirectKafkaWordCount {
+	private static final Pattern SPACE = Pattern.compile(" ");
+	
+	public static void main(String[] args) throws Exception {
+		if (args.length < 3) {
+			System.err.println("Usage: JavaDirectKafkaWordCount <brokers> <groupId> <topics>\n" +
+                         "  <brokers> is a list of one or more Kafka brokers\n" +
+                         "  <groupId> is a consumer group name to consume from topics\n" +
+                         "  <topics> is a list of one or more kafka topics to consume from\n\n");
+			System.exit(1);
+		}
+
+		String brokers = args[0];
+		String groupId = args[1];
+		String topics = args[2];
+		
+		SparkConf sparkConf = new SparkConf().setAppName("JavaDirectKafkaWordCount");
+		JavaStreamingContext jssc = new JavaStreamingContext(sparkConf, Duration.seconds(2));
+		
+		Set<String> topicesSet = new HashSet<>(Arrays.asList(topices.split(",")));
+		Map<String, Object> kafkaParams = new HashMap<>();
+		kafkaParams.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, brokers);
+		kafkaParams.put(ConsumerConfig.GROUP_ID_CONIFG, groupId);
+		kafkaParams.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+		kafkaParams.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+		
+		JavaInputDStream<ConsumerRecord<String, String>> messages = KafkaUtils.createDirectStream(
+			jssc,
+			LocationStrategies.PreferConsistent(),
+			ConsumerStrategies.Subscribe(topicesSet, kafkaParames)
+		);
+		
+		JavaDStream<String> lines = messages.map(ConsumerRecord::value);
+		JavaDStream<String> words = lines.flatMap(x -> Arrays.asList(SPACE.split(x)).iterator());
+		JavaPairDStream<String, Integer> wordCounts = words.mapToPair(s -> new Tuple2<>(s, 1))
+			.reduceByKey((i1, i2) -> i1 + i2);
+		wordCounts.print();
+		
+		jssc.start();
+		jssc.awaitTermination();
+	}
+}
