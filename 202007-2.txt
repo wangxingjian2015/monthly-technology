@@ -1,0 +1,465 @@
+redo日志与在事务提交时将所有修改过的内存中的页面刷新到磁盘中相比，只是将该事务执行过程中产生的redo日志刷新到磁盘的好处如下：
+	1. redo日志占用的空间非常小；存储表空间ID、页号、偏移量以及需要更新的值所需的存储空间很小。
+	2. redo日志是顺序写入磁盘的；在执行事务的过程中，每执行一条语句，就可能产生若干条redo日志，这些日志是按照产生的顺序写入磁盘的，也就是使用顺序IO。
+
+Sentinel系统自适应限流从整体维度对应用入口流量进行控制，结合应用的Load、CPU使用率、总体平均RT、入口QPS和并发线程数等几个维度的监控指标，通过自适应的流控策略，让系统的入口流量和系统的负载达到一个平衡，让系统尽可能跑在最大吞吐量的同时保证系统整体的稳定性。
+-------------------------------------
+Spark时间限制：Spark Streaming只支持处理时间，Structured streaming支持处理时间和事件时间，同时支持watermark机制处理滞后数据。
+Flink时间机制：Flink支持三种时间机制：事件时间、注入时间和处理时间，同时支持watermark机制处理滞后数据。 
+-------------------------------------
+针对普通表和临时表划分不同种类的回滚段的原因：在修改针对普通表的回滚段中的undo页面时，需要记录对应的redo日志，而修改针对临时表的回滚段中的undo页面时，不需要记录对应的redo日志。
+
+对于使用InnoDB存储引擎的表来说，它的聚簇索引记录中都包含两个必要的隐藏列(row_id并不是必要的，表中有主键或者非null的unique索引时都不会包含row_id列)：
+	1. trx_id: 每次一个事务对某条聚簇索引记录进行改动时，都会把事务的事务ID赋值给trx_id隐藏列；
+	2. roll_pointer: 每次对某条聚簇索引记录进行改动时，都会把旧的版本写入到undo日志中，然后这个隐藏列就相当于一个指针，可以通过它来找到该记录修改前的信息。
+
+IS，IX是表级锁，它们的提出仅仅为了在之后加表级锁的S锁和X锁时可以快速判断表中的记录是否被上锁，以避免用遍历的方式来查看表中有没有上锁的记录，也就是说其实IS锁和IX锁是兼容的，IX锁和IX锁是兼容的。
+
+/* Interface used by the #DefaultBeanDefinitionDocumentReader to handle custom, nested(directly under a <bean>) tags.
+	Decoration may also occur based on custom attributes applied to the <bean> tag. Implementations are free to turn 
+	the metadata in the custom tag into as many #BeanDefinition a required and to transform the #BeanDefiniton of the 
+	enclosing <bean> tag, potentially even returning a completely different #BeanDefinition to replace the original.
+	
+	BeanDefinitionDecorator should be aware that they may be part of a chain. In particular, a #BeanDefinitionDecorator 
+	should be aware that a previous #BeanDefinitionDecorator may have replaced the original #BeanDefinition with 
+	#ProxyFactoryBean definition allowing for custom #MethodInterceptor to be added.
+	
+	BeanDefintionDecorator that wish to add an interceptor to the enclosing bean should extend #AbstractInterceptorDrivenBeanDefintionDecorator 
+	which handles the chaining ensuring that only one proxy is created and that it contains all interceptors from the chain.
+	The parser locates a #BeanDefinitionDecorator from the #NamespaceHandler for the namespace in which the custom 
+	tag resides.
+*/
+public interface BeanDefinitionDecorator {
+	BeanDefinitionHolder decorate(Node node, BeanDefinitionHolder definition, ParserContext parserContext);
+}
+
+InnoDB提供了一个称之为innodb_autoinc_lock_mode的系统变量来控制到底使用哪种方式来为auto_increment修饰的列进行赋值。当innodb_autoinc_lock_mode值为0时，一律采用AUTO-INC锁；当innodb_autoinc_lock_mode值为2时，一律采用轻量级锁；当innodb_autoinc_lock_mode值为1时，两种方式混着来(也就是在插入记录数量确定时采用轻量级锁，不确定时使用AUTO-INC锁)。不过当innodb_autoinc_lock_mode值为2时，可能会造成不同事务中的插入语句为auto_increment修饰的列生成的值是交叉的，在有主从复制的场景中是不安全的。
+
+CompletionStage
+
+MySQL在一般情况下执行一个查询时最多只会用到单个二级索引，但是在特殊情况下，也可能在一个查询中使用到多个二级索引，称之为index merge。具体索引合并算法有如下三种：
+	1. Intersection合并；
+	2. Union合并；
+	3. Sort-Union合并； 
+
+Spark Standalone集群是Master-Slaves架构的集群模式，和大部分的Mater-Slaves结构集群一样，存在着Master单点故障的问题，Spark提供了两种方案：
+	1. 基于文件系统的单点恢复(Single-Node Recovery with Local File System)-只能用于开发/测试环境；
+	2. 基于Zookeeper的Standby Masters(Standby Masters with Zookeeper)-可以用于生产环境；
+	
+public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
+	...
+}
+
+AttributeAccessor
+AttributeAccessorSupport
+BeanMetadataElement
+GenericFilterBean
+public abstract class GenericFilterBean implements Filter, BeanNameAware, EnvironmentAware, 
+	EnvironmentCapable, ServletContextAware, InitializingBean, DisposableBean {
+	...
+}
+PropertyResolver
+public class StandardServletEnvironment extends StandardEnvironment implements ConfigurableWebEnvironment {
+	...
+}
+public abstact class OncePerRequestFilter extends GenericFilterBean {
+	...
+}
+
+public interface DeferredResultProcessingInterceptor {
+	default <T> void beforeConcurrentHandling(NativeWebRequest request, DeferredResult<T> deferredResult) throws Exception {}
+	default <T> void preProcess(NativeWebRequst request, DeferredResult<T> deferredResult) throws Exception {}
+	default <T> void postProcess(NativeWebRequest request, DeferredResult<T> deferredResult, 
+										Object concurrentResult) throws Exception {}
+	default <T> boolean handleTimeout(NativeWebRequest request, DeferredResult<T> deferredResult) 
+				throws Exception {return true;}
+	default <T> boolean handleError(NativeWebRequest request, DeferredResult<T> deferredResult,
+			Throwable t) throws Exception {return true;}
+	default <T> void afterCompletion(NativeWebRequest request, DeferredResult<T> deferredResult)
+			throws Exception {}
+}
+
+public interface CallableProcessingInterceptor {
+	Object RESULT_NONE = new Object();
+	Object RESPONSE_HANDLED = new Object();
+	
+	default <T> void beforeConcurrentHandling(NativeWebRequest request, Callable<T> task)
+		throws Exception {}
+	default <T> void preProcess(NativeWebRequest request, Callable<T> task) throws Exception {}
+	default <T> void postProcess(NativeWebRequest request, Callable<T> task, Object concurrentResult)
+		throws Exception {}
+	default <T> Object handleTimeout(NativeWebRequest request, Callable<T> task) throws Exception {
+		return RESULT_NONE;
+	}
+	default <T> Object handleError(NativeWebRequest request, Callable<T> task, Throwable t) 
+		throws Exception {return RESULT_NONE;}
+	default <T> void afterCompletion(NativeWebRequest request, Callable<T> task) throws Exception {}
+}
+
+/* #TaskExecutor implementation that fires up a new Thread for each task, executing it asynchronously.
+	
+	Supports limiting concurrent threads through the "concurrencyLimit" bean property. By default, 
+	the number of concurrent threads is unlimited.
+	NOTE: This implementation does not reuse threads! Consider a thread-pooling TaskExecutor implementation 
+	instead, in particular for executing a large number of short-lived tasks.
+*/
+@SuppressWarnings("serial")
+public class SimpleAsyncTaskExecutor extends CustomizableThreadCreator
+			implements AsyncListenableTaskExecutor, Serializable {
+	...
+}
+
+/* The central class for managing asynchronous request processing, mainly intended as an SPI and not 
+	typically used directly by application classes.
+	An async scenario starts with request processing as usual in a thread(T1).
+	Concurrent request handling can be initiated by calling #startCallabeProcessing(Callable, Object...) 
+	startCallableProcessing or #startDeferredResultProcessing(DeferredResult, Object...) 
+	startDeferredResultProcessing, both of which produce a result in a separate thread(T2). The result is 
+	saved and the request dispatched to the container, to resume processing with the saved result in a third
+	thread(T3). Within the dispatched thread(T3), the saved result can be accessed via #getConcurrentResult()
+	or its presence detected via #hasConcurrentResult().
+*/
+public final class WebAsyncManager {
+	...
+}
+----------------------
+Raft:总共有4个节点。C和D同时成为了candidate，进入了term 4，但A投了D一票，B投了C一票，这就出现了平票split vote的情况。这个时候都在等待，直到超时后重新发起选举。如果出现平票的情况，那么就延长了系统不可用的时间(没有leader是不能处理客户端写请求的)，因此Raft引入了randomized election timeouts来尽量避免平票情况。同时，leader-based共识算法中，节点的数目都是奇数个，尽量保证majority的出现。
+----------------------
+Raft Election safety:
+选举安全性，即任一任期内最多一个leader被选出。这点非常重要，在一个复制集中任何时刻只能有一个leader。系统中同时有多个leader，被称之为脑裂(brain split)，这是非常严重的问题，会导致数据的覆盖丢失。在Raft中，两点保证了这个属性：
+	1. 一个节点某一任期内最多只能投一票；
+	2. 只有获得majority投票的节点才会成为leader；
+因此，某一任期内一定只有一个leader.
+----------------------
+Raft:
+复制状态机(Replicated State Machine)
+为了让一致性协议变得简单可理解，Raft协议主要使用了两种策略。
+一是将复杂问题进行分解，在Raft协议中，一致性问题被分解为:leader election、log replication、saftety三个简单问题；
+二是减少状态空间中的状态数目。
+----------------------
+public abstract class AbstractController extends WebContentGenerator implements Controller {
+	...
+}
+
+/* Core Spring pointcut abstraction.
+	A pointcut is composed of a #ClassFilter and a #MethodMatcher.
+	Both these basic terms and a Pointcut itself can be combined to build up combinations(
+	e.g. through #ComposablePointcut).
+*/
+public interface Pointcut {
+	ClassFilter getClassFilter();
+	MethodMatcher getMethodMatcher();
+	Pointcut TRUE = TruePointcut.INSTANCE;
+}
+
+/*	Base interface holding AOP advice(action to take at a joinpoint) and a filter determining 
+	the applicability of the advice (such as a pointcut). This interface is not for use by 
+	Spring users, but to allow for commonality in support for different types of advice. 
+	
+	Spring AOP is based around #(around advice) delivered via method #(interception), compliant 
+	with the AOP Alliance interception API. The Advisor interface allows support for different 
+	types of advice, such as #before and #after advice, which need not be implemented using interception. 
+*/
+public interface Advisor {
+	
+	Advise EMPTY_ADVICE = new Advice() {}
+	Advice getAdvice();
+	boolean isPerInstance();
+}
+
+public interface IntroductionAwareMethodMatcher extends MethodMatcher {
+	boolean matches(Method method, Class<?> targetClass, boolean hasIntroductions);
+}
+
+/* Convenient class for building up pointcuts. All methods return ComposablePointcut, so we can 
+	use a concise idiom like:
+	Pointcut pc = new ComposablePointcut().union(classFilter).intersection(methodMatcher).intersection(pointcut);
+*/
+public class ComposablePointcut implements Pointcut, Serializable {
+	...
+}
+
+@SuppressWarnings("serial")
+public class AspectJExpressionPointcut extends AbstractExpressionPointcut 
+		implements ClassFilter, IntroductionAwareMethodMatcher, BeanFactoryAware {
+	...
+}
+--------------------------------------
+/* Abstract base class for #HandlerAdapter implementations that support handlers of type #HandlerMethod.
+*/
+public abstract class AbstractHandlerMethodAdapter extends WebContentGenerator 
+				implements HandlerAdapter, Ordered {
+	...
+}
+
+/*	Extension of #AbstractHandlerMethodAdapter that supports #RequestMapping annotated HandlerMethod 
+	RequestMapping annotated HandlerMethods.
+	Support for custom argument and return value types can be added via #setCustomArgumentResolvers and 
+	#setCustomReturnValueHandlers, or alternatively, to re-configure all argument and return value types,
+	use #setArgumentResolvers and #setReturnValueHandlers.
+*/
+public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter 
+		implements BeanFactoryAware, InitializingBean {
+	...
+}
+
+Future的主要缺点：
+	1. 不支持手动完成；提交了一个任务，但是执行太慢，如果已经通过其他途径获取到了结果，没法把这个任务结果，通知到正在执行的线程，所以必须主动取消或者一直等待它执行完成。
+	2. 不支持进一步的非阻塞调用；通过Future#get方法会一直阻塞到任务完成，但想在获取任务之后，执行其他任务，因为Future不支持回调函数，所以无法实现这个功能。
+	3. 不支持链式调用；指的是对于Future的执行结果，想继续传递到下一个Future处理使用，从而形成一个链式的pipeline调用，在Future中无法实现。
+	4. 不支持多个Future合并；多个Future并行执行，想在所以Future运行完毕之后，执行某些函数，是无法通过Future实现的。
+	5. 不支持异步处理；Future的API没有任何异常处理的API。
+
+CompletableFuture中执行异步任务的ForkJoinPool所有的工作线程都是守护模式，也就是说如果主线程退出，那么整个处理任务都会结束，而不管当前任务是否执行完。如果需要主线程等待结束，可采用ThreadPoolExecutor.
+
+JDK9中对CompletableFuture类增强的内容：
+	1. 支持对异步方法的超时调用;
+		orTimeout();
+		completeOnTimeout();
+	2. 支持延迟调用
+		Executor delayedExecutor(long delay, TimeUnit unit, Executor executor);
+		Executor delayedExecutor(long delay, TimeUnit unit);
+
+Catalyst Optimizer是SparkSQL的核心组件(查询优化器)，它负责将SQL转换成物理执行计划，Catalyst的优劣决定了SQL执行的性能。
+
+Spark SQL中对一条SQL语句的处理过程如下：
+	1. SqlParser将SQL语句解析成一个逻辑执行计划(未解析);
+	2. Analyzer利用HiveMeta中表/列等信息，对逻辑执行计划进行解析(如表/列是否存在等);
+	3. Spark Optimizer利用Rule Based(基于经验规则RBO)/Cost Based(基于代价CBO)的优化方法，对逻辑执行计划进行优化(如谓词下推/JoinRecorder)；
+	4. Spark Planner将逻辑执行计划转换成物理执行计划(如Filter -> FilterExec)，同时从某些逻辑算子的多种物理算子实现中根据RBO/CBO选择其中一个合适的物理算子(如Join的多个实现BroadcastJoin/SortMergeJoin/HashJoin中选择一个实现)；
+	5. PrepareForExecution是执行物理计划之前做的一些事情，比如ReuseExchange/WholeStageCodegen的处理等；
+	6. 最终在Spark Core中执行该物理执行计划。
+
+导致并行执行效率降低的几个因素：
+	1. 来源的拆分成本很高或拆分不均；
+	2. 合并部分结果的成本很高；
+	3. 问题不允许足够的可利用并行性；
+	4. 数据布局导致糟糕的访问位置；
+	5. 没有足够的数据来克服并行性的启动成本；
+
+public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
+	volatile Object result;   //Either the result or boxed AltResult;
+	volatile Completion stack;   //Top of Treiber stack of dependent actions;
+	...
+	@SuppressWarnings("serial")
+	abstract static class Completion extends ForkJoinTask<Void> 
+			implements Runnable, AsynchronousCompletionTask {
+		volatile Completion next;
+		abstract CompletableFuture<?> tryFire(int mode);
+		abstract boolean isLive();
+		
+		public final void run() {tryFire(ASYNC);}
+		public final boolean exec() {tryFire(ASYNC); return true;}
+		public final Void getRawResult() {return null;}
+		public final void setRaqResult(Void v) {}
+	}
+	...
+}
+
+public interface WebApplicationInitializer {
+	void onStartup(ServletContext servletContext) throws ServletException;
+}
+
+public class InheritableThreadLocal<T> extends ThreadLocal<T> {
+	...
+}
+
+public class DispatcherServlet extends FrameworkServlet {
+	...
+	protected void initStrategies(ApplicationContext context) {
+		initMultipartResolver(context);
+		initLocaleResolver(context);
+		initThemeResolver(context);
+		initHandlerMappings(context);
+		initHandlerAdapters(context);
+		initHandlerExceptionResolvers(context);
+		initRequestToViewNameTranslator(context);
+		initViewResolvers(context);
+		initFlashMapManager(context);
+	}
+	...
+		/**
+	 * Initialize the HandlerAdapters used by this class.
+	 * <p>If no HandlerAdapter beans are defined in the BeanFactory for this namespace,
+	 * we default to SimpleControllerHandlerAdapter.
+	 */
+	private void initHandlerAdapters(ApplicationContext context) {
+		this.handlerAdapters = null;
+
+		if (this.detectAllHandlerAdapters) {
+			// Find all HandlerAdapters in the ApplicationContext, including ancestor contexts.
+			Map<String, HandlerAdapter> matchingBeans =
+					BeanFactoryUtils.beansOfTypeIncludingAncestors(context, HandlerAdapter.class, true, false);
+			if (!matchingBeans.isEmpty()) {
+				this.handlerAdapters = new ArrayList<>(matchingBeans.values());
+				// We keep HandlerAdapters in sorted order.
+				AnnotationAwareOrderComparator.sort(this.handlerAdapters);
+			}
+		}
+		else {
+			try {
+				HandlerAdapter ha = context.getBean(HANDLER_ADAPTER_BEAN_NAME, HandlerAdapter.class);
+				this.handlerAdapters = Collections.singletonList(ha);
+			}
+			catch (NoSuchBeanDefinitionException ex) {
+				// Ignore, we'll add a default HandlerAdapter later.
+			}
+		}
+
+		// Ensure we have at least some HandlerAdapters, by registering
+		// default HandlerAdapters if no other adapters are found.
+		if (this.handlerAdapters == null) {
+			this.handlerAdapters = getDefaultStrategies(context, HandlerAdapter.class);
+			if (logger.isTraceEnabled()) {
+				logger.trace("No HandlerAdapters declared for servlet '" + getServletName() +
+						"': using default strategies from DispatcherServlet.properties");
+			}
+		}
+	}
+	...
+}
+
+LSM树(Log Structured Merge Tree)可以进行顺序写磁盘，从而大幅提升写操作，作为代价的是牺牲了一些读性能。
+
+LSM的原理：将对数据的修改增量保存在内存中，达到指定大小限制之后批量把数据flush到磁盘中，磁盘中树定期可以做merge操作，合并成一棵大树，以优化读性能。不过读取的时候稍微麻烦一些，读取时看这些数据在内存中，如果未能命中内存，则需要访问较多的磁盘文件。极端的说，基于LSM树实现的hbase写性能比mysql高了一个数量级，读性能却低了一个数量级。
+
+LSM树原理把一颗大叔拆分成N颗小树，它首先在内存中，它首先写入内存中，随着小树越来越大，内存中的小树会flush到磁盘中，磁盘中的树定期可以做merge操作，合并成为一个大叔，用来优化读性能。
+
+public interface PlatformTransactionManager {
+	TransactionStatus getTransaction(@Nullable TransactionDefiniton definition) throws TransactionException;
+	void commit(TransactionStatus status) throws TransactionException;
+	void rollback(TransactionStatus status) throws TransactionException;
+}
+
+public interface SavepointManager {
+	Object createSavepoint() throws TransactionException;
+	void rollbackToSavepoint(Object savepoint) throws TransactionExceptin;
+	void releaseSavepoint(Object savepoint) throws TransactionException;
+}
+
+/*FactoryBean that creates a MyBatis SqlSessionFactory. This is the usual way to set up a sharedMyBatis SqlSessionFactory in a Spring application context; the SqlSessionFactory can then be passed toMyBatis-based DAOs via dependency injection.Either DataSourceTransactionManager or JtaTransactionManager can be used for transaction demarcationin combination with a SqlSessionFactory. JTA should be used for transactions which span multiple databases orwhen container managed transactions (CMT) are being used.
+*/
+public class SqlSessionFactoryBean implements FactoryBean<SqlSessionFactory>, 
+	InitializingBean, ApplicationListener<ApplicationEvent> {
+	private static final Logger LOGGER = LoggerFactory.getLogger(SqlSessionFactoryBean.class);
+	private static final ResourcePatternResolver RESORCE_PATTERN_RESULVER = 
+						new PathMathingResourcePatternResolver();
+	private static final MetadataReaderFactory METADATA_READER_FACTORY = 
+						new CachingMetadataReaderFactory();
+	
+	private Resource configLocation;
+	private Configuration configuration;
+	private Resource[] mapperLocations;
+	private DataSource dataSource;
+	private TransactionFactory transactionFactory;
+	private Properties configurationProperties;
+	private SqlSessionFactoryBuilder sqlSessionFactoryBuilder = new SqlSessionFactoryBuilder();
+	private SqlSessionFactory sqlSessionFactory;
+	
+	// EnvironmentAware requires spring 3.1
+	private String environment = SqlSessionFactoryBean.class.getSimpleName();
+	private boolean failFast;
+	private Interceptor[] plugins;
+	private TypeHandler<?>[] typeHandlers;
+	private String typeHandlersPackage;
+	private Class<?>[] typeAliases;
+	private String typeAliasesPackage;
+	private Class<?> typeAliasesSuperType;
+	private LanguageDriver[] scriptingLanguageDrivers;
+	private Class<? extends LanguageDriver> defaultScriptingLanguageDriver;
+	private DatabaseIdProvider databaseIdProvider;
+	private Class<? extends VFS> vfs;
+	private Cache cache;
+	private ObjectFactory objectFactory;
+	private ObjectWrapperFactory objectWrapperFactory;
+	...
+}
+
+public class MapperFactoryBean<T> extends SqlSessionDaoSupport implements FactoryBean<T> {
+
+  private Class<T> mapperInterface;
+  private boolean addToConfig = true;
+
+  public MapperFactoryBean() {}
+
+  public MapperFactoryBean(Class<T> mapperInterface) {
+    this.mapperInterface = mapperInterface;
+  }
+
+  @Override
+  protected void checkDaoConfig() {
+    super.checkDaoConfig();
+
+    notNull(this.mapperInterface, "Property 'mapperInterface' is required");
+
+    Configuration configuration = getSqlSession().getConfiguration();
+    if (this.addToConfig && !configuration.hasMapper(this.mapperInterface)) {
+      try {
+        configuration.addMapper(this.mapperInterface);
+      } catch (Exception e) {
+        logger.error("Error while adding the mapper '" + this.mapperInterface + "' to configuration.", e);
+        throw new IllegalArgumentException(e);
+      } finally {
+        ErrorContext.instance().reset();
+      }
+    }
+  }
+
+  @Override
+  public T getObject() throws Exception {
+    return getSqlSession().getMapper(this.mapperInterface);
+  }
+
+  @Override
+  public Class<T> getObjectType() {
+    return this.mapperInterface;
+  }
+
+  @Override
+  public boolean isSingleton() {
+    return true;
+  }
+
+  /**
+   * Sets the mapper interface of the MyBatis mapper
+   *
+   * @param mapperInterface
+   *          class of the interface
+   */
+  public void setMapperInterface(Class<T> mapperInterface) {
+    this.mapperInterface = mapperInterface;
+  }
+
+  /**
+   * Return the mapper interface of the MyBatis mapper
+   *
+   * @return class of the interface
+   */
+  public Class<T> getMapperInterface() {
+    return mapperInterface;
+  }
+
+  /**
+   * If addToConfig is false the mapper will not be added to MyBatis. This means it must have been included in
+   * mybatis-config.xml.
+   * <p>
+   * If it is true, the mapper will be added to MyBatis in the case it is not already registered.
+   * <p>
+   * By default addToConfig is true.
+   *
+   * @param addToConfig
+   *          a flag that whether add mapper to MyBatis or not
+   */
+  public void setAddToConfig(boolean addToConfig) {
+    this.addToConfig = addToConfig;
+  }
+
+  /**
+   * Return the flag for addition into MyBatis config.
+   *
+   * @return true if the mapper will be added to MyBatis in the case it is not already registered.
+   */
+  public boolean isAddToConfig() {
+    return addToConfig;
+  }
+}

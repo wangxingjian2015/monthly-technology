@@ -1,0 +1,517 @@
+MySQL有多少种日志:
+	1. 错误日志: 记录出错信息，也记录一些警告信息或者正确信息；
+	2. 查询日志: 记录所有对数据库请求的信息，无论这些请求是否得到了正确的执行；
+	3. 慢查询日志：设置一个阈值，将运行时间超过该值的所有SQL语句都记录到慢查询的日志文件中；
+	4. 二进制日志：记录对数据库执行更改的所有操作，即binlog；
+	5. 中继日志：中继日志也是二进制日志，用来给slave库恢复。
+	6. 事务日志：重做日志redo和回滚日志undo。
+判断一个无用的类(不是实例)需要同时满足下面三个条件：
+	1. 该类的所有实例都已经被回收；
+	2. 加载该类的ClassLoader已经被回收；
+	3. 该类对应的java.lang.Class对象已经没有任何地方被引用，无法在任何地方通过反射访问该类的方法。
+ZK是如何保证事务的顺序一致性的：
+Zookeeper采用了递增的事务ID来标识，所有的proposal提议都在被提出的时候加上了zxid，zxid实际上是一个64位的数字，高32位是epoch用来标识leader是否发生改变，如果有新的leader产生出来，epoch会自增，低32位用来递增计数。当新产生proposal的时候，会依据两阶段过程，首先向其他follower发出事务执行请求，如果超过半数的机器都能执行，那么就提交此提议。
+
+MaxCompute分区表的意义在于优化查询，查询表时通过where语句指定所需查询的分区，避免全表扫描，提高处理效率，降低费用。
+
+按数据的变更和历史规范数据的保存：
+	1. 客户属性、产品属性不断在变更。将这些属性的历史变化情况记录下来，以便追溯某个时点的值。
+	2. 在事实表里冗余维度表的字段，即把事件发生时的各种维度属性值与该事件绑定起来。使用者无需关联多张表就可以使用数据。此方式仅可应用于数据应用层。
+	3. 用拉链表或者日快照的形式，记录维度表的变化情况。这使得数据结构变得灵活、易于扩展，数据一致性得到了增强，数据加工者可以更加方便地管理数据。此方式仅可应用于数据基础层。
+
+分区字段定义依据：按优先级高低排序如下：
+	1. 分区列的选择应充分考虑时间因素，尽量避免对于存量分区进行更新。
+	2. 如果有多个事实表(不包括维度表)进行join，应将作为查询条件的字段作为分区列。
+	3. 选择group by或distinct包含的列作为分区列。
+	4. 选择值分布均匀的列，而不要选择数据倾斜的列作为分区列。
+	5. 常用SQL语句中如果包含某列的等值或in的查询条件，则选择该列作为分区列。
+
+序列化相关的几个问题:
+	1. 序列化ID：JVM是否允许序列化，不仅取决于类路径和功能代码是否一致，一个非常重要的一点是两个类的序列化ID是否一致(private static final long serialVersionUID=1L)。
+	2. 静态变量序列化：序列化保存的是对象的状态，静态变量属于类的状态，因此序列化并不保存静态变量。
+	3. 父类的序列化与transient关键字：父类如果没有实现Serializable接口，则子类不会序列化父类的字段。
+	4. 对敏感字段加密：在序列化过程中，JVM会试图调用对象类里的wrtieObject和readObject方法，进行用户自定义的序列化和反序列化。如果没有这样的方法，默认调用ObjectOutputStream的defaultWriteOjbect方法以及ObjectInputStream的defaultReadObject方法。用户自定义的 writeObject 和 readObject 方法可以允许用户控制序列化的过程，比如可以在序列化的过程中动态改变序列化的数值。基于这个原理，可以在实际应用中得到使用，用于敏感字段的加密工作。
+
+字符串的追加操作会涉及到内存分配问题，然而内存分配问题会涉及内存划分算法以及系统调用所以如果频繁发生的话，影响性能。 Redis在SDS中采取了两种优化措施：
+	1. 空间预分配；
+	2. 惰性空间回收；
+1. 空间预分配：
+	对于追加操作来说，Redis不仅会开辟空间至够用而且还会预分配未使用的空间(free)来用于下一次操作。至于未使用的空间(free)的大小则由修改后的字符串长度决定。
+	当修改后的字符串长度len < 1M，则会分配与len相同长度的未使用空间(free)。
+	当修改后的字符串长度len >= 1M，则会分配1M长度的未使用空间(free)。
+	有了这个预分配策略之后会减少内存分配次数，因为分配之前会检查已有的free空间是否足够，如果够就不开辟了。
+2. 惰性空间回收：
+	惰性空间回收适用于字符串缩减操作。执行完缩减后，Redis不会立即回收减少的部分，而是会分配给下一个需要内存。当然，Redis也提供了回收内存的api，可以手动调用来缩减部分的内存。
+
+Mybatis是否支持延迟加载，实现原理：
+	Mybatis仅支持association关联对象和collection关联集合对象的延迟加载，association指的是一对一，collection指的是一对多查询。在Mybatis配置文件中，可以配置是否启用延迟加载lazyLoadingEnabled=true|false。
+	它的原理是，使用CGLIB创建目标对象的代理对象，当调用目标方法时，进入拦截方法，比如调用a.getB().getName()，拦截器invoke()方法发现a.getB()是null值，那么就会单独发送事先保存好的查询关联B对象的sql，把B查询上来，然后调用a.setB(b)，于是a的对象b属性就有了值，接着完成a.getB().getName()方法的调用。这就是延迟加载的基本原理。
+
+Mybatis有三种基本的Executor执行器：SimpleExecutor, ReuseExecutor, BatchExecutor.
+SimpleExecutor: 每执行一次update或select,就开启一个Statement对象，用完立刻关闭Statment对象。
+ReuseExecutor:执行update或select，以sql作为key查找Statement对象，存在就使用，不存在就创建，用完后，不关闭Statement对象，而是放置于Map<String, Statement>内，供下次使用。简言之，就是重复使用Statement。
+BatchExecutor:执行update(没有select, JDBC批处理不支持select)，将所有sql都添加到批处理中(addBatch())，等待统一执行(executeBatch())，它缓存了多个Statement对象，每个Statement对象都是addBatch()完毕后，等待逐一执行executeBatch()批处理。与JDBC批处理相同。
+
+Mybatis如何指定使用哪一种Executor执行器：在Mybatis配置文件中，可以指定默认的ExecutorType执行器类型，也可以手动给DefaultSqlSessionFactory的创建SqlSession的方法传递ExecutorType类型参数。
+
+Mybatis可以映射枚举类，不单可以映射枚举类，Mybatis可以映射任何对象到表的一列上。映射方式为自定义一个TypeHandler，实现TypeHandler的setParameter()和getResult()接口方法。
+TypeHandler有两个作用，一是完成从javaType至jdbcType的转换，二是完成jdbcType至javaType的转换，体现为setParameter()和getResult()两个方法，分别代表设置sql问号占位符参数和获取列查询结果。
+
+Mybatis的XML映射文件和Mybatis内部数据结构之间的映射关系：
+Mybatis将所有XML配置信息都封装到All-In-One重量级对象Configuration内部。在XML映射文件中，<parameterMap>标签会被解析为ParameterMap对象，其每个子元素会被解析为ParameterMapping对象。
+<resultMap>标签会被解析为ResultMap对象，其每个子元素会被解析为ResultMapping对象。每一个<select>, <insert>, <update>, <delete>标签均会被解析为MappedStatement对象，标签内的sql会被解析为BoundSql对象。
+
+索引失效的条件：
+	1. 不在索引上做任何操作(计算，函数，(自动或手动)类型转换)，会导致索引失效而转向全表扫描；
+	2. 存储引擎不能使用索引范围条件右边的列。
+	3. 尽量使用覆盖索引(只访问索引的查询(索引列和查询列一致))，减少select *。
+	4. mysql在使用不等于(!=或者<>)的时候无法使用索引，会导致全表扫描。
+	5. is null, is not null也无法使用索引。
+	6. like以通配符开头，索引会失效变成全表扫描。
+
+虚拟机会收集类及父类中的类变量及类方法组合为<clinit>方法，根据定义的顺序进行初始化。虚拟机会保证子类的<clinit>执行之前，父类的<clinit>方法先执行完毕。
+因此，虚拟机中第一个被执行完毕的<clinit>方法肯定是java.lang.Object方法。
+
+如果类或者父类中都没有静态变量及方法，虚拟机不会为其生成<clinit>方法。
+接口与类不同的是，执行接口的<clinit>方法不需要先执行父接口的<clinit>方法。只有当父接口中定义的变量使用时，父接口才会初始化。另外，接口的实现类在初始化时也不会执行接口的<clinit>方法。
+
+对于接口，只有真正使用父接口的类变量才会真正的加载父接口。这跟普通类加载不一样。
+
+虚拟机会保证一个类的<clinit>方法在多线程环境中被正确地加锁和同步，如果多个线程同时去初始化一个类，那么只有一个线程去执行这个类的<clinit>方法，其他线程都需要阻塞等待，直到活动线程执行<clinit>方法完毕。
+
+ClassNotFoundException和NoClassDefFoundError的不同点：
+对于ClassNotFoundException:
+	1. 从Exception继承，是一个Exception类型；
+	2. 当动态加载Class的时候，找不到类会抛出异常；
+	3. 一般在执行Class.forName(), ClassLoader.loadClass()或ClassLoader.findSystemClass()的时候抛出；
+对于NoClassDefFoundError:
+	1. 从Error继承，是一个Error类型；
+	2. 当编译成功以后执行过程中，Class找不到导致抛出异常该错误。
+	3. 由JVM的运行时系统抛出。
+
+在Netty中通过FileRegion中包装NIO的FileChannel.transferTo()方法实现了零拷贝。
+和Netty的ZeroCopy直接相关的CompositeChannelBuffer类，将多个ChannelBuffer组成一个虚拟的ChannelBuffer来进行操作。因为CompositeChannelBuffer并没有将多个ChannelBuffer真正的组合起来，而只是保存了它们的引用，这样就避免了数据的拷贝，实现了ZeroCopy。
+Netty推荐使用ChannelBuffers.wrappedBuffer()方法来进行Buffer的合并，因为在该方法中Netty会通过slice()方法来确保构建CompositeChannelBuffer是传入的所有子Buffer都是符合要求的。
+
+一个Reference对象的生命周期如下：
+	1. 引用对象被创建；
+	2. GC时发现Reference对象；(此步骤在JVM内)
+	3. 如指向的对象需要被回收，则加入到DiscoveredList;(此步骤在JVM内)
+	4. 将DiscoveredList的元素移动到PendingList；(此步骤在JVM内)
+	5. ReferenceHandler线程将pending引用加入到ReferenceQueue；
+	6. 从ReferenceQueue中被移除。
+主要分为Native层和Java层两部分。
+Native层在GC时，将需要被回收的Reference对象加入到DiscoveredList中(代码在referenceProcessor.cpp中process_discovered_reference方法)，然后将DiscoveredList的元素移动到PendingList中(代码在referenceProcessor.cpp中enqueue_discovered_ref_helper方法)，PendingList的队首就是Reference类中的pending对象。
+
+流程比较简单：就是源源不断的从PendingList中提取出元素，然后将其加入到ReferenceQueue中去，开发者可以通过ReferenceQueue中poll元素感知到对象被回收的事件。
+另外需要注意的是，对于Cleaner类型(继承自虚引用)的对象会有额外的处理：在其指向的对象被回收时，会调用clean方法，该方法主要是做对应的资源回收，在堆外内存DirectByteBuffer中就是用Cleaner进行堆外内存的回收，这也是虚引用在Java中的典型应用。
+
+软引用会在内存不足时被回收，内存不足的定义和该引用对象get的时间以及当前堆可用内存大小都有关系，计算公式如下：
+void LRUCurrentHeapPolicy::setup() {
+	_max_interval = (Universe::get_heap_free_at_last_gc()/M) * SoftRefLRUPolicyMSPerMB;
+	assert(_max_interval >= 0, "Sanity check");
+}
+
+void LRUMaxHeapPolicy::setup() {
+	size_t max_heap = MaxHeapSize;
+	max_heap -= Universe::get_heap_used_at_last_gc();
+	max_heap /= M;
+	_max_interval = max_heap * SoftRefLRUPolicyMSPerMB;
+	assert(_max_interval >= 0, "Sanity check");
+}
+
+严格的说，虚引用是会影响对象生命周期的，如果不做任何处理，只要虚引用不被回收，那其引用的对象永远不会被回收。所以一般来说，从ReferenceQueue中获得PhantomReference对象后，如果PhantomReference对象不会被回收的话(比如被其他GC Root可达的对象引用)，需要调用clear方法解除PhantomReference和其他引用对象的引用关系。
+
+MySQL的RR隔离级别下可以防止所有的幻读吗？不能，对于两个select之间发生了当前读，并且在当前读之前，第一次select之后有其他事务影响select的结果集。这种情况下会发生幻读。
+
+依赖倒置原则(Dependency Inversion Principle)的思路是控制反转(Inversion of Control)，控制反转(Inversion of Control)的方法是依赖注入(Dependency Injection)。
+
+实例化一个对象其实可以分为三个步骤：
+	1. 分配内存空间；
+	2. 初始化对象；
+	3. 将内存空间的地址赋值给对应的引用。
+但由于操作系统可以对指令进行重排序，上面的三部有可能重排序。如果在多线程情况下，就可能导致一个未初始化的对象引用暴露出来，从而导致不可预料的结果。因为为了防止这个过程的重排序，可以将变量设置为volatile类型。
+-----------------------------------------------
+volatile原理：
+	1. 可见性实现：
+对volatile变量的写操作与普通变量的主要区别有两点：
+	修改volatile变量时会强制将修改后的值刷新的主内存中。
+	修改volatile变量后会导致其他线程工作内存中对应的变量值失效。因此，再读取该变量值的时候就需要重新从读取主内存中的值。
+通过这两个操作，就可以解决volatile变量的可见性问题。
+	2. 有序性实现：
+	happen-before语义：volatile变量保证有序性的规则。为了实现volatile内存语义，JMM会对volatile变量限制这两种类型的重排序。
+	3. 内存屏障：
+	为了实现volatile可见性和happen-before语义。JVM底层是通过一个叫做内存屏障的东西来完成。内存屏障，也叫做内存栅栏，是一组处理器指令，用于实现对内存操作的顺序限制。
+-----------------------------------------------
+缓存一致性协议 
+
+synchronized的语义底层是通过一个monitor的对象来完成，其实wait/notify/notifyAll等方法也依赖于monitor对象，这就是为什么只有在同步代码块或者方法中才能调用wait/notify/notifyAll，否则抛出IllegalMonitorStateException异常。
+方法的同步并没有通过指令monitorenter和monitorexit来完成（理论上其实也可以通过这两条指令来实现），不过相对于普通方法，其常量池中多了ACC_SYNCHRONIZED标示符。
+JVM就是根据该标示符来实现方法的同步的：当方法调用时，调用指令将会检查方法的ACC_SYNCHRONIZED 访问标志是否被设置，如果设置了，执行线程将先获取monitor，获取成功之后才能执行方法体，方法执行完后再释放monitor。
+在方法执行期间，其他任何线程都无法再获得同一个monitor对象。其实本质上没有区别，只是方法的同步是一种隐式的方式来实现，无需通过字节码来完成。
+
+Trie树：卡bin, 前缀树，字典树
+----------------------------------------------------
+Redis中的LRU算法
+Redis在实现上引入了一个LRU时钟来代替unix时间戳，每个对象的每次访问都会记录下当前服务器的LRU时钟，然后用服务器的LRU时钟减去对象本身的时钟，得到的就是这个对象被访问的时间间隔(也称为空闲时间)，空闲时间最大的就是需要淘汰的对象。
+Redis中的所有对象定义为redisObject结构体，也正是这些对象采用了LRU算法进行内存回收，所以每个对象需要一个成员用来记录该对象的最近一次被访问的时间(即lru成员)，由于时钟的最大值只需要24个比特位就能表示，所以结构体定义时采用了位域。
+typedef struct redisObject {
+	unsigned type : 4;
+	unsigned encoding : 4;
+	unsigned lru : LRU_BITS;
+	int refcount;
+	void *ptr;
+} robj;
+Redis对象更新LRU时钟的地方有两个：a)对象创建时；b)对象被使用时。
+----------------------------------------------------
+maxmemory-samples:5。指定了进行删除时的键的采样数量。LRU和TTL都是近似算法，所以可以根据参数进行取舍，到底是要速度还是精确度。默认值是5，10的话已经非常接近正式的LRU算法了，但是会消耗比较多的CPU。3的话执行更快，然后不够精确。
+
+使用Reactive方式构建的系统具有以下特征：
+	1. 即时响应性(Responsive)
+	2. 回弹性(Resilient)
+	3. 弹性(Elastic)
+	4. 消息驱动(Message Driven)；
+
+The purpose of Reactive Streams is to provide a standard for asynchronous stream processing with non-blocking back pressure.
+
+为什么Reactive Stream规范强调使用非阻塞异步方式而不是阻塞同步方式：
+	1. 同步方式一般通过多线程来提高性能，但系统可创建的线程数是有限的，且线程多以后造成线程切换开销。
+	2. 同步方式很难进一步提升资源利用率；
+	3. 同步调用依赖的系统出现问题时，自身稳定性也会受到影响。
+
+Reactor是遵守Reactive Stream规范构建非阻塞应用的Java语言Reactive类库，已经在Spring5集成，与之类似的类库还有RxJava2, RxJS, JDK9 Flow等。
+
+对于多数互联网公司而言，技术TL更多的职责不再局限于项目角度，而是对技术和业务角度去深度思考问题，具备一定的前瞻性，并在技术领域投入持续的学习热情，向团队成员传道，补齐短板，提高整个团队的战斗力。
+技术TL职责不仅需要指定日常规范，包括开发规范、流程规范等，推动规范的落地，以公有的强制约定来避免不必要的内耗，另外一半多的时间可能花在开发任务分解分配、开发实践、技术架构评审、代码审核和风险识别上，剩余的时间则花在为了保障系统按时交付所需的各种计划、协作、沟通、管理上。
+
+Service Mesh:
+	1. 服务发现；
+	2. 熔断；
+	3. 容错；
+	4. 蓝绿部署；
+	5. 负载均衡；
+	6. 路由；
+	7. 功能降级；
+	8. 限流；
+	9. 授权；
+	10. 监控；
+	11. 日志聚合；
+	12. 滚动发布；
+	13. 跟踪；
+	14. 计量；
+	15. 故障注入；
+	16. 认证；
+	17. 灰度；
+
+按照常见的项目阶段来看，可以分为启动期、规划期、执行期、监控期及收尾期。每个阶段需要明确关键目标，锁定核心问题。
+	启动期：明确方向，确认人员，理清目标，明确机制，制定里程碑计划；
+	规划期：明确目标、确定方案，制定执行计划；
+	执行期：紧盯目标、管控计划、保障落地；
+	监控期：基于目标、运用机制、核查计划、发掘风险，制定预案，管控变更。理论上从规划期到收尾期都属于监控期，但项目的差异，着力点和力度有不同。常见的互联网项目，执行期监控粒度最大，所以一些流程上把执行和监控糅合在一起了；
+	收尾期：有序收尾、深度复盘、有效沉淀。
+
+作为架构师，最重要的价值应该是"化繁为简"。但凡让事情变得更复杂，让系统变得更晦涩难懂的架构都是值得商榷的。
+架构师的工作就是要努力训练自己的思维，用它去理解复杂的系统，通过合理的分解和抽象，使得那些系统不再那么难懂。应该努力构建易懂的架构，使得在系统上的其他人员(例如设计者、实现者、操作员等)可以较为容易地理解这个系统。
+软件架构的核心价值应该只围绕一个核心命题：控制复杂性。它并不意味着某个特定的分层结构，某个特定的方法论(贫血、DDD等)。
+
+首先，需要对进行调优的对象进行详尽的了解：
+	1. 对性能问题进行粗略评估，过滤一些低级的业务逻辑导致的性能问题。譬如，线上应用日志级别不合理，可能会在大流量时导致CPU和磁盘的负载飙高，这种情况调整日志级别即可；
+	2. 了解应用的总体架构，比如应用的外部依赖和核心接口有哪些，使用了哪些组件和框架，哪些接口、模块的使用率较高，上下游的数据链路是怎么样的等；
+	3. 了解应用对应的服务器信息，如服务器所在的集群信息、服务器的CPU/内存信息、安装的Linux版本、服务器是虚拟机还是容器、所在宿主机混部后是否对当前应用有干扰等。
+
+Profiling指的是在应用运行时，通过事件(Event-based)、统计抽样(Sampling Statistical)或植入附加指令(Byte-Code instrumentation)等方法，收集应用运行时的信息，来研究应用行为的动态分析方法。
+
+设计中的稳定性模式，比较核心的有：
+	1. 多轮多链路压测；
+	2. 限流；
+	3. 降级；
+	4. 动态扩容；
+	5. 流量调度；
+	6. 减少单点；
+	7. 依赖简化/弱化；
+
+在上线前期阶段，工作点如下：这个阶段的工作会比较多，只有做到事前充分准备，才能更好的保障结果，包括如下几个部分：
+	1. 顺理薄弱点，包括系统架构、系统薄弱点、核心主流程，识别出来后制定应对策略；
+	2. 全链路压测，对系统进行全链路压测，找出系统可以承载的最大QPS；
+	3. 限流配置，为系统配置安全的、符合业务需求的限流阈值；
+	4. 应急预案，收集各个域的可能风险点，制定应急处理方案；
+	5. 安全保障，主要聚焦在账号权限管控，以最小够用原则为准，防止权限滥用，安全无小事；
+	6. 战前演练，通过演练来检验保障体系是否完善，演练现场，提高团队响应和处理能力；
+	7. 作战手册，制定作战手册，明确作战流程和关键点节点的任务以及沟通机制。
+
+在站中节点：整个项目组主要关注三件事情，即监控、响应和记录。严格按照应用owner机制，负责巡检应用情况，及时同步技术数据和业务数据是否有异常。同时，在站中，临时组建"保障虚拟小组"，用于应对大促期间可能出现的紧急客诉等问题，及时做出决策，控制影响范围，同时也能提高整体作战能力。记录，是将过程中必须要记录下各应用的峰值，及时沉淀及时数据，为后续系统建设，流量评估等提供参考借鉴。
+
+如何实现不同域之间的协作，同时又要保证各自领域的概念的完整性，总体来说，大概有两种方式：共享内核(Shared Kernel)和防腐层(ACL, Anti-Corruption Layer)。
+
+所有变更做到：
+	1. 可监控；
+	2. 可灰度；
+	3. 可回滚；
+	
+MySQL的查询优化器会分析搜索条件并且按照可以使用的索引中列的顺序来决定先使用哪个搜索条件，后使用哪个搜索条件。
+对于联合索引有个问题需要注意，order by的子句后边的列的顺序也必须按照索引列的顺序给出。
+对于使用联合索引进行排序的场景，要求要求每个排序列的排序顺序是一致的，也就是各个列都是asc规则排序，要么都是desc规则排序。
+
+和使用B+树索引进行排序是一个道理，分组列的顺序也需要和索引列的顺序一致，也可以只使用索引列中左边的列进行分组。
+
+如何挑选索引：
+	1 只为用于搜索、排序或分组的列创建索引；
+	2. 考虑列的基数；
+	3. 索引列的类型尽量小；
+	4. 索引字符串值的前缀；
+	5. 索引列前缀对排序的影响；
+	6. 让索引列在比较表达式中单独出现；
+	7. 为了尽可能少的让聚簇索引发生页面分裂和记录移位的情况，建议让主键拥有auto_increment属性。
+	8. 定位并删除表中的冗余和重复索引；
+	9. 尽量使用覆盖索引进行查询，避免回表带来的性能损耗。
+	
+Spark Streaming的CheckPoint涉及到的一些类：
+DStreamGraph类负责生成任务执行图，而JobGenerator则是任务真实的提交者。任务的数据源则来源于DirectKafkaInputDStrem，checkPoint一些相关信息则是由类DirectKafkaInputStreamCheckpointData负责。
+
+Redis rdb bgsave会使线上卡顿，需要在低峰期执行，并且轮流Redis Master同步。
+
+Redis Cluster的动态扩容操作是通过redis-trib.rb脚本文件来完成的。
+
+>cluster nodes      #线上Redis Cluster中所有节点(包括主从节点)
+
+>cluster info  #
+cluster_slots_pfail:0
+cluster_slots_fail:0
+cluster_stats_messages_ping_sent:6880
+cluster_stats_messages_pong_sent:6059
+-----------------------------------
+维度表设计的最佳实践：
+	描述属性的表通常被设计为维度表。维度表可与任意表组中的任意表进行关联，且创建时无需配置分区信息，但是对单表个数有所限制。通常要求维度表的单表量不超过1000万个。
+说明：
+	- 维度表的数据不应被大量更新。
+	- 可以使用MapJoin语句进行维度表和其他表的Join操作。
+-----------------------------------
+MaxCompute表的高级功能：生命周期，避免全表扫描，小文件以及Hash Clustering表等高级功能。
+
+MySQL中的几个系统数据库: 
+	1. mysql: 存储了MySQL的用户账户和权限信息、存储过程、事件的定义、运行过程中产生的日志信息、帮助信息和时区信息。
+	2. information_schema:所维护的所有其他数据库信息，比如表、视图、触发器、列、索引等。也称为元数据。
+	3. performance_schema：运行过程中的一些状态信息，一个性能监控。包括统计最近执行了哪些语句，在执行过程的每个阶段花费时间，内存的使用情况等等。
+	4. sys: 主要是通过视图的形式，把information_schema和performance_schema结合起来。更方便了解一些性能信息。
+
+对于复杂业务的业务流程：应该多花时间在对问题分析、结构化分解，最后通过合理的抽象，形成合适的阶段(Phase)和步骤(Step)上。
+有过程分解要好于没有分解，过程分解+对象模型要好于仅仅是过程分解。
+复杂业务代码怎么写的方法论：自上而下的结构化分解+自下而上的面向对象分析。
+---------------------------------------
+Docker使用AUFS的Cow技术来实现image layer共享和减少磁盘空间占用。COW意味着一旦某个文件只有很少的部分有改动，AUFS也需要复制整个文件。这种设计会对容器性能产生一定的影响，尤其是在待拷贝的文件很大，或者位于很多image layers的下方，或AUFS需要深度搜索目录结构树的时候。不过不用太担心，对于一个容器，每一个image layer最多只需要拷贝一次。后续的改动都会在第一次拷贝的container layer上进行。
+启动一个Container的时候，Docker会为其创建一个read-only的init layer，用来存储与这个容器内环境相关的内容；Docker还会为其创建一个read-write的layer用来执行所有写操作。
+Container layer的mount目录也是/var/lib/docker/aufs/mnt。Container的metadata和配置文件都存放在/var/lib/docker/containers/目录中。Container的read-write layer存储在/var/lib/docker/aufs/diff/目录下。即使容器停止，这个可读写层仍然存在，因而重启容器不会丢失数据，只有当一个容器被删除的时候，这个可读写层才会一起删除。
+---------------------------------------
+在Linux系统上，Docker资源用的是Linux的CGroup机制，可以设置每个group的CPU配额、IO配额等等。重要应用多分配，不重要应用少分配点。或者更彻底的方法：不同的group绑定到不同的CPU Core上，比如第一个应用绑定到core0和core1，第二个应用绑定core2,第三个应用绑定core3。
+
+Docker原生支持bridge和overlay网络，bridge只能在单个主机上使用，overlay可以在多台主机间使用。
+
+面向服务的架构(SOA)：SOA是一种架构风格，致力于将业务功能保持一致的服务(系统服务，应用服务，技术服务)作为设计、构建和编排组合业务流程以及解决方案的基本单元。
+面向服务的架构的真正的价值体现在当可重用的服务被灵活组合、编排在一起来构建敏捷的、灵活的业务流程，其中敏捷体现在服务可以快速调整，独立演化；灵活性体现在服务由于其业务功能定义明确，边界清晰且功能内聚性强，同时服务具备各自独立完整生命周期，可被灵活组装。
+
+JVM中实例数量前十的类: jmap -histo:live <pid> | sort -n -r -k 2|head -10
+JVM中实例容量前十的类: jmap -histo:live <pid> | sort -n -r -k 2|head -10
+
+使用perf top命令， 查看当前系统的热点函数。因为java代码除了解释执行外，还有大部分代码是JIT执行的，perf看不到其符号，所以默认归入perf-<pid>.map中。如果热点在libjvm.so，则代表是Native代码有问题，需进一步分析。如果热点是JIT相关的函数，一般是CodeCache或者JIT相关参数问题。
+-----------------------------------------------
+jar包冲突解决方法：
+	1. mvn dependency:tree 分析报错所在的jar包版本，删除不用的；
+	2. arthas : sc -d <ClassName>; 查看到底加载的是哪个jar包里的类；
+	3. -XX:+TraceClassLoading; 跟踪类加载明细
+-----------------------------------------------
+awk: -F指定分隔符: awk -F "|" '{print $1}' ***.log | sort -r | uniq -c
+sed时间段匹配: sed '/2020-03-02 10:00:00/,/2020-03-03 10:00:00/p' ***.log
+
+Docker提供了一个docker commit命令，可以随时将现在正在运行中的Container构建成一个新的image。
+
+Nginx特点如下：
+	1. 反向代理，负载均衡器；
+	2. 高可靠性，单master多worker模式；
+	3. 高可扩展性、高度模块化；
+	4. 非阻塞；
+	5. 事件驱动；
+	6. 低内存消耗；
+	7. 热部署；
+
+Nginx进程组件角色：
+	1. Master进程：监视Worker进程的状态，当Worker进程死掉后重启新的；处理信号和通知工作进程；
+	2. Worker进程：处理客户端请求，从Master进程处获得信号做相应的事情；
+	3. Cache Loader进程：加载缓存索引文件，然后退出；
+	4. Cache Manager进程：管理磁盘的缓存大小，超过预定值大小后，最小使用数据将被删除。
+
+Nginx的upstream模块：
+	1. 访问第三方Server服务器；
+	2. 底层HTTP通信非常完善；
+	3. 异步非阻塞；
+	4. 上下游内存零拷贝，节省内存；
+	5. 支持自定义模块开发。
+
+public interface SmartApplicationListener extends ApplicationListener<ApplicationEvent>, Ordered {
+	boolean supportEventType(Class<? extends ApplicationEvent> eventType);
+	default boolean supportsSourceType(@Nullable Class<?> sourceType) {return true;}
+	@Override
+	default int getOrder() {
+		return LOWEST_PRECEDENCE;
+	}
+}
+
+当前Linux一共实现了六种不同类型的namespace:
+	1. Mount namespace;
+	2. UTS namespace;
+	3. IPC namespace;
+	4. PID namespace;
+	5. Network namespace;
+	6. User namespace;
+Namespace的API主要使用三个系统调用：
+	1. clone() - 创建新进程。根据系统调用参数来判断哪种类型的namespace被创建，而且它们的子进程也会被包含到namespace中。
+	2. unshare() - 将进程移出某个namespace;
+	3. setns() - 将进程加入到namespace中。
+
+UTS namespace主要隔离nodename和domainname两个系统标识。在UTS namespace里面，每个namespace允许有自己的hostname。
+
+IPC namespace是用来隔离System V IPC和POSIX message queues。每一个IPC namespace都有它们自己的System V IPC和POSIX message queue。
+
+PID namespace是用来隔离进程id。同样的一个进程在不同的PID namespace里面可以有不同的PID。
+
+Mount namespace是用来隔离各个进程看到的挂载点视图。在不同namespace中的进程看到的文件系统层次是不一样的。在Mount namespace中调用mount()和unmount()仅仅只会影响当前namespace内的文件系统，而对全局的文件系统是没有影响的。
+
+User namespace主要隔离用户的用户组ID。也就是说，一个进程的User ID和Group ID在User namespace内外可以是不同的。比较常用的是，在宿主机上以一个非root用户运行创建一个User namespace，然后在User namespace里面却映射成root用户。这样意味着，这个进程在User namespace里面有root权限，但是在User namespace外面却没有root的权限。从Linux Kernel 3.8开始，非root进程也可以创建User namespace，并且此进程在namespace里面可以被映射成root并且在namespace内有root权限。
+
+Network namespace用来隔离网络设备、IP地址端口等网络栈的namespace。Network namespace可以让每个容器拥有自己独立的网络设备(虚拟的)，而且容器内的应用可以绑定到自己的端口，每个namespace内的端口不会互相冲突。在宿主机上搭建网桥后，就很方便的实现容器之间的通信，而且每个容器内的应用都可以使用相同的端口。
+
+Linux Cgroups(Control Groups)提供了对一组进程及将来的子进程的资源的限制、控制和统计的能力，这些资源包括CPU、内存、存储、网络等。通过Cgroups，可以方便的限制某个进程的资源占用，并且可以实时的进程监控和统计信息。
+
+Apache ShardingSphere 5.x版本开始应用可插拔架构，功能组件能够灵活的以可插拔的方式进行扩展。目前，数据分片、读写分离、多数据副本、数据加密、影子库压测等功能，以及MySQL、PostgreSQL、SQLServer、Oracle等SQL与协议的支持，均通过插件的方式织入项目。
+
+数据分片按照某个维度将存放在单一数据库中的数据分散地存放至多个数据库或表中以达到提升性能瓶颈以及可用性的效果。数据分片的有效手段是对关系型数据库进行分库和分表。分库和分表均可以有效的避免由数据量超过可承受阈值而产生的查询瓶颈。除此之外，分库还能够用于有效地分散对数据库单点的访问量；分表虽然无法缓解数据库压力，但却能够提供尽量将分布式事务转化为本地事务的可能，一旦涉及到跨库的更新操作，分布式事务往往会使问题变得复杂。使用多主多从的分片方式，可以有效的避免数据单点，从而提升数据架构的可用性。
+
+ShardingSphere中绑定表：指分片规则一致的主表和子表。例如t_order表和t_order_item表，均按照order_id分片，则此两张表互为绑定表关系。绑定表之间的多表关联查询不会出现笛卡儿积关系，关联查询效率将大大提升。
+
+ShardingSphere的3个产品的数据分片主要流程是完全一致的。核心由SQL解析->执行器优化->SQL路由->SQL改写->SQL执行->结果归并的流程组成。
+
+根据解析上下文匹配数据库和表的分片策略，并生成路由路径。对于携带分片键的SQL，根据分片键的不同可以划分为单片路由(分片键的操作符是等号)、多片路由(分片键的操作符是IN)和范围路由(分片键的操作符是BETWEEN)。不携带分片键的SQL则采用广播路由。
+分片策略通常可以用由数据库内置或由用户配置。数据库内置的方案较为简单，内置的分片策略大致可以分为尾数取模、哈希、范围、标签、时间等。由用户方配置的分片策略则更加灵活，可以根据使用方需求定制复合分片策略。如果配合数据自动迁移来使用，可以做到无需用户关注分片策略，自动由数据库中间层分片和平衡数据即可，进而做到使分布式数据库具有的弹性伸缩的能力。
+
+/* Abstract base class for most fork-join tasks used to implements stream ops.
+	Manages splitting logic, tracking of child tasks, and intermediate results.
+	Each task is associated with a #Spliterator that describes the portion of the input 
+	associated with the subtree rooted at this task.
+	Tasks may be leaf nodes (which will traverse the elements of the #Spliterator or internal 
+	nodes(which split the #Spliterator into multiple child tasks).
+	@impleNote
+	This class is based on #CountedCompleter, a form of fork-join task where each task has a 
+	semaphore-like count of uncompleted children, and the task is implicitly completed and notified
+	when its last child completes.
+	Internal node tasks will likely override the #onCompletion method from #CountedCompleter to merge 
+	the results from child tasks into the current task's result.
+	Splitting and setting up the child task links is done by #compute(), for internal nodes. At 
+	#compute() time for leaf nodes, it is guaranteed that the parent's child-related fields(including 
+	sibling links for the parent's children) will be set up for all children. 
+	...
+	
+*/
+@SuppressWarnings("serial")
+abstract class AbstractTask<P_IN, P_OUT, R, K extends AbstractTask<P_IN, P_OUT, R, K>>
+	extends CountedCompleter<R> {
+	...
+}
+
+在Docker中，进程管理的基础就是Linux内核中的PID namespace技术。在不同PID namespace中，进程ID是独立的；即在两个不同namespace下的进程可以有相同的PID。
+Linux内核为所有的PID namespace维护了一个树状结构：最顶层的是系统初始化时创建的root namespace(根名空间)，再创建的新的PID namespace就称之为child namespace(子名空间)，而原先的PID namespace就是新创建的parent namespace(父名空间)。通过这种方式，系统中的PID名空间会形成一个层级体系。父节点可以看到子节点中的进程，并可以通过信号等方式对子节点中的进程产生影响。反过来，子节点不能看到父节点名空间中的任何内容，也不可能通过kill或ptrace影响父节点或其他名空间中的进程。
+在Docker中，每个Container都是Docker Daemon的子进程，每个Container进程缺省都具有不同的PID namespace。通过namespace技术，Docker实现容器间的进程隔离。另外Docker Daemon也会利用PID namespace的树状结构，实现了对容器中的进程交互、监控和回收。注：Docker还利用了其他名空间(UTS, IPS, USER)等实现了各种系统资源的隔离，但这些和进程管理管理不大。
+当创建一个Docker容器的时候，就会新建一个PID名空间。容器启动进程在该名空间内PID为1. 当PID=1进程结束之后，Docker就会消耗对应的PID名空间，并向容器内所有其他子进程发生SIGKILL。
+
+三个结论：
+	1. 每个容器有独立的PID名空间；
+	2. 容器的生命周期和其PID=1的进程一致；
+	3. 利用docker exec可以进入到容器的名空间中启动进程。
+
+自从Docker 1.9.1之后，Docker容器支持5种不同的网络模式，分别为bridge, host, container, overlay, none。
+
+查看容器性能信息: docker stats <container-id>|<container-name>
+查看容器配置信息和运行时状态: docker inspect <container-id>|<container-name>
+查看docker创建的网络: docker network ls 
+
+在所有Docker安装版本中都会提供默认的bridge网络即docker0网络。如果不指定docker run --net=<NETWORK>的话，Docker daemon会默认将容器连接到这个网络。可以通过ifconfig命令看到这个bridge是存在于宿主机的网络栈中的。
+
+索引合并的三种情况：
+	1. Intersection合并；
+	2. Union合并；
+	3. Sort-Union合并； 
+
+连接的原理：
+	1. 嵌套循环连接(Nested-Loop Join)；
+	2. 使用索引加快连接速度；
+	3. 基于块的嵌套循环连接(Block Nested-Loop Join)；
+
+我们把这种在外连接查询中，指定的where子句中包含被驱动表中的列不为NULL值的条件称之为空值拒绝(reject-NULL)。在被驱动表的where子句符合空值拒绝的条件后，外连接和内连接可以互相转换。这种转换带来的好处就是查询优化器可以通过评估表的不同连接顺序的成本，选出成本最低的那种连接顺序来执行查询。
+
+按返回的结果集区分子查询：
+	1. 标量子查询;
+	2. 行子查询；
+	3. 列子查询；
+	4. 表子查询；
+
+按与外层查询关系来区分子查询：
+	1. 不相关子查询；
+	2. 相关子查询；
+
+把子查询结果集中的记录保存到临时表的过程称之为物化(Materialize)。我们把那个存储子查询结果集的临时表称之为物化表。正因为物化表中的记录都建立了索引(基于内存的物化表有哈希索引，基于磁盘的有B+树索引)，通过索引执行In语句判断某个操作数在不在子查询结果集中变得非常快，从而提升了子查询语句的性能。
+
+半连接(semi-join)，将表S1和S2进行半连接的意思是：对于S1表的某条记录，只关心在S2表中是否存在与之匹配的记录是否存在，而不关心具体有多少条记录与之匹配，最终的结果只保留S1表的记录。
+
+需要注意：如果In子查询不满足转换为semi-join的条件，又不能转换为物化表或者转换为物化表的成本太大，那么它就会被转换为exists查询。
+
+在连接查询执行过程中，当被驱动表不能有效的利用利用索引加快访问速度，MySQL一般会为其分配一块join buffer的内存块来加快查询速度，也就是基于块的嵌套循环算法。
+
+JDK中的CompletableFuture不仅可以支持Future链式操作，而且提供三种生命周期回调，即执行回调(Action)、完成时回调(Complete)和异步回调(Exception)，类似于Spring 4 ListenableFuture以及Guava ListenableFuture。
+
+集群调度算法被实现为运行在master节点上的系统组件，和api server类似。其对应的进程名是kube-scheduler。
+
+K8S集群节点实现服务反向代理的方法，目前主要有三种，即userspace, iptables以及ipvs。
+
+在MySQL5.6以及之后的版本，提出了一个optimizer trace的功能，这个功能可以方便的查看优化器生成执行计划的整个过程，这个功能的开启与关闭由系统变量optimizer_trace决定。
+Buffer Pool中默认的缓存页大小和在磁盘上默认的页大小是一样的，都是16K。
+对于InnoDB存储引擎来说，可以通过查看系统变量innodb_old_blocks_pct的值来确定old区域在LRU链表中所占的比例。
+对于InnoDB规定，在对某个处在old区域的缓存页进行第一次访问时就在它对应的控制块中记录下来这个访问时间，如果后续的访问时间与第一次访问的时间在某个时间间隔内，那么该页面就不会被从old区域移动到young区域的头部，否则将它移动到young区域的头部。这个时间间隔是由系统变量innodb_old_blocks_time控制。
+
+正是因为将LRU链表划分为young和old区域这两个部分，又添加了innodb_old_blocks_time这个系统变量，才使得预读机制和全表扫描造成的缓存命中率降低的问题得到了遏制，因为用不到的预读页面以及全表扫描的都只会被放到old区域，而不影响young区域中的缓存页。
+
+数据库某些操作的原子性和隔离性都是保证一致性的一种手段，在操作执行完成后保证符合所有即定的约束则是一种结果。
+
+MySQL中目前只有InnoDB和NDB存储引擎支持事务，如果某个事务中包含了使用不支持事务的存储引擎的表，那么对该表的修改将无法进行回滚。
+对于包含不相关的标量子查询或者行子查询的查询语句来说，MySQL会分别独立的执行外层查询和子查询，就当作两个单表查询。
+对于相关的标量子查询或者行子查询来说，比较复杂：
+	1. 先从外层查询中获取一条记录；
+	2. 然后从上一步骤获取的那条记录中找出子查询中涉及到的值，然后执行子查询；
+	3. 最后根据子查询的查询结果来检测外层查询where子句的条件是否成立，如果成立，就把外层查询的那条记录加入到结果集，否则就丢弃。
+	4. 再次执行第一步，获取第二条外层查询的记录，依次类推。
+
+MySQL中怎么实现半连接，几种办法：
+	1. Table pullout(子查询中的表上拉)
+		当子查询的查询列表处只有主键或者唯一索引列时，可以直接把子查询中的表上拉到外层查询的from子句中，并把子查询中的搜索条件合并到外层查询的搜索条件中。
+	2. DuplicateWeedout execution strategy(重复值消除)
+		使用临时表消除semi-join结果集中的重复值的方式称之为DuplicateWeedout。
+	3. LooseScan execution strategy(松散索引扫描)
+		只取值相同的记录的第一条去做匹配操作的方式称之为松散索引扫描。
+	4. Semi-join Materialization execution strategy
+		先把外层查询的in子句中的不相关子查询进行物化，然后再进行外层查询的表和物化表的连接本质上也算是一种semi-join，只不过由于物化表中没有重复的记录，所以可以直接将子查询转为连接查询。
+	5. FirstMatch execution strategy(首次匹配)
+		FirstMatch是一种最原始的半连接执行方式，就是先取一条外层查询中的记录，然后到子查询的表中寻找符合匹配条件的记录，如果能找到一条，则将外层查询的记录放入最终结果集并且停止查找更多匹配的记录，如果找不到则把该外层查询的记录丢弃掉。然后再开始取下一条外层查询中的记录，重复上面的步骤。
+注意：由于相关子查询并不是一个独立的查询，所以不能转换为物化表来执行查询。
+MySQL在执行带有派生表的时候，优先尝试把派生表和外层查询合并掉，如果不行的话，再把派生表物化掉执行查询。
+
+public interface CompletionService<V> {
+	Future<V> submit(Callable<V> task);
+	Future<V> submit(Runnable task, V result);
+	Future<V> take() throws InterruptedException;
+	Future<V> poll();
+	Future<V> poll(long timeout, TimeUnit unit) throws InterruptedException;
+}
+
+public class ExecutorCompletionService<V> implements CompletionService<V> {
+	private final Executor executor;
+	private final AbstractExecutorService aes;
+	private final BlockingQueue<Future<V>> completionQueue;
+	...
+}
