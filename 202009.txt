@@ -1,0 +1,404 @@
+jaeger性能调优：
+	1. Scale the Collector up and down;
+	2. Make sure the storage can keep up;
+	3. Place the Agents close to your applications;
+	4. Client(Tracer) settings:
+		4.1 Adjust the sampling configuration;
+		4.2 Increase in-memory queue size;
+		4.3 Modify the batched spans flush interval;
+	5. Agent settings:
+		5.1 Adjust server queue sizes;
+		5.2 Adjust processor workers;
+	6. Collector settings:
+		6.1 Adjust queue size;
+		6.2 Adjust processor workers;
+
+WebRequestInterceptor和HandlerInterceptor的区别:
+WebRequestInterceptor间接实现了HandlerInterceptor，只是他们之间使用WebRequestHandlerInterceptorAdapter适配器类联系。
+	1. WebRequestInterceptor的入参WebRequest包装了HttpServletRequest和HttpServletResponse，通过WebRequest获取Request中的信息更简便。
+	2. WebRequestInterceptor的preHandle没有返回值，说明该方法中的逻辑不影响后续的执行，这个接口的实现就是为了获取Request中的信息，或者预设一些参数供后续流程使用。
+	3. HandlerInterceptor的功能更强大也更基础，可以在preHandle方法中就直接拒绝请求进入controller方法。
+
+使用iptables把来源IP为192.168.1.101访问本机80端口的包直接拒绝：
+iptables -I INPUT -s 192.168.1.101 -p tcp -dport 80 -j REJECT
+java -XX:+PrintCommandLineFlags -showversion -XX:NativeMemoryTracking=detail -jar eureka-server-0.0.1-SNAPSHOT.jar
+
+jcmd <pid> Thread.print 打印堆栈
+
+模型是解决实际问题所抽象出来的概念模型，领域模型则表达与业务相关的事实，设计模型则描述了所要构建的系统。
+
+解决复杂和大规模软件的武器可以被粗略地归为三类：抽象、分治和知识。
+	1. 分治:把问题空间分割为规模更小且易于处理的若干子问题。分割后的问题需要足够小，以便一个人单枪匹马就能够解决他们；其次，必须考虑如何将分割后的各个部分装配为整体。分割得越合理越易于理解，在装配成整体时，所需跟踪的细节也就越少。即更容易设计各部分的协作方式。评判什么是分治得好，即高内聚低耦合。
+
+	2. 抽象:使用抽象能够精简问题空间，而且问题越小越容易理解。举个例子，从北京到上海出差，可以先理解为使用交通工具前往，但不需要一开始就想清楚到底是高铁还是飞机，以及乘坐他们需要注意什么。
+
+	3. 知识:顾名思义，DDD可以认为是知识的一种。
+DDD提供了这样的知识手段，让我们知道如何抽象出限界上下文以及如何去分治。
+
+设计领域模型的一般步骤如下：
+	1. 根据需求划分出初步的领域和限界上下文，以及上下文之间的关系；
+	2. 进一步分析每个上下文内部，识别出哪些是实体，哪些是值对象；
+	3. 对实体、值对象进行关联和聚合，划分出聚合的范畴和聚合根；
+	4. 为聚合根设计仓储，并思考实体或值对象的创建方式；
+	5. 在工程中实践领域模型，并在实践中检验模型的合理性，倒推模型中不足的地方并重构。
+
+AnnotatedElement 
+查看文件系统阻塞：lsof /boot
+查看端口号被哪个进程占用：lsof  -i : 3306
+查看用户打开哪些文件：lsof –u username
+查看进程打开哪些文件：lsof –p  4838
+查看远程已打开的网络链接：lsof –i @192.168.34.128
+
+If convention-based mapping is not flexible enough, you can use the ServletRegistrationBean,FilterRegistrationBean, and ServletListenerRegistrationBean classes for complete control.
+
+SparkSQL目前主要实现了3种join: BroadcastHashJoin, ShuffledHashJoin, SortMergeJoin。
+Catalyst
+BroadcastHashJoin, ShuffleHashJoin和SortMergeJoin都属于经典的ExtractEquiJoinKeys(等值连接条件)。
+对于非ExtractEquiJoinKeys,则会优先检查表是否可以被广播(hint或者size)。如果可以，则会使用BroadcastNestedLoopJoin(简称BNLJ),和常用的Nested Loop Join的区别在于BNLJ加入了广播表。
+
+Feign features:
+	1. clients:
+		1.1 java.net.URL;
+		1.2 Apache HTTP;
+		1.3 Apache HC5;
+		1.5 Google HTTP;
+		1.6 Java 11 Http2;
+		1.7 OK Http;
+		1.8 Ribbon;
+	2. async clients:
+		2.1 java.net.URL;
+		2.2 Apache HC5;
+	3. contracts:
+		3.1 Feign;
+		3.2 JAX-RS;
+		3.3 JAX-RS 2;
+		3.4 Spring 4;
+		3.5 SOAP;
+		3.6 Spring boot(3rd party);
+	4. encoders/decoders:
+		4.1 GSON;
+		4.2 Jackson 1;
+		4.3 Jackson 2;
+		4.4 Jackson JAXB;
+		4.5 Sax;
+	5. metrics:
+		5.1 Dropwizard Metrics 5;
+		5.2 Micrometer;
+	6. extras:
+		6.1 Hystrix;
+		6.2 SLF4J;
+		6.3 Mock;
+
+InnoDB强烈推荐在设计表中自定义一个主键，因为rowid是全局唯一的，所以如果有很多表没有定义主键，就会在生成rowid上产生争用。row_id由mutex保护，并在每次checkpoint的时候，写入到数据字典的文件头。
+
+ApplicationContextInitializer
+
+InnoDB作为事务性引擎，使用write-ahead logging(WAL)机制保证ACID中的Atomicity和Durability，使用undo机制保证ACID中的Consistency和Isolation。
+按照WAL和undo的机制，形成以下两个原则：
+	1. 数据块的更改需要要记录redo日志。
+	2. 数据块的更改需要先写入undo。
+根据这两个原则，InnoDB更新数据的基本流程可以简单总结为：
+	1. 记录需要更改undo record的redo log。
+	2. 记录需要更改data record的redo log。
+	3. 写入redo log。
+	4. 写入undo record。
+	5. 更改data record这5个步骤。
+
+LoadBalancerAutoConfiguration:该自动配置类，主要做了下面三件事：
+	1. 创建了一个LoadBalancerInterceptor的Bean，用于实现对客户端发起请求进行拦截，以实现客户端负载均衡；
+	2. 创建了一个RestTemplateCustomizer的Bean，用于给RestTemplate增加LoadBalancerInterceptor；
+	3. 维护了一个被@LoadBalanced注解修饰的RestTemplate对象列表，并在这里进行初始化，通过调用RestTemplateCustomizer的实例来给需要客户端负载均衡的RestTemplate增加LoadBalancerInterceptor拦截器。
+
+The jstack's -l option, which instructs the utility to look for ownable synchronizers in the heap and print information about java.util.concurrent.locks. Without this option, the thread dump includes information only on monitors.
+
+pmap：report memory map of a process。(查看进程的内存映像信息)pmap命令用于报告进程的内存映射关系，是Linux调试及运维一个很好的工具
+
+RouteLocator, RouteLocatorBuilder,ServerWebExchange, GatewayFilter, Predicate, PathRoutePredictFactory,GatewayFilter,GolbalFilter
+-------------------------------------------------------------
+应用集合一致性哈希码:
+Applications.appsHashCode:应用集合一致性哈希码 
+增量获取注册的应用集合(Applications)时，Eureka-Client会获取到：
+	1. Eureka-Server近期变化(注册、下线)的应用集合；
+	2. Eureka-Server应用集合一致性哈希码；
+Eureka-Client将变化的应用集合和本地缓存的应用集合进行合并后进行计算本地的应用集合一致性哈希码。若两个哈希码相等，意味着增量获取成功；若不相等，意味着增量获取失败，Eureka-Client重新和Eureka-Server全量获取应用集合。
+-------------------------------------------------------------
+jmap -dump:format=b,file=snap.jmap <pid>
+jcmd <pid|main class> GC.heap_dump filename=MyHeapdump
+If the Java process is started with the -XX:+PrintClassHistogram command-line option, then the Control+Break handler will produce a heap histogram.
+jcmd <pid|main class> GC.class_histogram filename=MyHeapHistogram
+The jmap utility can be used with the -finalizerinfo option to print information about
+objects awaiting finalization.
+
+If the Java VM flag -XX:+PrintConcurrentLocks is set, then the stack trace also shows a list of
+lock owners.
+
+Spark如何缓解数据倾斜：
+	1. 过滤异常数据；
+	2. 提高Shuffle并行度；
+	3. 自定义Partitioner;
+	4. Reduce端Join转换为Map端Join;
+	5. 拆分join再Union；
+	6. 大表key加盐，小表扩大N倍join;
+	7. map端局部聚合；
+	8. 加盐局部聚合+去盐全局聚合；
+
+如果一个表的大小<=参数spark.sql.autoBroadcastJoinThreshold(默认10M)配置的值，那么就可以广播该表。
+除了满足表的大小条件外，也可以通过直接在Spark SQL中显式的使用hint方式(/*+ BROADCAST(small_table)*/)，直接指定要广播的表。
+
+SparkSQL目前主要实现了3种join：Broadcast Hash Join、ShuffledHashJoin、Sort Merge Join。
+
+spring.factories:
+# PropertySource Loaders
+org.springframework.boot.env.PropertySourceLoader=\
+org.springframework.boot.env.PropertiesPropertySourceLoader,\
+org.springframework.boot.env.YamlPropertySourceLoader
+
+# Run Listeners
+org.springframework.boot.SpringApplicationRunListener=\
+org.springframework.boot.context.event.EventPublishingRunListener
+
+# Error Reporters
+org.springframework.boot.SpringBootExceptionReporter=\
+org.springframework.boot.diagnostics.FailureAnalyzers
+
+# Application Context Initializers
+org.springframework.context.ApplicationContextInitializer=\
+org.springframework.boot.context.ConfigurationWarningsApplicationContextInitializer,\
+org.springframework.boot.context.ContextIdApplicationContextInitializer,\
+org.springframework.boot.context.config.DelegatingApplicationContextInitializer,\
+org.springframework.boot.web.context.ServerPortInfoApplicationContextInitializer
+
+# Application Listeners 
+org.springframework.contxt.ApplicationListener=\
+org.springframework.boot.ClearCachesApplicationListener,\
+org.springframework.boot.builder.ParentContextCloserApplicationListener,\
+org.springframework.boot.context.FileEncodingApplicationListener,\
+org.springframework.boot.context.config.AnsiOutputApplicationListener,\
+org.springframework.boot.context.config.ConfigFileApplicationListener,\
+org.springframework.boot.context.config.DelegatingApplicationListener,\
+org.springframework.boot.context.logging.ClasspathLoggingApplicationListener,\
+org.springframework.boot.context.logging.LoggingApplicationListener,\
+org.springframework.boot.liquibase.LiquibaseServiceLocatorApplicationListener
+
+# Environment Post Processors
+org.springframework.boot.env.EnvironmentPostProcessor=\
+org.springframework.boot.cloud.CloudFoundryVcapEnvironmentPostProcessor,\
+org.springframework.boot.env.SpringApplicationJsonEnvironmentPostProcessor,\
+org.springframework.boot.env.SystemEnvironmentPropertySourceEnvironmentPostProcessor
+
+# Failure Analyzers
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+org.springframework.boot.diagnostics.analyzer.BeanCurrentlyInCerationFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.BeanDefinitionOverrideFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.BeanNotOfRequiredTypeFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.BindFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.BindValidationFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.UnboundConfigurationPropertyFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.ConnectorStartFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.NoSuchMethodFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.NoUniqueBeanDefinitionFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.PortInUseFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.ValidationExceptionFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.InvalidConfigurationPropertyNameFailureAnalyzer,\
+org.springframework.boot.diagnostics.analyzer.InvalidConfigurationPropertyValueFailureAnalyzer
+
+# FailureAnalysisReporters
+org.springframework.boot.diagnostics.FailureAnalysisReporter=\
+org.springframework.boot.diagnostics.LoggingFailureAnalysisReporter
+
+MySQL对order by+limit的filesort做了特别优化，使用Priority Queue来保存结果，即一个堆的结构，只保留top N的数据满足limit条件。
+MySQL 5.6开始支持index_condition_pushdown特性，即server层把可以在index进行filter的谓词传递给引擎层完成过滤，然后结果返回到server。
+
+RDD的属性：
+	1.分区列表（数据块列表，只保存数据位置，不保存具体地址）
+	2.计算每个分片的函数（根据父RDD计算出子RDD）
+	3.RDD的依赖列表
+	4.RDD默认是存储于内存，但当内存不足时，会spill到disk（可通过设置StorageLevel来控制）
+	5.默认hash分区，可自定义分区器
+	6.每一个分片的优先计算位置（preferred locations）列表，比如HDFS的block的所在位置应该是优先计算的位置
+
+两个主流实时数据处理架构：Lambda架构和Kappa架构。Lambda架构和Kappa架构各有其优势，但都支持数据的最终一致性，从某种程度上确保了数据质量。
+
+InnoDB 有两块非常重要的日志，一个是undo log，另外一个是redo log，前者用来保证事务的原子性以及InnoDB的MVCC，后者用来保证事务的持久性。
+
+-XX:ShowMessageBoxOnError:When this option is set and a fatal error is encountered, the HotSpot VM will display information about the fatal error and prompt the user to specify whether the native debugger is to be launched. In the case of Oracle Solaris and Linux operating systems, the output and prompt are sent to the application console (standard input and standard output). In the case of Windows, a Windows message box pops up.
+
+-XX:+PrintConcurrentLocks: can be used to cause the Control+Break handler to print a list of concurrent locks owned by each thread.
+-XX:+PrintClassHistogram: can be used to cause the Control+Break handler to print a heap histogram.
+-Xcheck:jni:This option enables logging of JNI. When a JNI or native method is resolved, the HotSpot VM prints a trace message to the application console(standard output). It also prints a trace message when a native method is registered using the JNI RegisterNative function. The -verbose:jni option can be useful in diagnosing issues with applications that use native libraries.
+
+-verbos:class: enables logging of class loading and unloading.
+
+select * from information_schema.innodb_locks;
+
+spring.cloud.stream.kafka.binder.requiredAcks : The number of required acks on the broker.
+
+MySQL使用InnoDB+binlog做XA的方式进行crash recovery。
+
+/* Interface specifying a basic set of RESTful operations.
+	Implemented by #RestTemplate. Not often used directly, but a useful 
+	option to enhance testability, as it can easily be mocked or stubbed.
+*/
+public interface RestOperations {
+	@Nullable
+	<T> T getForObject(String url, Class<T> reponseType, Object... uriVariables) 
+		throws RestClientException;
+	@Nullable
+	<T> T getForObject(String url, Class<T> responseType, Map<String, ?> uriVariables)
+		throws RestClientException;
+	@Nullable
+	<T> T getForObject(URI url, Class<T> responseType) throws RestClientException;
+	<T> ResponseEntity<T> getForEntity(String url, Class<T> responseType, Object... uriVariables)
+		throws RestClientException;
+	<T> ResponseEntity<T> getForEntity(String url, Class<T> responseType, Map<String, ?> uriVariables)
+			throws RestClientException;
+	<T> ResponseEntity<T> getForEntity(URI url, Class<T> responseType) throws RestClientException;
+	HttpHeaders headForHeaders(String url, Object... uriVariables) throws RestClientException;
+	...
+	@Nullable
+	URI postForLoacation(String url, @Nullable Object request, Object... uriVariables) throws RestClientException;
+	...
+	@Nullable
+	<T> T postForObject(String url, @Nullable Object request, Class<T> responseType, Object... uriVariables)
+		throws RestClientException;
+	...
+	<T> ResponseEntity<T> postForEntity(String url, @Nullable Object request, Class<T> responseType,
+			Object... uriVariables) throws RestClientException;
+	...
+	void put(String url, @Nullable Object request, Object... uriVariables) throws RestClientException;
+	...
+	@Nullable
+	<T> T patchForObject(String url, @Nullable Object request, Class<T> responseType, Object... uriVariables)
+			throws RestClientException;
+	...
+	void delete(String url, Object... uriVariables) throws RestClientException;
+	...
+	Set<HttpMethod> optionsForAllow(String url, Object... uriVariables) throws RestClientException;
+	...
+	<T> ResponseEntity<T> exchange(String url, HttpMethod method, @Nullable HttpEntity<?> requestEntity,
+		Class<T> responseType, Object... uriVariables) throws RestClientException;
+	...
+	@Nullable
+	<T> T execute(String url, HttpMethod method, @Nullable RequestCallback requestCallback,
+			@Nullable ResponseExtractor<T> responseExtractor, Object... uriVariables)
+			throws RestClientException;
+	...
+}
+
+/* Synchronous client to perform HTTP requests, exposing a simple, template method API over
+	underlying HTTP client libraries such as the JDK #HttpURLConnection, Apache HttpComponents,
+	and others.
+	The RestTemplate offers templates for common scenarios by HTTP method, in addition to the 
+	generalized #exchange and #execute methods that support of less frequent cases.
+	Note: As of 5.0, the non-blocking, reactive #WebClient offers a modern alternative to the 
+	#RestTemplate with efficient support for both sync and async, as well as streaming scenarios.
+	The #RestTemplate will be deprecated in a future version and will not have major new features 
+	added  going forward.
+*/
+public class RestTemplate extends InterceptingHttpAccessor implements RestOperations {
+	private static boolean romePresent;
+	private static final boolean jaxb2Present;
+	private static final boolean jackson2Present;
+	private static final boolean jackson2XmlPresent;
+	private static final boolean jackson2SmilePresent;
+	private static final boolean jackson2CborPresent;
+	private static final boolean gsonPresent;
+	private static final boolean jsonPresent;
+	static {
+		ClassLoader classLoader = RestTemplate.class.getClassLoader();
+		romePresent = ClassUtils.isPresent("com.rometools.rome.feed.WireFeed", classLoader);
+		jaxb2Present = ClassUtils.isPresent("javax.xml.bind.Binder", classLoader);
+		jackson2Present =
+				ClassUtils.isPresent("com.fasterxml.jackson.databind.ObjectMapper", classLoader) &&
+						ClassUtils.isPresent("com.fasterxml.jackson.core.JsonGenerator", classLoader);
+		jackson2XmlPresent = ClassUtils.isPresent("com.fasterxml.jackson.dataformat.xml.XmlMapper", classLoader);
+		jackson2SmilePresent = ClassUtils.isPresent("com.fasterxml.jackson.dataformat.smile.SmileFactory", classLoader);
+		jackson2CborPresent = ClassUtils.isPresent("com.fasterxml.jackson.dataformat.cbor.CBORFactory", classLoader);
+		gsonPresent = ClassUtils.isPresent("com.google.gson.Gson", classLoader);
+		jsonbPresent = ClassUtils.isPresent("javax.json.bind.Jsonb", classLoader);
+	}
+	
+	private final List<HttpMessageConverter<?>> messageConverters = new ArrayList<>();
+	private ResponseErrorHandler errorHandler = new DefaultResponseErrorHandler();
+	private UriTemplateHandler uriTemplateHandler;
+	private final ResponseExtractor<HttpHeaders> headersExtractor = new HeadersExtractor();
+	...
+}
+
+MySQL 5.7可以通过performance_schema来检索MDL锁阻塞情况，方便诊断问题。
+索引过滤性不好可能带来灾难性的结果：语句hang住以及主机CPU耗尽。因此在设计表的时候，应该对业务上的数据有充分的估计，选择过滤性好的字段作为索引。
+
+SELECT
+	r.trx_id waiting_trx_id,
+	r.trx_mysql_thread_id waiting_thread,
+	LEFT (r.trx_query, 20) waiting_query,
+	concat(
+		concat(lw.lock_type, ' '),
+		lw.lock_mode
+	) waiting_for_lock,
+	b.trx_id blocking_trx_id,
+	b.trx_mysql_thread_id blocking_thread,
+	LEFT (b.trx_query, 20) blocking_query,
+	concat(
+		concat(lb.lock_type, ' '),
+		lb.lock_mode
+	) blocking_lock
+FROM
+	information_schema.innodb_lock_waits w
+INNER JOIN information_schema.innodb_trx b ON b.trx_id = w.blocking_trx_id
+INNER JOIN information_schema.innodb_trx r ON r.trx_id = w.requesting_trx_id
+INNER JOIN information_schema.innodb_locks lw ON lw.lock_trx_id = r.trx_id
+INNER JOIN information_schema.innodb_locks lb ON lb.lock_trx_id = b.trx_id;
+
+set optimizer_trace="enabled=on";
+select * from information_schema.optimizer_trace;
+
+/* A marker interface used as a key in META-INF/spring.factories. Entries in 
+	the factories file are used to create the bootstrap application context.
+*/
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented 
+public @interface BootstrapConfiguration {
+	// Excludes specific auto-configuration classes such that they will never be applied.
+	Class<?>[] exclude() default {};
+}
+
+AutowiredAnnotationBeanPostProcessor
+ServletContextAwareProcessor
+
+MySQL在事务执行的过程中，需要多个模块来辅助事务的正常执行：
+	1. Server层的MDL锁模块，维护了一个事务过程中所有涉及到的表级锁对象。通过MDL锁，可以阻塞DDL，避免DDL和DML记录binlog乱序；
+	2. InnoDB的trx_sys子系统，维持了所有的事务状态，包括活跃事务、非活跃事务对象、读写事务链表、负责分配事务ID、回滚段、ReadView等信息，是事务系统的总控模块；
+	3. InnoDB的lock_sys子系统，维护事务锁信息，用于对修改数据库操作做并发控制，保证了在一个事务中被修改的记录，不可以被另外一个事务修改；
+	4. InnoDB的log_sys子系统，负责事务redo日志管理模块；
+	5. InnoDB的purge_sys子系统，则主要用于在事务提交后，进行垃圾回收，以及数据页的无效数据清理。
+	
+InnoDB有两个非常重要的模块来实现MVCC，一个是undo日志，用于记录数据的变化轨迹，另外一个是Readview，用于判断该session对哪些数据可见，哪些不可见。
+
+InnoDB buffer pool中的page管理牵涉到两个链表，一个是lru链表，一个是flush脏块链表，由于数据库的特性：
+	1. 脏块的刷新，是异步操作；
+	2. page存在两个版本，一个是ibd文件的持久化版本，和buffer pool内存中的当前版本。
+
+Metadata lock wait的含义：为了在并发环境下维护表元数据的数据一致性，在表上有活动事务(显式或隐式)的时候，不可以对元数据进行写入操作。因此MySQL引入了metadata lock，来保护表的元数据信息。因此在对表进行上述操作时，如果表上有活动事务(未提交或回滚)，请求写入的会话会等待在Metadata lock wait。
+导致Metadata lock wait等待的常见因素包括：活动事务，当前对表的长时间查询，显式或隐式开启事务后未提交或回滚，比如查询完成后未提交或者回滚，表上有失败的查询事务等。
+
+-XX:+UseCodeCacheFlushing: 当因为热部署等原因导致代码缓存越来越大，最终变为纯解释器执行。通过设置UseCodeCacheFlushing，当达到最大后，放弃编译代码。
+
+Nested-Loops Join(嵌套循环联接)
+Simple Nested-Loops Join(SNLJ, 简单嵌套循环联接)
+Index Nested-Loops Join(INLJ, 基于索引的嵌套循环联接)
+Block Nested-Loops Join(BNL, 基于块的嵌套循环联接)算法
+Batched Key Access Join(BKA, 批量键访问联接)算法 
+Classic Hash Join(CHJ)
+
+-XX:+ParallelRefProcEnabled:默认为false，并行的处理Reference对象，如WeakReference，除非在GC log里出现Reference处理时间较长的日志，否则效果不会很明显。
+-XX:+ExplicitGCInvokesConcurrent：通常不会显式地调用System.gc()。但是一些情况下，比如使用Direct 内存，为了使得其（堆外内存）能够被及时回收，我们会通过显式调用System.gc()触发full gc。但是full gc 又会导致STW，这又是我们不想看到的。即便是配置了使用CMS回收器，这个问题也会存在。所以希望显式的对GC 的触发也是并发执行的，这便是-XX:ExplicitGCInvokesConcurrent的意义。
+
+-XX:PrintHeapUsageOverTime : Print heap usage and capacity with timestampts.
+
+-XX:GCTimeRatio: 在Parallel Scavenge收集器中，GCTimeRatio参数值应当是一个大于0且小于100的整数，也就是垃圾收集时间占总时间的比率。如果此参数为19，那么允许最大GC时间就占总时间的5%（1/(1+19)）,默认值是99%，就是允许最大1%的垃圾收集时间。
+
+-XX:CMSMaxAbortablePrecleanTime=500, 表示abortable preclean阶段的最大持续时间
+-XX:CMSScheduleRemarkEdenPenetration=50,代表Eden区使用比例超过50%就结束abortable preclean阶段进入remark阶段。
+

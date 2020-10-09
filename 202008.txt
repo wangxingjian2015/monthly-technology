@@ -1,0 +1,399 @@
+public class MapperScannerConfigurer implements BeanDefinitionRegistryPostProcessor,
+					InitializingBean, ApplicationContextAware, BeanNameAware {
+	private String basePackage;
+	private boolean addToConifg = true;
+	private String lazyInitialization;
+	private SqlSessionFactory sqlSessionFactory;
+	private SqlSesstionTemplate sqlSessionTemplate;
+	private String sqlSessionFactoryBeanName;
+	private String sqlSessionTemplateBeanName;
+	private Class<? extends Annotation> annotationClass;
+	private Class<?> markerInterface;
+	private Class<? extends MapperFactoryBean> mapperFactoryBeanClass;
+	private ApplicationContext applicationContext;
+	private String beanName;
+	private boolean processPropertyPlaceHolders;
+	private BeanNameGenerator nameGenerator;
+	...
+}
+
+一个m阶B+树具有如下几个特征(和B-树的区别):
+	1. 有k个子树的中间节点包含k个元素(B树是k-1个元素)，每个元素不保存数据，只用来索引，所有数据都保存在叶子节点。
+	2. 所有的叶子节点中包含了全部元素的信息，及指向含这些元素记录的指针，且叶子节点本身依据关键字的大小自小而大顺序链接。
+	3. 所有的中间节点元素都同时存在于子节点，在子节点元素中是最大(或最小)元素。
+
+public interface RSocket extends Availability, Closable {
+	Mono<Void> fireAndForget(Payload payload);
+	Mono<Payload> requestResponse(Payload payload);
+	Flux<Payload> requestStream(Payload payload);
+	Flux<Payload> requestChannel(Publisher<Payload> payloads);
+	Mono<Void> metadataPush(Payload payload);
+}
+
+/**
+ * Internal utility used to load {@link AutoConfigurationMetadata}.
+ */
+final class AutoConfigurationMetadataLoader {
+
+	protected static final String PATH = "META-INF/spring-autoconfigure-metadata.properties";
+
+	private AutoConfigurationMetadataLoader() {
+	}
+
+	public static AutoConfigurationMetadata loadMetadata(ClassLoader classLoader) {
+		return loadMetadata(classLoader, PATH);
+	}
+
+	static AutoConfigurationMetadata loadMetadata(ClassLoader classLoader, String path) {
+		try {
+			Enumeration<URL> urls = (classLoader != null ? classLoader.getResources(path)
+					: ClassLoader.getSystemResources(path));
+			Properties properties = new Properties();
+			while (urls.hasMoreElements()) {
+				properties.putAll(PropertiesLoaderUtils
+						.loadProperties(new UrlResource(urls.nextElement())));
+			}
+			return loadMetadata(properties);
+		}
+		catch (IOException ex) {
+			throw new IllegalArgumentException(
+					"Unable to load @ConditionalOnClass location [" + path + "]", ex);
+		}
+	}
+
+	static AutoConfigurationMetadata loadMetadata(Properties properties) {
+		return new PropertiesAutoConfigurationMetadata(properties);
+	}
+
+	/**
+	 * {@link AutoConfigurationMetadata} implementation backed by a properties file.
+	 */
+	private static class PropertiesAutoConfigurationMetadata
+			implements AutoConfigurationMetadata {
+
+		private final Properties properties;
+
+		PropertiesAutoConfigurationMetadata(Properties properties) {
+			this.properties = properties;
+		}
+
+		@Override
+		public boolean wasProcessed(String className) {
+			return this.properties.containsKey(className);
+		}
+
+		@Override
+		public Integer getInteger(String className, String key) {
+			return getInteger(className, key, null);
+		}
+
+		@Override
+		public Integer getInteger(String className, String key, Integer defaultValue) {
+			String value = get(className, key);
+			return (value != null ? Integer.valueOf(value) : defaultValue);
+		}
+
+		@Override
+		public Set<String> getSet(String className, String key) {
+			return getSet(className, key, null);
+		}
+
+		@Override
+		public Set<String> getSet(String className, String key,
+				Set<String> defaultValue) {
+			String value = get(className, key);
+			return (value != null ? StringUtils.commaDelimitedListToSet(value)
+					: defaultValue);
+		}
+
+		@Override
+		public String get(String className, String key) {
+			return get(className, key, null);
+		}
+
+		@Override
+		public String get(String className, String key, String defaultValue) {
+			String value = this.properties.getProperty(className + "." + key);
+			return (value != null ? value : defaultValue);
+		}
+
+	}
+
+}
+
+./bin/spark-submit --name "My app" --master local[4] --conf spark.eventLog.enabled=false --conf "spark.executor.extraJavaOptions=-XX:+PrintGCDetails -XX:+PrintGCTimeStamps" myApp.jar 
+
+spark.driver.supervise: If true, restarts the driver automatically if it fails with a non-zero exit status. Only has effect in Spark standalone mode or Mesos cluster deploy mode. 
+
+
+By default, Spark provides four codecs: lz4, lzf, snappy, and zstd. You can also use fully qualified class names to specify the codec, e.g:
+	org.apache.spark.io.LZ4CompressionCodec,
+	org.apache.spark.io.LZFCompressionCodec,
+	org.apache.spark.io.SnappyCompressionCodec,
+	org.apache.spark.io.ZstdCompressionCodec.
+
+在启动java应用时，可以添加-XX:NativeMemoryTracking=detail JVM参数，使用命令jcmd <pid> VM.native_memory detail可以查看内存分布情况。
+使用strace -f -e"brk,mmap,munmap" -p <pid>追踪向OS申请内存请求，可以发现可疑的内存申请。
+
+PerpetualCache
+
+/* HttpRequestHandler that serves static resources in an optimized way according to the guidelines of Page Speed, YSlow, etc.
+The "locations" property takes a list of Spring Resource locations from which static resources are allowed to be served by this handler. Resouces could be served from a classpath location, e.g. "classpath:/META-INF/public-web-resources/", allowing convenient packaging and serving of resources such as .js, .css, and others in jar files.
+This request handler may also be configured with a resourcesResolver and resouceTransformer chains to support arbitrary resolution and transformation of resources being served. By default a PathResourceResolver simply finds resources based on the configured "locations". An application can configure additional resolvers and transformers such as the VersionResourceResolver which can resolve and prepare URLs for resources with a version in the URL.
+This handler also properly evaluates the Last-Modified header (if present) so that a 304 status code will be returned as appropriate, avoiding unnecessary overhead for resources that are already cached by the client.
+*/
+public class ResourceHttpRequestHandler extends WebContentGenerator implements HttpRequestHandler, 
+			EmbeddedValueResolverAware, InitializingBean, CorsConfigurationSource {
+	...
+}
+
+SQL语句的执行涉及到多个组件，包括MyBatis的四大核心: Executor, StatementHandler, ParameterHandler, ResultSetHandler。
+
+MyBatis层级结构各个组件，简单如下:
+1. SqlSession: MyBatis核心API，主要用来执行命令、获取映射、管理事务。接收Statement Id和参数，并返回操作结果。
+2. Executor: 执行器，是MyBatis调度的核心，负责SQL语句的生成以及查询缓存的维护。
+3. StatementHandler: 封装了JDBC Statement操作，负责对JDBC Statement的操作，如设置参数、将Statement结果集转换成List集合。
+4. ParameterHandler: 负责对用户传递的参数转换成JDBC Statement所需要的参数。
+5. ResultSetHandler: 负责将JDBC返回的ResultSet结果集对象转换成List类型的集合。
+6. TypeHandler: 用于Java类型和JDBC类型之间的转换；
+7. MappedStatement: 动态SQL的封装；
+8. SqlSource: 表示从XML文件或注释读取的映射语句的内容，它创建经从用户接收的输入参数传递给数据库的SQL。
+9. Configuration: MyBatis所有的配置信息都维护在Configuration对象之中。
+
+可以重写类型处理器或创建自己的类型处理器来处理不支持或非标准的类型。具体做法为: 实现org.apache.ibatis.type.TypeHandler接口，或者继承一个很方便的类org.apache.ibatis.type.BaseTypeHandler，然后可以选择性地将它映射到一个JDBC类型。
+
+MyBatis的事务管理分为两种形式：
+	1. 使用JDBC的事务管理机制：即利用java.sql.Connection对象完成事务的提交、回滚、关闭等；
+	2. 使用Managed的事务管理机制：这种机制MyBatis自身不会去实现事务管理，而是让程序的容器(JBoss, Weblogic)来实现对事务的管理；
+
+
+/* Enables the binding of targets annotated with @Input and @Output to a broker, according to the list of interfaces passed as value to the annotation.
+*/
+@Target({ElementType.TYPE, ElementType.ANNOTATION_TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Inherited
+@Configuration
+@Import({BindingServiceConfiguration.class, BindingBeansRegistrar.class, 
+		BinderFactoryConfiguration.class, SpelExpressionConverterConfiguration.class})
+@EnableIntegration
+public @interface EnableBinding {
+	Class<?>[] value() default {};
+}
+
+public class ExceptionHandlerExceptionResolver extends AbstractHandlerMethodExceptionResolver
+		implements ApplicationContextAware, InitializingBean {
+	private List<HandlerMethodArgumentResolver> customArgumentResolvers;
+	private HandlerMethodArgumentResolverComposite argumentResolvers;
+	private List<HandlerMethodReturnValueHandler> customReturnValueHandlers;
+	private HandlerMethodReturnValueHandlerComposite returnValueHandlers;
+	private List<HttpMessageConverter<?>> messageConverters;
+	private ContentNegotiationManager contentNegotiationManager = new ContentNegotiationManager();
+	private final List<Object> responseBodyAdvice = new ArrayList<>();
+	private ApplicationContext applicationContext;
+	private final Map<Class<?>, ExceptionHandlerMethodResolver> exceptionHandlerCache = 
+					new ConcurrentHashMap<>(64);
+	private final Map<ControllerAdviceBean, ExceptionHandlerMethodResolver> exceptionHandlerAdviceCache = 
+					new LinkedHasnMap<>();
+	...
+}
+
+RxJava2 features several base classes you can discover operators on:
+	1. io.reactivex.Flowable: 0..N flows, supporting Reactive Streams and backpressure;
+	2. io.reactivex.Obserable: 0..N flows, no backpressure;
+	3. io.reactivex.Single: a flow of exactly 1 item or an error;
+	4. io.reactivex.Completable: a flow without items but only a completion or error signal;
+	5. io.reactivex.Maybe: a flow with no items, exactly one item or an error;
+
+Linux dmesg命令用于显示开机信息。kernel会将开机信息存储在ring buffer中。若是开机来不及查看信息，可利用dmesg来查看。开机信息保存在/var/log目录中，名为dmesg的文件里。
+
+dumpe2fs: dump ext2/ext3 filesystem information
+-----------------------------
+MyBatis:
+XMLConfigBuilder
+XMLMapperBuilder
+XMLStatementBuilder
+ErrorContext.instance();
+MappedStatement
+StatementType
+ResultSetType
+SqlCommandType
+SqlSource 
+DynamicSqlSource
+MappedStatementAssistant
+DefaultResultSetHandler
+-----------------------------
+public interface BeanMetadataElement {
+	@Nullable
+	Object getSource();
+}
+
+public interface ComponentDefinition extends BeanMetadataElement {
+	String getName();
+	String getDescription();
+	BeanDefinition[] getBeanDefinitions();
+	BeanDefinition[] getInnerBeanDefintions();
+	BeanReference[] getBeanReferences();
+}
+BeanReference <- RuntimeBeanNameReference
+
+public interface ServletContextListener extend EventListener {
+	public default void contextInitialized(ServletContextEvent sce) {}
+	public default void contextDestroyed(ServletContextEvent sce) {}
+}
+
+Tomcat容器的责任链模式：
+	1. 请求被Connector组件接收，创建Request和Response对象;
+	2. Connector将Request和Response交给Container，先通过Engine的pipeline组件流经内部的每个Valve;
+	3. 请求流转到Host的pipeline组件中，并且经过内部Valve的过滤;
+	4. 请求流转到Context的pipeline组件中，并且经过内部的Valve的过滤；
+	5. 请求流转到Wrapper的pipeline组件中，并且经过内部的Valve的过滤；
+	6. Wrapper内部的WrapperValve创建FilterChain实例，调用指定的Servlet实例处理请求；
+	7. 返回；
+
+MyBatis解析XML文件的核心流程：
+	1. 属性解析propertiesElement;
+	2. 加载settings节点settingsAsProperties
+	3. 加载自定义VFS loadCustomVfs;
+	4. 解析类型别名typeAliasesElement;
+	5. 加载插件pluginElement;
+	6. 加载对象工厂objecyFactoryElement;
+	7. 创建对象包装器工厂objectWrapperFactoryElement;
+	8. 加载反射工厂reflectorFactoryElement;
+	9. 元素设置settingsElement;
+	10. 加载环境配置environmentsElement;
+	11. 数据库厂商标识加载databaseProviderElement;
+	12. 加载类型处理器typeHandlerElement;
+	13. (核心)加载mapper文件mapperElement;
+
+public class MapperScannerConfigurer implements BeanDefinitionRegistryPostProcessor, InitializingBean, ApplicationContextAware, BeanNameAware {
+
+  private String basePackage;
+
+  private boolean addToConfig = true;
+
+  private SqlSessionFactory sqlSessionFactory;
+
+  private SqlSessionTemplate sqlSessionTemplate;
+
+  private String sqlSessionFactoryBeanName;
+
+  private String sqlSessionTemplateBeanName;
+
+  private Class<? extends Annotation> annotationClass;
+
+  private Class<?> markerInterface;
+
+  private ApplicationContext applicationContext;
+
+  private String beanName;
+
+  private boolean processPropertyPlaceHolders;
+
+  private BeanNameGenerator nameGenerator;
+...
+}
+
+/* Handler execution chain, consisting of handler object and any handler interceptors.
+	Returned by HandlerMapping's HandlerMapping#getHandler().
+*/
+public class HandlerExecutionChain {
+	...
+	private final Object handler;
+	@Nullable 
+	private HandlerInterceptor[] interceptors;
+	@Nullable 
+	private List<HandlerInterceptor> interceptorList;
+	private int interceptorIndex = -1;
+	...
+}
+
+/* BeanFactory that enables injection of MyBatis mapper interfaces. It can be set up with a SqlSessionFactory or apre-configured SqlSessionTemplate. 
+
+Sample configuration: 
+ <bean id="baseMapper" class="org.mybatis.spring.mapper.MapperFactoryBean" abstract="true" lazy-init="true">
+     <property name="sqlSessionFactory" ref="sqlSessionFactory" />
+   </bean>
+
+   <bean id="oneMapper" parent="baseMapper">
+     <property name="mapperInterface" value="my.package.MyMapperInterface" />
+   </bean>
+
+   <bean id="anotherMapper" parent="baseMapper">
+     <property name="mapperInterface" value="my.package.MyAnotherMapperInterface" />
+   </bean>
+Note that this factory can only inject interfaces, not concrete classes.
+*/
+public class MapperFactoryBean<T> extends SqlSessionDaoSupport implements FactoryBean<T> {
+	private Class<T> mapperInterface;
+	private boolean addToConfig = true;
+	...
+}
+
+Linux主流服务程序启动管理方式有以下几种:
+	1. daemon
+	2. sysvinit
+	3. systemd
+	4. nohup
+
+TCP Wrapper是一个开源软件，用来分析TCP/IP封包的软件，类似的还有iptables. Linux默认安装了tcp_wrapper. 作为一个安全的系统，Linux本身有两层安全防火墙，通过IP过滤机制的iptables实现第一层防护。iptables防火墙通过直观的监视系统的运行状况，阻挡网络中的恶意攻击，保护整个系统正常运行免遭攻击和破坏。如果通过第一层防护，那么下一层防护就是tcp_wrapper。通过tcp_wrapper可以实现对系统中提供的某些服务的开放和关闭、允许与禁止，从而更有效的保护系统安全运行。使用tcp_wrapper的功能仅需要两个配置文件:/etc/hosts.allow和/etc/hosts.deny.
+
+Jaeger Spark dependencies: This is a Spark job that collects spans from storage, analyze links between services, and stores them for later presentation in the UI. Note that it is needed for the production deployment. This job parses all traces on a given day, based on UTC. By default, it processes the current day, but other days can be explicitly specified. 
+
+除了线程池，还有其他几种比较典型的池化思想：
+	1. 内存池(Memory Pooling): 预先申请内存，提升申请内存速度，减少内存碎片；
+	2. 连接池(Connection Pooling): 预先申请数据库连接，提升申请连接的速度，降低系统的开销；
+	3. 实例池(Object Pooling): 循环使用对象，减少资源在初始化和释放时的昂贵损耗；
+
+ThreadPoolExecutor中的Worker是通过继承AQS，使用AQS来实现独占锁功能，没有使用可重入锁ReentrantLock，而是使用AQS，为的就是实现不可重入的特性去反应线程现在的执行状态，具体如下：
+	1. lock方法一旦获取了独占锁，表示当前线程正在执行任务中。
+	2. 如果正在执行任务，则不应该中断线程。
+	3. 如果线程现在不是独占锁的状态，也就是空闲状态，说明它没有处理任务，这时可以对该线程进行中断。
+	4. 线程池在执行shutdown方法或tryTerminate方法时会调用interruptIdleWorkers()方法来中断空闲的线程，interruptIdleWorkers方法会使用tryLock方法来判断线程池中的线程是否是空闲状态；如果线程是空闲状态则可以安全回收。
+
+Tomcat中的类加载器没有遵循双亲委派模型，原因如下：
+	1. 解决不同应用中使用某一第三方库的不同版本；
+	2. 部署在同一个web容器中相同的类库相同的版本可以共享；
+	3. Tomcat作为应用服务器，也有自己所依赖的类，需要与web应用隔离；
+	4. 支持jsp的热加载；
+
+在TCP三次握手的时候，Linux内核会维护两个队列：
+	1. 半连接队列，也称为SYN队列；
+	2. 全连接队列，也称为Accept队列；
+服务端收到客户端发起的 SYN 请求后，内核会把该连接存储到半连接队列，并向客户端响应 SYN+ACK，接着客户端会返回 ACK，服务端收到第三次握手的 ACK 后，内核会把连接从半连接队列移除，然后创建新的完全的连接，并将其添加到 accept 队列，等待进程调用 accept 函数时把连接取出来。
+
+TCP全连接队列最大值取决于somaxconn和backlog之间的最小值，也就是min(somaxconn, backlog)。
+查看当前TCP半连接队列长度： netstat -natp | grep SYN_RECV | wc -l
+
+Linux内核中会因为三个条件而drop半连接：
+	1. 如果半连接队列满了，并且没有开启tcp_syncookies，则会丢弃；
+	2. 若全连接队列满了，且没有重传SYN+ACK包的连接请求多于1个，则会丢弃；
+	3. 如果没有开启tcp_syncookies，并且max_syn_backlog减去当前半连接队列长度小于(max_syn_backlog >> 2)，则会丢弃；
+开启tcp_syncookies是缓解SYN攻击的一种手段。
+
+syncookies参数主要有以下三个值：
+	1. 0：表示关闭该功能；
+	2. 1: 表示仅当SYN半连接队列放不下时，再启用它；
+	3. 2: 表示无条件开启功能；
+
+几种防御SYN攻击的方法：
+	1. 增大半连接队列；
+	2. 开启tcp_syncookies功能；
+	3. 减少SYN+ACK重传次数；当服务端受到SYN攻击时，就会有大量处于SYN_RECV状态的TCP连接，处于这个状态的TCP会重传SYN+ACK，当重传次数超过上限后，就会断开连接。针对SYN攻击的场景，可以减少SYN+ACK重传次数，以加快处于SYN_RECV状态的TCP连接断开。
+
+top中的CPU指标：
+5.9%us — 用户空间占用CPU的百分比。
+3.4% sy — 内核空间占用CPU的百分比。
+0.0% ni — 改变过优先级的进程占用CPU的百分比
+90.4% id — 空闲CPU百分比
+0.0% wa — IO等待占用CPU的百分比
+0.0% hi — 硬中断（Hardware IRQ）占用CPU的百分比
+0.2% si — 软中断（Software Interrupts）占用CPU的百分比
+
+火焰图是基于perf结果产生的SVG图片，用来展示CPU的调用栈。Y轴表示调用栈，每一层都是一个函数。调用栈越深，火焰就越高，顶部就是正在执行的函数，下方都是它的父函数。X轴表示抽样数，如果一个函数在x轴占据的宽度越宽，就表示它被抽到的次数多，即执行的时间长。注意，X轴不代表时间，而是所有的调用栈合并后，按字母顺序排列的。火焰图就是看顶层的哪个函数占据的宽度最大。只要有"平顶"（plateaus），就表示该函数可能存在性能问题。颜色没有特殊含义，因为火焰图表示的是CPU的繁忙程度，所以一般选择暖色调。火焰图是SVG图片，可以与用户互动。
+
+/proc/<pid>/smaps：反应了运行时进程的内存映像，系统的运行时库(so)，堆，栈信息均可在其中看到。
+UNIX domain sockets又叫IPC(inter-process communication进程间通信)socket，用于实现同一主机上的进程间通信。socket原本是为网络通讯设计的，但后来在socket的框架上发展出一种IPC机制，就是Unix domain socket。虽然网络socket也可用于同一台主机的进程间通讯(通过loopback地址127.0.0.1)，但是UNIX domain socket用于IPC更有效率：不需要经过网络协议栈，不需要打包拆包、计算校验和、维护序号和应答等，只是将应用数据从一个进程拷贝到另外一个进程。这是因为，IPC机制本质上是可靠的通讯，而网络协议是为不可靠的通讯设计的。
+
+
+
