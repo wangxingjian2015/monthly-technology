@@ -1,0 +1,454 @@
+-XX:+UseFastAccessorMethods: 原始类型get,set方法的优化
+MongoDB的Sharded cluster由Shard, MongoS和Config server三个组件构成。
+
+目前，Hadoop作业调度器主要有三种：FIFO, Capacity Scheduler和Fair Scheduler。Hadoop2.7.2默认的资源调度器是Capacity Scheduler。
+MapReduce执行推测任务的前提条件：
+	1. 每个Task只能有一个备份任务；
+	2. 当前job已完成的Task必须不小于5%；
+	3. 开启推测执行参数设置：mapreduce.map.speculative=true, mapreduce.reduce.speculative=true;
+不能启用推测执行机制的情况：
+	1. 任务间存在严重的负载倾斜；
+	2. 特殊任务，比如任务向DB中写数据；
+
+public class CustomAutowireConfigurer implements BeanFactoryPostProcessor, BeanClassLoaderAware, Ordered {
+	private int order = Ordered.LOWEST_PRECEDENCE;
+	@Nullable
+	private Set<?> customQualifierTypes;
+	@Nullable 
+	private ClassLoader beanClassLoader = ClassUtils.getDefaultClassLoader();
+	
+		public void setOrder(int order) {
+		this.order = order;
+	}
+
+	@Override
+	public int getOrder() {
+		return this.order;
+	}
+
+	@Override
+	public void setBeanClassLoader(@Nullable ClassLoader beanClassLoader) {
+		this.beanClassLoader = beanClassLoader;
+	}
+
+	/**
+	 * Register custom qualifier annotation types to be considered
+	 * when autowiring beans. Each element of the provided set may
+	 * be either a Class instance or a String representation of the
+	 * fully-qualified class name of the custom annotation.
+	 * <p>Note that any annotation that is itself annotated with Spring's
+	 * {@link org.springframework.beans.factory.annotation.Qualifier}
+	 * does not require explicit registration.
+	 * @param customQualifierTypes the custom types to register
+	 */
+	public void setCustomQualifierTypes(Set<?> customQualifierTypes) {
+		this.customQualifierTypes = customQualifierTypes;
+	}
+
+
+	@Override
+	@SuppressWarnings("unchecked")
+	public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
+		if (this.customQualifierTypes != null) {
+			if (!(beanFactory instanceof DefaultListableBeanFactory)) {
+				throw new IllegalStateException(
+						"CustomAutowireConfigurer needs to operate on a DefaultListableBeanFactory");
+			}
+			DefaultListableBeanFactory dlbf = (DefaultListableBeanFactory) beanFactory;
+			if (!(dlbf.getAutowireCandidateResolver() instanceof QualifierAnnotationAutowireCandidateResolver)) {
+				dlbf.setAutowireCandidateResolver(new QualifierAnnotationAutowireCandidateResolver());
+			}
+			QualifierAnnotationAutowireCandidateResolver resolver =
+					(QualifierAnnotationAutowireCandidateResolver) dlbf.getAutowireCandidateResolver();
+			for (Object value : this.customQualifierTypes) {
+				Class<? extends Annotation> customType = null;
+				if (value instanceof Class) {
+					customType = (Class<? extends Annotation>) value;
+				}
+				else if (value instanceof String) {
+					String className = (String) value;
+					customType = (Class<? extends Annotation>) ClassUtils.resolveClassName(className, this.beanClassLoader);
+				}
+				else {
+					throw new IllegalArgumentException(
+							"Invalid value [" + value + "] for custom qualifier type: needs to be Class or String.");
+				}
+				if (!Annotation.class.isAssignableFrom(customType)) {
+					throw new IllegalArgumentException(
+							"Qualifier type [" + customType.getName() + "] needs to be annotation type");
+				}
+				resolver.addQualifierType(customType);
+			}
+		}
+	}
+
+}
+
+In Spring, NOTE: Annotation injection will be performed before XML injection; thus the latter configuration will override the former for properties wired through both approaches.
+
+4+1视图：被RUP采纳，已经成为架构设计的结构标准。
+该模型的五个视图：
+	1. 逻辑视图,Logical View，设计的对象模型(使用面向对象的设计方法时)；
+	2. 过程视图,Process View，捕捉设计的并发和同步特征；
+	3. 物理视图,Physical View，描述软件到硬件的映射，反应了分布式特性；
+	4. 部署视图,Deployment View，描述了在开发环境中软件的静态组织结构。
+	5. 架构的描述，即所做的各种决定，可以围绕这四个视图来组织，然后由一些用例(Use cases)或场景(scenarios)来说明，从而形成了第五个视图。
+
+public class AutowiredAnnotationBeanPostProcessor extends InstantiationAwareBeanPostProcessorAdapter 
+				implements MergedBeanDefinitionPostProcessor, PriorityOrdered, BeanFactoryAware {
+	protected final Log logger = LogFactory.getLog(getClass());
+	private final Set<Class<? extends Annotation>> autowiredAnnotationTypes = new LinkedHashSet<>(4);
+	private String requiredParameterName = "required";
+	private boolean requiredParameterValue = true;
+	private int order = Ordered.LOWEST_PRECEDENCE - 2;
+	@Nullable
+	private ConfigurableListableBeanFactory beanFactory;
+	private final Set<String> lookupMethodsChecked = Collections.newSetFromMap(new ConcurrentHashMap<>(256));
+	private final Map<Class<?>, Constructor<?>[]> candidateConstructorsCache = new ConcurrentHashMap<>(256);
+	private final Map<String, InjectMetadata> injectionMetadataCache = new ConcurrentHashMap<>(256);
+	...
+}
+
+逃逸分析通常是在方法内联的基础上进行的，即时编译可以根据逃逸分析的结果进行诸如锁消除、栈上分配以及标量替换的优化。
+
+与CMS中的ParNew和G1类似，ZGC也采用标记-复制算法，不过ZGC对该算法做了重大改进：ZGC在标记、转移和重定位阶段几乎都是并发的，这是ZGC实现停顿时间小于10ms目标的最关键原因。
+
+PropertyEditorRegistrySupport
+BeanWrapperImpl
+SimpleTypeConverter
+
+explain extended select * from a where b > 100;
+show warnings;
+
+protected void initStrategies(ApplicationContext context) {
+	initMultipartResolver(context);
+	initLocalResolver(context);
+	initThemeResolver(context);
+	initHandlerMappings(context);
+	initHandlerAdapters(context);
+	initHandlerExceptionResolvers(context);
+	initRequestToViewNameTranslator(context);
+	initViewResolvers(context);
+	initFlashMapManager(context);
+}
+
+操作系统常用调度算法：
+	1. 先来先服务(FCFS)调度算法；
+	2. 短作业优先(SJF)调度算法；
+	3. 优先级调度算法；
+	4. 高响应比优先调度算法；
+	5. 时间片轮转调度算法；
+	6. 多级反馈队列调度算法；
+	
+wait和sleep的区别:
+	1. 这两个方法来自不同的类分别是Thread和Object
+	2. 最主要是sleep方法没有释放锁，而wait方法释放了锁，使得其他线程可以使用同步控制块或者方法。
+	3. wait, notify和notifyAll只能在同步控制方法或者同步控制块内使用，而sleep可以在任何地方使用(使用范围)
+	4. sleep必须捕获异常，而wait，notify和notifyAll不需要捕获异常
+	5. sleep是Thread类的静态方法。sleep的作用是让线程休眠指定的时间，在时间到达时恢复，也就是说sleep将在指定时间到达事件事恢复线程执行。wait是Object的方法，也就是说可以对任意一个对象调用wait方法，调用wait方法将会将调用者的线程挂起，直到其他线程调用同一个对象的notify方法才会重新激活调用者。
+
+JVM的方法调用有四个,分别是invokestatic, invkespecial,invokevirtual和invokeinterface。前两个是静态绑定，后两个是动态绑定。
+
+垃圾回收都是基于分区进行的。G1在实现垃圾回收时，一共提供了三种不同的方法，分别是新生代回收(YGC)，混合回收(Mixed GC)，全回收(FGC)。这三种垃圾回收触发的时机通常如下：
+	1. 应用程序分配对象时，发现内存不足，触发YGC；
+	2. 在YGC执行中，判断整体内存使用是否大于一定的阈值，如果大于启动并发标志；在并发标记完成后，当下一次启动垃圾回收称为Mixed GC，在Mixed GC执行过程中不仅回收新生代分区，同时也回收部分老年代分区；
+	3. 在程序分配对象时，发现内存不足，触发YGC或者Mixed GC；垃圾回收结束后再次尝试分配对象，如果内存还不足，此时触发FGC。
+在整个JVM运行过程中，还可以通过外部命令或者代码触发垃圾回收。
+
+G1垃圾回收算法的特点如下：
+	1. 并行性：G1在回收期间，可以由多个GC线程同时工作，有效利用多核计算能力；
+	2. 并发性：G1拥有与应用程序交替执行的能力，因此一般来说，不会在整个回收期间完全阻塞应用程序；
+	3. 分代GC:与之前回收器不同，其他回收器要么工作在年轻代要么工作在老年代。G1可以同时兼顾年轻代和老年代；
+	4. 空间整理：G1在回收过程中，会进行适当的对象移动，不会CMS，只是简单的标记清除，在若干次GC后CMS必须进行一次碎片整理，G1在每次回收时都会有效的复制对象，减少空间碎片；
+	5. 可预见性：由于分区的原因，G1可以只选取部分区域进行内存回收，这样缩小了回收范围，因此对于全局停顿也能得到更好的控制。
+
+public class Collections {
+	private Collections() {}
+	...
+	public static <K,V> Map<K,V> synchronizedMap(Map<K,V> m) {
+		return new SynchronizedMap<>(m);
+	}
+	private static class SynchronizedMap<K,V> 
+		implements Map<K,V>, Serializable {
+		private static final long serialVersionUID = 1978198479659022715L;
+		
+		private final Map<K,V> m;   //Backing Map 
+		final Object mutex;   // Object on which to synchronize 
+		
+		SynchronizeMap(Map<K,V> m) {
+			this.m = Objects.requireNonNull(m);
+			this.mutex = this;
+		}
+		
+		SynchronizeMap(Map<K,V> m, Object mutex) {
+			this.m = m;
+			this.mutex = mutex;
+		}
+	}
+	...
+}
+
+查看CPU使用率：
+	1. top;
+	2. sar -u 1 5;
+	3. vmstat -n 1 5;
+	4. mpstat -P ALL 1 5;
+
+查看CPU负载:
+	1. top;
+	2. uptime;
+	3. sar -q 1 5;
+
+Linux查找最大文件的几种方法：
+	1. ls -lSh <目录> | heand -2|tail -1
+	2. find <目录> -type f -printf '%s\t%p\n' | sort -nr |head -1;
+	3. du -Sh | sort -rh|head -1 
+ODS层的增量表，每天一个分区: partitioned by (DAY string);
+可以建立临时表，辅助各种表/拉链表的合并和计算
+DW层历史拉链表
+覆盖历史拉链表：insert override table member_his select * from member_his_tmp;
+
+public class TreeMap<K,V> extends AbstractMap<K,V>
+	implements NavigableMap<K,V>, Cloneable, java.io.Serializable {
+	private final Comparator<? super K> comparator;
+	private transient Entry<K,V> root;
+	private transient int size = 0;
+	// The number of structural modifications to the tree.
+	private transient int modCount = 0;
+	// Red-black mechanics
+	private static final boolean RED = false;
+	private static final boolean BLACK = true;
+	
+	static final class Entry<K, V> implements Map.Entry<K,V> {
+		K key;
+		V value;
+		Entry<K,V> left;
+		Entry<K,V> right;
+		Entry<K,V> parent;
+		boolean color = BLACK;
+		...
+	}
+	...
+	public V remove(Object key) {
+		Entry<K,V> p = getEntry(key);
+		if (p == null)
+			return null;
+		V oldValue = p.value;
+		deleteEntry(p);
+		return oldValue;
+	}
+	
+	// Delete node p, and then rebalance the tree.
+	private void deleteEntry(Entry<K, V> p) {
+		modCount ++;
+		size --;
+		
+		// If strictly internal, copy successor's element to p and then
+		// make p point to successor.
+		if (p.left != null && p.right != null) {
+			Entry<K,V> s = succssor(p);
+			p.key = s.key;
+			p.value = s.value;
+			p = s;
+		}  // p has 2 children 
+		
+		// Start fixup at replacement node, if it exists.
+		Entry<K,V> replacement = (p.left != null ? p.left : p.right);
+		
+		if (replacement != null) {
+			// Link replacement to parent 
+			replacement.parent = p.parent;
+			if (p.parent == null) 
+				root = replacement;
+			else if (p = p.parent.left)
+				p.parent.left = replacement;
+			else
+				p.parent.right = replacement;
+			
+			// Null out links so they are OK to use by fixAfterDeletion.
+			
+			// Fix replacement 
+			if (p.color == BLACK)
+				fixAfterDeletion(replacement);
+		} else if (p.parent == null) {   // return if we are the only node.
+			root = null;
+		} else {   //No children. Use self as phantom replacement and unlink.
+			if (p.color == BLACK)
+				fixAfterDeletion(p);
+			
+			if (p.parent != null) {
+				if (p == p.parent.left)
+					p.parent.left = null;
+				else if (p == p.parent.right) 
+					p.parent.right = null;
+				p.parent = null;
+			}
+		}
+	}
+	...
+}
+
+
+TreeMap和HashMap的区别:
+	1. 继承或实现的抽象类：HashMap<K,V> extends AbstractMap<K, V> implements Map<K, V>, Cloneable, Serializable; TreeMap extends AbstractMap<K, V> implements NavigableMap<K, V> Cloneable, Serializable；
+	其中NavigableMap接口又继承了SortedMap接口。SortedMap接口继承了Map接口
+	2. 存储方式：HashMap使用数组存储，TreeMap使用红黑树存储；
+	3. 扩容方式：HashMap有负载因子，扩容为原容量的2倍。TreeMap没有扩容，每次动态添加/删除一个树节点；
+	4. 查找方式：HashMap通过hash函数，如果冲突，通过链表+红黑树解决；TreeMap通过二叉查找；
+	5. TreeMap的Key需要实现Comparable接口或者提供Comparator供Key进行比较；HashMap通过hashCode()进行比较，如果相同通过equals比较。
+	6. TreeMap的Key有序，HashMap无序。
+
+Session共享的常见解决方案：
+	1. Session复制；
+	2. Session绑定；
+	3. 利用Cookie记录Session;
+	4. Session服务器；
+
+CountDownLaunch和Cylicbarrior的区别:
+	1. CountDownLatch的计数器只能使用一次，而CyclicBarrier的计数器可以使用reset()重置，可使用多次，所以CyclicBarrier可以处理更为复杂的场景；
+	2. CycliBarrier还提供了其他有用的方法，比如getNumberWaiting()获取CyclicBarrier阻塞的线程数量，isBroken()方法用来了解阻塞的线程是否被中断；CyclicBarrier的构造函数中提供barrierAction，可用于到达屏障后，优先执行；
+	3. CountDownLatch运行一个或者多个线程等待一组事件的产生，CyclicBarrier用于等待一组线程的其他线程运行到栅栏位置。
+
+-------------------------------------------------
+CountDownLatch: 
+A synchronization aid that allows one or more threads to wait until a set of operations being performed in other threads completes.
+
+A CountDownLatch is initialized with a given count. The await() methods block until the current count reaches zero due to invocations of the countDown() method, after which all waiting threads are released and any subsequent invocations of await() return immediately. This is a one-shot phenomenon-- the count cannot be reset. If you need a version that resets the count, consider using a CyclicBarrier. 
+
+A CountDownLatch is a versatile synchronization tool and can be used for a number of purposes. A CountDownLatch initialized with a count of one serves as a simple on/off latch, or gate: all threads invoking await() wait at the gate until it is opened by a thread invoking countDown. A CountDownLatch initialized to N can be used to make one thread wait until N threads have completed some action, or some action has been completed N times. 
+
+A useful property of a CountDownLatch is that it doesn't require that threads calling countDown() wait for the count to reach zero before proceeding, it simply prevents any thread from proceeding past an await() until all threads could pass. 
+-------------------------------------------------
+CycliBarrier:
+A synchronization aid that allows a set of threads to all wait for each other to reach a common barrier point. CycliBarrier are useful in programs involving a fixed sized party of threads that must occasionally wait for each other. The barrier is called cyclic because it can be re-used after the waiting threads are released.
+
+A CycliBarrier supports an optional Runnable command that is run once per barrier point, after the last thread in the party arrives, but before any threads are released. This barrier action is useful for updating shared-state before any of the parties continue.
+
+If the barrier action does not rely on the parties being suspended when it is executed, then any of the threads in the party could execute that action when it is released. To facilitate this, each invocation of await returns the arrival index of that thread at the barrier.You can then choose which thread should execute the barrier action, for example: 
+ if (barrier.await() == 0) {
+   // log the completion of this iteration
+ }}
+
+The CyclicBarrier uses an all-or-none breakage model for failed synchronization attempts: If a thread leaves a barrier point prematurely because of interruption, failure, or timeout, all other threads waiting at that barrier point will also leave abnormally via BrokenBarrierException (or InterruptedException if they too were interrupted at aboutthe same time). 
+-------------------------------------------------
+Java的类加载在哪些情况下会触发类的初始化：
+	1. 遇到new, getstatic, putstatic, invokestatic这4条指令；
+	2. 使用java.lang.reflect包的方法对类进行反射调用；
+	3. 初始化一个类的时候，如果发现其父类没有初始化，则先初始化其父类(注意：如果其父类是接口的话，则不要求初始化父类)；
+	4. 当虚拟机启动时，需要指定一个要执行的主类(包含main方法的那个类)，虚拟机会先初始化这个主类；
+	5. 当使用JDK1.7的动态语言支持时，如果一个java.lang.invoke.MethodHandle实例最后的解析结果REF_getstatic, REF_putstatic, REF_invokeStatic的方法句柄，并且这个方法句柄所对应的类没有进行初始化，则先触发类的初始化。
+
+以下情况不会触发类的初始化：
+	1. 字类引用父类的静态字段，不会导致父类初始化。至于是否触发子类的加载和验证，取决于JVM的具体实现；
+	2. 通过数组定义引用类，不会触发类的初始化；
+	3. 引用一个类的常量，不会触发类的初始化。
+
+被final修饰的静态字段在使用时，不会使类进行初始化，因为在编译期已经将此常量放在常量池。
+
+子类调用或者设置父类的静态字段或者调用父类的静态方法时仅仅初始化父类，而不初始化子类。同样读取final修饰的常量不会进行类的初始化。
+
+netstat -nap|grep TIME_WAIT|wc -l
+netstat -nap|grep CLOSE_WAIT|wc -l
+
+
+tcp.ipv4.tcp_timestamps
+#表示开启重用，允许将TIME_WAIT sockets重新用于新的TCP连接，默认关闭.
+tcp.ipv4.tcp_tw_reuse
+#表示开启TCP连接中TIME_WAIT sockets的快速回收，默认关闭。
+tcp.ipv4.tcp_tw_recycle
+
+#对于一个新建连接，内核要发送多少个SYN 连接请求才决定放弃,不应该大于255，默认值是5，对应于180秒左右时间  
+net.ipv4.tcp_syn_retries=2 
+
+#net.ipv4.tcp_synack_retries=2 
+#表示当keepalive起用的时候，TCP发送keepalive消息的频度。缺省是2小时，改为300秒 
+net.ipv4.tcp_keepalive_time=1200 
+
+net.ipv4.tcp_orphan_retries=3 
+
+#表示如果套接字由本端要求关闭，这个参数决定了它保持在FIN-WAIT-2状态的时间 
+net.ipv4.tcp_fin_timeout=30   
+
+#表示SYN队列的长度，默认为1024，加大队列长度为8192，可以容纳更多等待连接的网络连接数。 
+net.ipv4.tcp_max_syn_backlog = 4096 
+
+#表示开启SYN Cookies。当出现SYN等待队列溢出时，启用cookies来处理，可防范少量SYN攻击，默认为0，表示关闭 
+net.ipv4.tcp_syncookies = 1 
+
+
+   
+
+##减少超时前的探测次数  
+net.ipv4.tcp_keepalive_probes=5  
+
+##优化网络设备接收队列  
+net.core.netdev_max_backlog=3000  
+
+
+
+TIME_WAIT过多这个问题主要是因为TCP的四次挥手没有走完，造成连接未释放。
+
+TIME_WAIT状态存在的理由：
+	1.防止上一次连接中的包，迷路后重新出现，影响新连接（经过2MSL，上一次连接中所有的重复包都会消失）
+	2. 可靠的关闭TCP连接。在主动关闭方发送的最后一个 ack(fin) ，有可能丢失，这时被动方会重新发fin, 如果这时主动方处于 CLOSED 状态 ，就会响应 rst 而不是 ack。所以主动方要处于 TIME_WAIT 状态，而不能是 CLOSED 。另外这么设计TIME_WAIT 会定时的回收资源，并不会占用很大资源的，除非短时间内接受大量请求或者受到攻击。
+
+拥塞控制的方法：慢开始、拥塞避免、快重传、快恢复。
+
+docker创建镜像的三种方法：
+	1. 基于已有的容器创建镜像；docker commit
+	2. 基于本地模板镜像创建；docker import
+	3. 用dockerfile生成镜像；
+	
+在使用Linux默认安装时，客户端与daemon之间的通信是通过本地IPC/UNIX Socket完成的(/var/run/docker.sock);
+Docker引擎由如下主要组件构成：Docker客户端(Docker Client)，Docker守护进程(Docker daemon)，containerd以及runc，共同负责容器的创建和运行。
+
+NameNode维护了哪些信息：
+	NameNode维护了两套数据，一个是文件目录与Block数据块之间的关系，另一个是Block与DataNode节点之间的关系。
+	前一个数据关系是静态的，存放在磁盘上，通过fsimage和edits文件来维护，涉及到元数据如果保存一致性的问题，就是使用这两个文件以及SecondaryNameNode实现的。
+	后一个数据关系是动态的，不会持久化到磁盘，每当集群启动的时候，会自动建立这些信息。
+
+在Java中，可以作为GC Roots的对象包括：
+	1. 虚拟机栈(栈帧中的本地变量表)引用的对象；
+	2. 方法区中的类静态属性引用的对象；
+	3. 方法区中常量引用的对象；
+	4. 本地方法栈中JNI(Native方法)引用的对象；
+是否作为根的判定依据：程序是否可以直接引用该对象(譬如调用栈中的变量指针)。同时需要注意：不同的垃圾回收器，选择GC Roots的范围是不一样的。
+
+通过读写屏障可以解决并发标记时的漏标问题，具体在工程实践中，不同的垃圾回收器又有不同实现，譬如针对HotSpot虚拟机，CMS使用了"写屏障+增量更新"的方法，G1和Shenandoah是通过"写屏障+SATB"来完成的，而ZGC则采取了"读屏障"的方式。
+
+Linux内核目前实现了六种调度策略(即调度算法)，用于对不同类型的进程进行调度，其中sched_normal和sched_batch调度普通的非实时进程，sched_fifo和sched_rr和sched_deadline采用不同的调度策略调度实时进程，sched_idle则在系统空闲时调用idle进程。
+
+sched_norma: 也叫sched_other，用于普通进程，通过CFS调度器实现。
+
+sched_batch: sched_normal普通进程策略的分化版本。采用分时策略，根据动态优先级(可用nice() API设置)，分配CPU运算资源。注意：这类进程比实时进程优先级低，换言之，在有实时进程存在时，实时进程优先调度。但针对吞吐量优先，除了不能抢占外与常规任务一样，允许任务运行更长时间，更好地使用高速缓存，适合于成批处理的工作。
+
+sched_idle: 优先级最低，在系统空闲时才跑这类进程。
+
+sched_fifo: 先入先出调度算法(实时调度策略)，相同优先级的任务先到先服务，高优先级的任务可以抢占低优先级的任务。
+
+sched_rr: 轮流调度算法(实时调度策略)，提供round-robin语义，采用时间片，相同优先级的任务当时间片会被放到队列尾部，以保证公平性，同样，高优先级的任务可以抢占低优先级的任务。不同要求的实时任务可以根据需要用sched_setscheduler()API设置策略。
+
+sched_deadline: 新支持的实时进程调度策略，针对突发型计算，且对延迟和完成时间高度敏感的任务适用。基于Earliest Deadline First(EDF)调度算法。
+
+nice time为CPU处理nice的所耗费的时间。
+
+top中的指标含义：
+	us, user    : time running un-niced user processes;
+	sy, system  : time running kernel processes;
+	ni, nice    : time running niced user processes;
+	id, idle    : time spent in the kernel idle handler;
+	wa, IO-wait : time waiting for I/O completion;
+	hi          : time spent servicing hardware interrupts;
+	si          : time spent servicing software interrupts;
+
+一个无向图是一棵树的条件：G必须是无回路的连通图或者是n-1条边的连通图。
+
+public interface NavigableMap<K, V> extends SortedMap<K, V> {
+	...
+	/* Returns a key-value mapping associated with the least key 
+		greater than or equal to the given key, or #null if 
+		there is no such key.
+	*/
+	Map.Entry<K, V> ceilingEntry(K key);
+	...
+}

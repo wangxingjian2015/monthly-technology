@@ -1,0 +1,457 @@
+Spring Bean初始化：
+	1. 实例化bean对象；
+	2. 设置对象属性；
+	3. 检查Aware相关接口并设置相关依赖；
+	4. BeanPostProceesor前置处理；
+	5. 检查是否是InitializingBean以决定是否调用afterPropertiesSet方法；
+	6. 检查是否配置有自定义的init-method;
+	7. BeanPostProcessor后置处理；
+	8. 注册必要的Destruction相关回调接口；
+	9. 使用中；
+	10. 是否实现DisposableBean接口；
+	11. 是否配置有自定义的destroy方法。
+
+协程的最大优势就是协程极高的执行效率。因为子程序切换不是线程切换，而是由程序自身控制，因为，没有线程切换的开销，和多线程相比，线程数量越多，协程的性能优势就越明显。
+协程的第二大优势就是不需要多线程的锁机制，因为只有一个线程，也不存在同时写变量冲突，在协程中控制共享资源不加锁，只需要判断状态就好了，所以执行效率比多线程高很多。
+因为协程是一个线程执行，那怎么利用多核CPU呢：最简单的方法是多进程+协程，既充分利用多核，又充分发挥协程的高效率，可获得极高的性能。
+
+协程不是被操作系统内核所管理的，而是完全由程序所控制，也就是在用户态执行。这样带来的好处是性能大幅度的提升，因为不会像线程切换那样消耗资源。
+协程不是进程也不是线程，而是一个特殊的函数，这个函数可以在某个地方挂起，并且可以重新在挂起处继续运行。所以说，协程与进程、线程相比并不是一个维度的概念。
+
+适配器模式和装饰器模式的区别：
+	适配器模式和装饰器模式都有一个别名叫做包装模式(Wrapper)，看似都是包装一个类或对象的作用，但使用他们的目的不一样。适配器模式的意义是要将一个接口转变成另一个接口，它的目的是通过改变接口来达到重复使用的目的。而装饰器模式不是要改变被装饰对象的接口，而是恰恰要保持原有的接口，但是增强原有对象的功能，或者改变原有对象的处理方式而提升性能。
+
+23种设计模式根据作用范围来划分：根据模式是主要用于类上还是主要用于对象上来分，这种方式可分为类模式和对象模式两种。
+	1. 类模式：用于处理类与子类之间的关系，这些关系通过继承来建立，是静态的，在编译时刻便确定下来了。GoF中的工厂方法、(类)适配器、模板方法、解释器属于该模式。
+	2. 对象模式：用于处理对象之间的关系，这些关系可以通过组合或聚合来实现，在运行时刻可以变化，更具动态性。GoF除了上述4种，其他都是对象模式。
+
+适配器模式主要包括以下角色：
+	1. 目标Target接口：当前系统业务期待的接口，它可以是抽象类或接口。
+	2. 适配者(Adaptee)类：它是被访问和适配的现存组件库中的组件接口。
+	3. 适配器Adapter类：它是一个转换器，通过继承或者引用适配者的对象，把适配者接口转换成目标接口，让客户按目标接口的格式访问适配者。
+
+Raft如何解决集群脑裂时的stale read问题：
+	引入leader lease机制解决集群脑裂时的stale read问题。引入一个新的概念：region leader。Region leader是一个逻辑上的概念，任意时刻对于某一个region来说，一定只拥有一个region leader，每个region leader在任期之内尝试每隔t时间间隔，在raft group内部更新region leader的lease。所有的读写请求都必须通过region server完成。
+	值得注意的是，region leader和raft leader可能不是一个节点，当region leader和raft leader不重合的时候，region leader会将请求转发给当前的rafter leader，当网络出现分区时，会出现以下几种情况：
+		1. region leader落在多数派，老raft leader在多数派这边；
+		2. region leader落在多数派，老raft leader在少数派这边；
+		3. region leader落在少数派，老raft leader在多数派这边；
+		4. region leader落在少数派，老raft leader在少数派这边；
+	各种情况都可以处理。
+	总体来说，这种方法牺牲了一定的可用性(在脑裂时部分客户端的可用性)换取了一致性的保证。
+
+ZAB和Paxos算法的联系和不同：
+	相同点：
+	1. 两者都存在一种类似于leader进程的角色，由其负责协调多个Follower进程的运行；
+	2. Leader进程都会等待超过半数的Follower做出正确反馈后，才会将一个提案提交；
+	3. ZAB协议中，每个Proposal都包含一个epoch值来代表当前的leader周期，Paxos中名字为Ballot；
+	不同点：
+		ZAB用来构建高可用的分布式数据主备系统(Zookeeper)，Paxos用来构建分布式一致性状态机系统。
+
+PolarDB中的关系代数算子：
+	一条SQL查询在数据库系统中通常被表示为一棵关系代数算子组成的树，有如下场景的算子：
+	1. Project: 用于描述SQL中的select列，包括函数计算。
+	2. Filter：用于描述SQL中的where条件。
+	3. Join：用于描述SQL中的join，其对应的物理算子有HashJoin,BKAJoin, Nested-Loop Join, SortMergeJoin。
+	4. Agg: 用于描述SQL中的Group by及聚合函数，其对应的物理算子有HashAgg, SortAgg。
+	5. Sort: 用于描述SQL中的order by及limit，其对应的物理算子有TopN, MemSort。
+	6. LogicalView：用于描述PolarDB-X下发至RDS MySQL或PolarDB MySQL的SQL，其内部可能包括一个或多个逻辑算子。
+	7. Gather: 代表从多个数据流汇集数据的操作，通常出现在LogicView之上(若开启并行执行，则并行优化步骤将其上拉)。
+
+红黑树和AVL平衡二叉树的区别：
+	1. 红黑树不追求完全平衡，它只要求部分地达到平衡要求，降低了对旋转的要求，从而提高了性能。红黑树能够以O(logN)的时间复杂度进行搜索、插入、删除操作。此外，由于它的设计，任何不平衡都会在三次旋转之内解决。红黑树的算法时间复杂度和AVL相同，但统计性能比AVL树更高。当然，红黑树不适应所有应用树的领域。如果数据基本是静态的，那么让他们能够插入，并且不影响平衡的地方具有更好的性能。如果数据完全是静态的，那么哈希表可能会更好。在实际的系统中，例如使用动态规则的防火墙，使用红黑树比使用哈希表具有更好的伸缩性。
+	2. AVL树任何节点的子树高度差最大为1，查找、插入和删除在平均和最坏情况下都是O(logN)。增加和删除节点都需要多次旋转来重新平衡这个树。
+
+一个m阶的B树具有如下几个特征：
+	1. 任意非叶子节点最多只有m个子节点，且m>2;
+	2. 根节点的子节点数为[2, m];
+	3. 除根节点以外的非叶子节点的子节点数为[m/2, m]，向上取整；
+	4. 非叶子节点的关键字个数=子节点数-1；
+	5. 所有叶子节点都处于同一层，或者说根节点到每个叶子节点的高度都相同；
+	6. k个关键字把节点拆成k+1段，分别指向k+1个子节点，同时满足查找树的大小关系；
+	7. 每个节点中的关键字按照升序排列，每个关键字的左子树中的所有关键字都小于它，而右子树中的所有关键字都大于它；
+	8. 每个节点都有索引和数据。
+一个m阶的B+树具有如下特征：
+	1. 有n个子节点的非叶子节点中含有n个关键字(B树是n-1个)，这些关键字不保存数据，只用来索引，所有数据都保存在叶子节点(B树是每个关键字都保存数据)；
+	2. 所有的叶子节点中包含了全部关键字的信息，以及指向含这些关键字记录的指针，且叶子节点本身依据关键字的大小自小到大顺序链接；
+	3. 所有的非叶子节点都可以看成是索引部分，节点中仅包括子树中的最大(最小)关键字；
+	4. 通常在B+树上有两个头指针，一个指向根节点，一个指向关键字最小的叶子节点；
+	5. 同一个关键字会在不同的节点中重复出现，根节点的最大元素就是B+树的最大元素。
+
+B+树是对B树的一种变形树，它与B树的不同点：
+	1. 有K个子节点的节点必然有K个关键字；
+	2. 非叶子节点仅具有索引作用，记录相关的信息存放在叶子节点中；
+	3. 所有的叶子节点按照顺序链接在一起，可以按照关键字顺序遍历所有记录；
+	4. 通常在B+树上有两个头指针，一个指向根节点，一个指向关键字最小的叶子节点； 
+	5. 同一个关键字会在不同的节点中重复出现，根节点的最大元素就是B+树的最大元素。 
+
+为什么MySQL使用B+树：
+	1. B树和B+树最重要的一个区别就是B+树只有叶子节点存放数据，其余节点用来索引，而B树是每个索引节点都会有Data域。这就决定了B+树更适合用来存储外部数据，也就是所谓的磁盘数据。
+	2. 从MySQL看，B+树是用来充当索引的，一般来说索引非常大，尤其是关系型数据库这种数据量的索引能达到亿级别，所以为了减少内存的占用，索引也会被存储在磁盘上。
+	3. MySQL如何衡量查询效率? 磁盘IO次数，B树的特点是每层节点数目非常多，层数很少，目的就是为了减少磁盘IO次数，当查询数据的时候，最好的情况就是很快找到目标索引，然后读取数据，使用B+数就能很好的完成这个目的。
+	4. B+树所有的Data域在叶子节点，一般来说，都会进行一个优化，就是将所有的叶子节点用指针串起来。这样遍历叶子节点就能获得全部数据，这样就能进行区间访问。
+
+public class Executors {
+	
+	public static ExecutorService newFixedThreadPool(int nThreads) {
+		return new ThreadPoolExecutor(nThreads, nThreads,
+										0L, TimeUnit.MILLISECONDS,
+										new LinkedBlockingQueue<Runnable>());
+	}
+	...
+}
+
+OSPF(Open shortest path First)协议：开放式最短路径优先协议。无类别链路状态路由协议，组播更新；跨层封装到三层，协议号89;基于拓扑工作，故更新量大--需要结构化部署-区域划分、地址规划、触发更新、每30分钟更新。
+OSPF的数据包：
+	1. Hello包；
+	2. DBD-数据库描述包；
+	3. LSR-链路状态请求；
+	4. LSU-链路状态更新携带各种LSA；
+	5. LSack-链路状态确认。
+
+索引的使用原因：
+	1. 通过创建唯一索引，可以保证数据库表中记录的唯一性；
+	2. 可以大大加快数据的检索速度(大大减少检索的数据量)，这是创建索引的最主要的原因。
+	3. 帮助服务器避免排序和临时表；
+	4. 将随机IO变为顺序IO；
+	5. 可以加速表和表之间的连接，特别是在实现数据的参考完整性方面有意义。
+
+进程间通信的几种方式：
+	1. 管道(pipe)；
+	2. 信号量(semophore);
+	3. 消息队列(message queue)；
+	4. 信号(signal)；
+	5. 共享内存(shared memory)；
+	6. 套接字(socket)；
+
+静态内部类实现的单例是懒加载且线程安全。
+public class Singleton {
+	private Singleton(){}
+	private static class SingletonHolder {
+		private static Singleton INSTANCE = new Singleton();
+	}
+	
+	public static final Singleton getInstance() {
+		return SingletonHolder.INSTANCE;
+	}
+}
+
+public class Collections {
+	private Collections() {}
+	...
+	public static <T> int binarySearch(List<? extends Comparable<? super T>> list, T key) {
+		if (list instanceof RandomAccess || list.size() < BINARYSEARCH_THRESHOLD)
+			return Collections.indexedBinarySearch(list, key);
+		else 
+			return Collections.iteratorBinarySearch(list, key);
+	}
+	...
+}
+
+public interface Lock {
+	void lock();
+	void lockInterruptibly() throws InterruptedException;
+	boolean tryLock();
+	boolean tryLock(long time, TimeUnit unit) throw InterruptedException;
+	void unlock();
+	Condition newCondition();
+}
+
+HierarchicalBeanFactory
+PropertyEditorRegistry 
+
+LSM树本质上和B+相似，是一种存储在磁盘上的数据的索引格式，但是差异点在于LSM对写入非常高效，实现来说就是无论什么样的写入LSM都是当成一次顺序写入，这一点正好和HDFS的优点契合，HDFS不支持随机写，支持顺序写。LSM数据存储在两个地方，一个是磁盘一个是内存，内存中同样使用跳跃表，内存中是多个有序的文件。
+
+@Target(ElementType.TYPE)
+@Rentention(RetentionPolicy.RUNTIME)
+@Documented
+public @interface Import {
+	// #Configuration, #ImportSelector, #ImportBeanDefinitionRegistrar or regular component classes to import.
+	Class<?>[] value();
+}
+
+/* #BeanFactoryPostProcessor used for bootstrapping processing of @Configuration classes.
+	Registered by default when using <context:annotation-config/> or <context:component-scan/>. Otherwise, may be declared manually as with any other BeanFactoryPostProcessor.
+	This post processor is priority-ordered as it is important that any @Bean methods declared in @Configuration classes have their corresponding bean definitions registered before any other @BeanFactoryPostProcessor executes.
+*/
+public class ConfigurationClassPostProcessor 
+	implements BeanDefinitionRegistryPostProcessor, PriorityOrdered, ResourceLoaderAware, BeanClassLoaderAware, EnvironmentAware {
+	private static final String IMPORT_REGISTRY_BEAN_NAME = ConfigurationClassPostProcessor.class.getName() + ".importRegistry";
+	...
+	private SourceExtractor sourceExtractor = new PassThroughSourceExtractor();
+	private ProblemReporter problemReporter = new FailFastProblemReporter();
+	@Nullable
+	private Environment environment;
+	private ResourceLoader resourceLoader = new DefaultResourLoader();
+	@Nullable 
+	private ClassLoader beanClassLoader = ClassUtils.getDefaultClassLoader();
+	private MetadataReaderFactory metadataReaderFactory = new CachingMetadataReaderFactory();
+	private boolean setMetadataReaderFactoryCalled = false;
+	private final Set<Integer> registriesPostProcessed = new HashSet<>();
+	private final Set<Integer> factoriesPostProcessed = new HashSet<>();
+	@Nullable 
+	private ConfigurationClassBeanDefinitionReader reader;
+	private boolean localBeanNameGeneratorSet = false;
+	// Using short class names as default bean names.
+	private BeanNameGenerator componentScanBeanNameGenerator = new AnnotationBeanNameGenerator();
+	
+	// Using fully qualified class names as default bean names.
+	private BeanNameGenerator importBeanNameGenerator = new AnnotationBeanNameGenerator() {
+		@Override
+		protected String buildDefaultBeanName(BeanDefintion definition) {
+			String beanClassName = definition.getBeanClassName();
+			Assert.state(beanClassName != null, "No bean class name set");
+			return beanClassName;
+		}
+	};
+	...
+}
+
+public class CommonAnnotationBeanPostProcessor extends InitDestroyAnnotationBeanPostProcessor 
+			implements InstantiationAwareBeanPostProcessor, BeanFactoryAware, Serializable {
+	@Nullable
+	private static Class<? extends Annotation> webServiceRefClass;
+	@Nullable 
+	private static Class<? extends Annotation> ejbRefClass;
+	static {
+		try {
+			Class<? extends Annotation> clazz = (Class<? extends Annotation>)
+				ClassUtils.forName("javax.xml.ws.WebServiceRef", CommonAnnotationBeanPostProcess.class.getClassLoader());
+			webServiceRefClass = clazz;
+		} catch(ClassNotFoundException ex) {
+			webServiceRefClass = null;
+		}
+		try {
+			@SuppressWarnings("unchecked")
+			Class<? extends Annotation> clazz = (Class<? extends Annotation>)
+					ClassUtils.forName("javax.ejb.EJB", CommonAnnotationBeanPostProcessor.class.getClassLoader());
+			ejbRefClass = clazz;
+		}
+		catch (ClassNotFoundException ex) {
+			ejbRefClass = null;
+		}
+	}
+	
+	private final Set<String> ignoredResourceTypes = new HashSet<>(1);
+	private boolean fallbackToDefaultTypeMatch = true;
+	private boolean alwaysUseJndiLookup = false;
+	private transient BeanFactory jndiFactory = new SimpleJndiBeanFactory();
+	@Nullable 
+	private transient BeanFactory resourceFactory;
+	@Nullable 
+	private transient BeanFactory beanFactory;
+	@Nullable 
+	private transient StringValueResolver embeddedValueResolver;
+	
+	private final transient Map<String, InjectionMetadata> injectionMetadataCache = new ConcurrentHashMap<>(256);
+	...
+}
+
+public class CountDownLatch {
+	// Synchronization control For CountDownLatch.
+	// Uses AQS state to represent count.
+	private static final class Sync extends AbstractQueuedSynchronizer {
+		private static final long serialVersionUID = ***L;
+		Sync(int count) {
+			setState(count);
+		}
+		
+		int getCount() {
+			return getState();
+		}
+		
+		protected int tryAcquireShared(int acquires) {
+			return (getState() == 0) ? 1 : -1;
+		}
+		
+		protected boolean tryReleaseShared(int releases) {
+			// Decrement count; signal when transition to zero 
+			for (;;) {
+				int c = getState();
+				if (c == 0)
+					return false;
+				int nextc = c - 1;
+				if (compareAndSetState(c, nextc))
+					return nextc == 0;
+			}
+		}
+	}
+	
+	private final Sync sync;
+	
+	public CountDownLatch(int count) {
+		if (count < 0) throw new IllegalArgumentException("count < 0");
+		this.sync = new Sync(count);
+	}
+	
+	public void await() throws InterruptedException {
+		sync.acquireSharedInterruptibly(1);
+	}
+	
+	public boolean await(long timeout, TimeUnit unit) throws InterruptedException {
+		return sync.tryAcquireSharedNanos(1, unit.toNanos(timeout));
+	}
+	
+	public void countDown() {
+		sync.releaseShared(1);
+	}
+	
+	public long getCount() {
+		return sync.getCount();
+	}
+	
+	public String toString() {
+		return super.toString() + "[Count = " + sync.getCount() + "]";
+	}
+}
+
+Semi Join和Anti Join无法直接用SQL语句来表示，通常由包含关联项的exists或in子查询得到。
+
+public class LinkedHashMap<K, V> extends HashMap<K, V> implements Map<K, V> {
+	static class Entry<K, V> extends HashMap.Node<K, V> {
+		Entry<K, V> before, after;
+		Entry(int hash, K key, V value, Node<K, V> next) {
+			super(hash, key, value, next);
+		}
+	}
+	...
+	transient LinkedHashMap.Entry<K, V> head;
+	transient LinkedHashMap.Entry<K, V> tail;
+	final boolean accessOrder;
+	...
+}
+
+RejectedExecutionHandler在ThreadPoolExecutor的4个内置实现：
+	1. CallerRunsPolicy;
+	2. AbortPolicy;
+	3. DiscardPolicy;
+	4. DiscardOldestPolicy;
+
+MySQL只支持一种join算法:Nested-Loop Join(嵌套循环连接)，但Nested-Loop Join有三种变种：
+	1. Simple Nested-Loop Join;
+	2. Index Nested-Loop Join;
+	3. Block Nested-Loop Join;
+
+在Redis中，由于使用链表的附加空间相对太高以及内存碎片化等缺点，Redis后续版本对列表数据结构进行改造，使用quiklist代替了ziplist和linkedlist。
+从代码可以看成，quicklist实际上是ziplist和linkedlist的混合体，它将linkedlist按段进行切分，每一段使用ziplist进行紧凑存储，多个ziplist之间使用双向指针进行串接。
+字符串对象的编码可以是int, raw, embstr。
+在早期版本中，列表对象的编码是linkedlist或ziplist，最新版本是quiklist(快速列表)。
+哈希对象的底层编码是ziplist或者hashtable。
+集合对象的底层编码是intset或者hashtable。
+有序集合的底层编码是ziplist或者skiplist。
+
+微服务中的几个注意要点：
+	1. 注册中心；
+	2. 分布式配置中心；
+	3. 网关；
+	4. 熔断/限流/降级；
+	5. 链路追踪；
+	6. 日志归集中心；
+	7. 监控；
+	8. 分布式ID生成器/分布式锁；
+	9. 消息队列+消息总线；
+	10. 分布式事务；
+	11. 数仓：离线数仓和实时数仓；
+	12. devops;
+	13. 分布式调度中心；
+
+Consul是一个支持多数据中心分布式高可用的服务发现和配置共享的服务软件。Consul支持健康检查，并允许HTTP和DNS调用API存储键值对。一致性协议采用Raft算法，用来保证服务的高可用，使用Gossip协议管理成员和广播消息，并且支持ACL访问控制。
+
+Spring Boot Features:
+	1. Create stand-alone Spring applications;
+	2. Embed Tomcat, Jetty or Undertow directly(no need to deploy WAR files);
+	3. Provide opinionated 'starter' dependencies to simplify your build configuration.
+	4. Automatically configure Spring and 3rd party libraries whenever possible;
+	5. Provide production-ready features such as metrics, health checks, and externalized configuration;
+	6. Absolutely no code generation and no requirement for XML configuration;
+
+Tree在JDK中的几种实现: HashSet, LinkedHashSet, TreeSet, CopyOnWriteArraySet, ConcurrentSkipListSet;
+
+docker中的add命令除了不能用在multi-stage的场景下，ADD命令可以完成COPY命令的所有功能，并且还可以完成另外两个功能：
+	1. 解压压缩文件并把它们添加到镜像中；
+	2. 从URL拷贝文件到镜像中。
+	
+MySQL在5.5中引入了半同步复制，主库在应答客户端提交的事务前需要保证至少一个从库接收并写到relay log中。半同步复制在极端情况无法做到不丢失数据。
+半同步方式，主库在等待备库ack时候，如果超时会退化为异步，这就可能导致数据丢失。
+通过三个参数rpl_semi_sync_master_wait_point,sync_binlog,sync_relay_log的配置来对semi-sync做数据一致性的分析。
+
+Common table expression简称CTE，由SQL:1999标准引入，在MySQL8.0开始支持。
+CTE的语法如下：
+WITH [RECURSIVE] with_query [, ...]
+SELECT ...
+
+with_query:
+query name [ (column_name [,...])] AS (SELECT ...)
+
+private static final Class<?>[] SUPPORTED_SERIALIZABLE_TYPES = {
+GenericArrrayType.class, ParameterizedType.class, TypeVariable.class, WildcardType.class};
+
+The Hadoop MapReduce framework spawns one map task for each InputSplit generated by the InputFormat for the job. 
+
+MapReduce: Job is typically used to specify the Mapper, Combiner(if any), Partitioner, Reducer, InputFormat, OutputFormat implementations.
+
+XA是由X/Open组织提出的分布式事务的架构(或者叫协议)。XA架构主要定义了(全局)事务管理器(Transaction Manager)和(局部)资源管理器(Resource Manager)之间的接口。XA接口是双向的系统接口，在事务管理器(Transaction Manager)以及一个或多个资源管理(Resource Manager)之间形成通信桥梁。也就是说，在基于XA的一个事务中，我们可以针对多个资源进行事务管理，例如一个系统访问多个数据库，或既访问数据库，又访问消息中间件。这样就能够实现在多个数据库和消息中间件直接实现全部提交、全部回滚的事务。XA规范不是java规范，而是一种通用的规范。
+目前很多数据库和消息中间件都支持XA规范。JTA是满足XA规范的、用于Java开发的规范。
+
+像JBoss, Websphere等应用服务器，都实现了JTA的容器，但是也有一些独立的框架实现了JTA，例如Atomikos, bitronix都提供了jar包方式的JTA实现框架，这样就可以在Tomcat/Jetty之类的服务器上运行使用JTA实现事务的应用系统。
+
+RocketMQ通过同步双写技术可以完全避免单点，同步双写势必会影响性能，适合对消息可靠性要求极高的场合，例如与金融相关的应用。RocketMQ从3.0版本开始支持同步双写。
+
+技术的改造点：
+	1. Zuul增加了一些通用的功能: access-token功能、加解密功能、通用Error filter、动态Filter的groovy、授权/权限管理；
+	2. Spring Cloud Gateway:加解密、限流；
+	3. 灰度发布
+	4. 分布式配置的推模式；
+	5. 分布式锁组件；
+	6. 分布式调度的服务框架；
+	7. MaxComputer的简化ORM框架；
+	8. ff4j
+	9. Flyway，增加通知功能；
+	10. 定制化的java基础镜像；
+	11. 高可用的文件服务；
+	12. 调用链:jaeger;
+	13. eureka的下线增量更新；
+	14. @FeignClient的configuration，以及个性化的Retryer
+	
+
+OkHttp
+
+Eureka内部的缓存分很多级，主要有registry, readWriteCacheMap, readOnlyCacheMap;另外还有一个维护最近180秒增量的队列recentlyChangedQueue。
+
+从CAP理论上看，Eureka是一个AP系统，但是在C层面很弱，就是因为各种无所谓的缓存造成的，看了下readWriteCacheMap去掉比较难，但是readOnlyCacheMap有一个开关useReadOnlyResponseCache，果断去掉。
+
+@EnableFeignClients->@Import(FeignClientsRegistrar.class)->registerBeanDefinitions(AnnotationMetadata metadata, BeanDefinitionRegistry registry)->registerDefaultConfiguration(metadata, registry);registerFeignClients(metadata, registry);->registerFeignClient(BeanDefinitionRegistry registry, AnnotatationMetadata annotationMetadata, Map<String, Object> attributes)->BeanDefinitionBuilder definition = BeanDefinitionBuilder.genericBeanDefinition(FeignClientFactoryBean.class);
+
+当使用注解@EnableFeignClients时，相当于启用了feign客户端定义的扫描和注册机制，从而可以通过注解@FeignClient定义的feign客户端，并最终作为bean定义注册到容器中。而通过@Autowired自动装配注解，这些feign客户端会以ReflectiveFeigns$FeignInvocationHandler动态代理的形式被注入到使用方。该feign客户端包含了对每个接口方法的处理器MethodHandler，接口缺省方法对应DefaultMethodHandler，服务端点方法对应SynchronouseMethodHandler。
+
+The ApplicationsManager is responsible for accepting job-submissions, negotiating the first container for executing the application specific ApplicationMaster and provides the service for restarting the ApplicationMaster container on failure. The per-application ApplicationMaster has the responsibility of negotiating appropriate resource containers from the Scheduler, tracking their status and monitoring for progress. 
+
+在MapReduce0.20以后使用的是:
+job.setPartitionerClass(Partitioner);
+job.setSortComparatorClass(RawComparator);
+job.setGroupingComparatorClass(RawComparator);
+
+-- 当前运行的所有事务
+select * from information_schema.innodb_trx;
+-- 当前出现的锁
+select * from information_schema.innodb_locks;
+-- 锁等待的对应关系
+select * from information_schema.innodb_lock_waits;
+
+information_schema.innodb_locks表中的lock_table字段可以查看被锁的表名，lock_mode可以看到锁类型是：X或S，lock_type可以看到是:record lock/gap lock/next-key lock。
+
+在information_schema.innodb_trx表中的trx_mysql_thread_id是对应的事务sessionId，如果它长时间运行，可以直接kill。
+
+在默认情况下，MySQL的事务隔离级别是可重复读repeatable read，并且innodb_locks_unsafe_for_binlog参数为OFF，这时默认采用next-key locks。所谓next-key locks，就是record lock和gap lock的结合，即除了锁记录本身，还要再锁住索引之间的间隙。可以设置为ON，则RR隔离级别时会出现幻读。
+
+在标准的事务隔离级别定义下，Repeatable Read是不能防止幻读产生的，InnoDB使用两种技术:MVCC和Gap Lock实现防止幻读的发生。
+
+为了达到数据访问的一致，需要各个处理器在访问缓存时遵循一些协议，在读写时根据协议来操作，常见的协议有MSI，MESI,MOSI等。最常见的就是MESI协议。
+MESI表示缓存行的四种状态，分别是：
+	1. M(Modify)表示共享数据只缓存在当前CPU缓存中，并且是被修改状态，也就是缓存的数据和主存中的数据不一致。
+	2. E(Exclusive)表示缓存的独占状态，数据只缓存在当前CPU缓存中，并且没有被修改。
+	3. S(Shared)表示数据可能被多个CPU缓存，并且各个缓存中的数据和内存数据一致。
+	4. I(Invalid)表示缓存已经失效。
+	
+RxJava is a Java VM implementation of Reactive Extensions: a library for composing asynchronous and event-based programs by using observable sequences.
+It extends the observer pattern to support sequences of data/events and adds operators that allow you to compose sequences together declaratively while abstracting away concerns about things like low-level threading, synchronization, thread-safety and concurrent data structures. 
