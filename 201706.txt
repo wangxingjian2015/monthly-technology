@@ -362,7 +362,7 @@ Pull: 消费者无需订阅主题，由应用程序直接根据MessageQueue拉�
 区别：
 Push:Consumer把轮询过程封装了，并注册MessageListener监听器，取到消息后，唤醒MessageListener的consumeMessage()来消费，对用户来说，感觉消息是被推过来的。
 Pull:取消息需要用户写，首先通过Topic拿到MessageQueue的集合，遍历MessageQueue集合，然后针对每个MessageQueue批量取消息，一次取完后，记录该队列下一次要取的offset，直到取完，再换另一个MessageQueue。
-整个类的生命周期：加载(Loading)->验证(Verification)->准备(Preparation)->解析(Resuolution)->初始化(Initialization)->使用(Using)->卸载(Unloading)，其中验证/准备/解析统称为连接(Linking)
+整个类的生命周期：加载(Loading)->验证(Verification)->准备(Preparation)->解析(Resolution)->初始化(Initialization)->使用(Using)->卸载(Unloading)，其中验证/准备/解析统称为连接(Linking)
 类加载器在类层次划分，OSGI，热部署，代码加密等领域应用广泛。
 The reason for having the three basic class loaders(Bootstrap, extension, system) is mostly security.
 划分不同的ClasssLoader还有一个目的：为了隔离
