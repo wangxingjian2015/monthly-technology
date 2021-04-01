@@ -1,0 +1,296 @@
+Hive:
+create table tbl_3(
+	name string, 
+	friends array<String>,
+	children map<String, int>,
+	address struct<street:string, city:string>
+) row format delimited fields terminated by ','
+collection items terminated by '_'
+map keys terminated by ':';
+
+Hive中的group by, distribute by, order by, sort by:
+	1. group by:对字段进行分区，将相同字段进行分区，后面会接聚合操作;
+	2. distribute by:仅对字段进行分区;
+	3. order by: 全局排序，只会起一个reducer；
+	4. sort by: 局部排序，若设置reducer个数为1，则结果和order by一致。
+
+Hive中的collect_set()函数通常搭配group by使用，将每组的数据收集(collect)起来封装成一个集合。
+Hive中的explode()函数将一行数据转换成列，在hive中只能用于array和map数据类型。
+
+MySQL中LRU List中young list和old list的维护：
+	当LRU List链表大于512(BUF_LRU_OLD_MIN_LEN)时，在逻辑上被分为两部分，前面部分存储最热的数据页，这部分链表称作young list，后面部分则存储冷数据页，这部分称作old list，一旦Free List中没有页面了，就会从冷页面中驱逐。两部分的长度由参数innodb_old_blocks_pct控制。每次加入或者驱逐一个数据页后，都要调整young list和old list的长度(buf_LRU_old_adjust_len)，同时引入BUF_LRU_OLD_TOLERANCE来防止链表调整过频繁。当LRU List链表小于512，则只有old list。 新读取进来的页面默认被放在old list头，在经过innodb_old_blocks_time后，如果再次被访问了，就挪到young list头上。一个数据页被读入Buffer Pool后，在小于innodb_old_blocks_time的时间内被访问了很多次，之后就不再被访问了，这样的数据页也很快被驱逐。这个设计认为这种数据页是不健康的，应该被驱逐。 此外，如果一个数据页已经处于young list，当它再次被访问的时候，不会无条件的移动到young list头上，只有当其处于young list长度的1/4(大约值)之后，才会被移动到young list头部，这样做的目的是减少对LRU List的修改，否则每访问一个数据页就要修改链表一次，效率会很低，因为LRU List的根本目的是保证经常被访问的数据页不会被驱逐出去，因此只需要保证这些热点数据页在头部一个可控的范围内即可。相关逻辑可以参考函数buf_page_peek_if_too_old。
+
+结合MongoDB文档类型内嵌数组、文档的支持，目前的单文档事务能满足绝大部分开发者的需求。为了让MongoDB能适应更多的应用场景，让开发变得更简单，MongoDB4.0将支持复制集内部跨一或多个集合的多文档事务，保证针对多个文档的更新的原子性。而在未来MongoDB4.2版本，还会支持分片集群的分布式事务。
+
+MongoDB中所有的写操作在单一文档层级上是原子的。
+
+HBase Features:
+	1. Linear and modular scalability.
+	2. Strictly consistent reads and writes.
+	3. Automatic and configurable sharding of tables.
+	4. Automatic failover support between RegionServers.
+	5. Convenient base classes for backing Hadoop MapReduce jobs with Apache HBase tables.
+	6. Easy to use Java API for client access.
+	7. Block cache and Bloom Filters for real-time queries.
+	8. Query predicate push down via server side Filters.
+	9. Thrift gateway and a REST-ful Web service that supports XML, Protobuf, and binary encoding options.
+	10. Extensible jruby-based(JIRB) shell.
+	11. Support for exporting metrics via the Hadoop metrics subsystem to files or Ganglia;or via JMX.
+
+------------------------------------------
+HBase最佳实践之write写入优化：
+	HBase基于LSM模式，写是写HLOG及Memory的，也就是基本没有随机的IO，所以在写链路上性能高效且比较平稳。很多时候，写都是用可靠性来换取性能。
+客户端优化：
+	1. 批量写：为了减少rpc的次数
+		HTable.put(List<Put>);
+	2. Auto Flush: autoflush=false可以提升几倍的写性能，但是，直到数据超过2M(hbase.client.write.buffer决定)或用户执行了hbase.flushcommits()时才向region server提交请求。需要注意并不是写到了远端。
+		HTable.setWriteBufferSize(writeBufferSize)可以设置buffer的大小。
+服务端优化：
+	1. WAL Flag: 不写WAL可以成倍提升性能，因为不需要写HLog，减少3次IO，写MemStore是内存操作是以数据可靠性为代价的，在数据导入时，可以关闭WAL。
+	2. 增大memstore的内存：当前可用调高Memstore的数值，降低BlockCache的数，跟读优化的思路正好相反。
+	3. 大量的HFile产生：如果写很快，很容易带来大量的HFile，因为此时HFile合并的速度还没有写入的速度快。需要在业务低峰期做major compaction，充分利用系统资源；如果HFile降低不下来，则需要添加节点。
+------------------------------------------
+
+Linux查看负载的几个命令: top, w, uptime, vmstat;
+
+Linux查看大小最大的文件：
+	1. ls -lhS|head -5
+	2. find ./ -type f -printf '%s\t%p\n' | sort -n|tail -5
+	3. du -Sh|sort -rh|head -5
+
+MyBatis中的flushCache:将其设置为true后，只要语句被调用，都会导致本地缓存和二级缓存被清空。对select来说默认值:false，对insert,update和delete语句来说默认值是true。
+
+localCacheScope: MyBatis利用本地缓存机制(Local Cache)防止循环引用和加速重复的嵌套查询。默认值为SESSION，会缓存一个会话中执行的所有查询。若设置值为STATEMENT，本地缓存将仅用于执行语句，对相同SqlSession的不同查询将不会进行缓存。
+
+MyBatis关闭一级缓存的三种方法：
+	1. 全局关闭:设置mybatis.configuration.local-cache-scope=statement;
+	2. 指定mapper关闭：在mapper.xml的指定statement上标注flushCache="true";
+	3. 在statement的SQL上添加一个随机数/串：select * from tbl where #{random}=#{random}
+
+RF(随机森林)与GBDT之间的区别与联系：
+	相同点：
+		1. 都是由多棵树组成，最终的结果都是由多棵树一起决定；
+		2. RF和GBDT在使用CART树时，可以是分类树或者回归树。
+	不同点：
+		1. 组成随机森林的树可以并行生成，而GBDT是串行生成；
+		2. 随机森林的结果是多数表决的，而GBDT则是多棵树累加之和；
+		3. 随机森林对异常值不敏感，而GBDT对异常值比较敏感；
+		4. 随机森林是减少模型的方差，而GBDT是减少模型的偏差；
+		5. 随机森林不需要进行特征归一化。而GBDT则需要进行特征归一化。
+
+查看docker镜像分层的方式可以通过docker image inspect命令。
+------------------------------------------
+Spring-tx模块:
+AOP-based solution for declarative transaction demarcation.
+Builds on the AOP infrastructure in org.springframework.aop.framework.
+Any POJO can be transactionally advised with Spring.
+
+The TransactionFactoryProxyBean can be used to create transactional AOP proxies transparently to code that uses them.
+
+The TransactionInterceptor is the AOP Alliance MethodInterceptor that delivers transactional advice, based on the Spring transaction abstraction.
+This allows declarative transaction management in any environment, even without JTA if an application uses only a single database.
+------------------------------------------
+Eureka的服务下线的即时推送功能：
+	0. 先下线服务，有个控制台，直接指定下线实例；
+	1. ShutdownHook还有k8s的preKill，直接往Eureka Server下线；
+	2. Eureka Server接收到下线后，往Eureka Client发送Http Request告知已经下线；
+	3. Eureka Client将下线的服务临时存储在ConcurrentHashMap，在下次拉取全量后，进行清理；
+	4. Eureka Client扩展ZoneAwareLoadBalancer，在选择Server时，排除掉临时存储的Server；
+	5. 为了减少下线通知广播，设置标志，每个服务注册时，提供自己关注的服务列表，通知时，仅通知被依赖服务列表。
+
+监控及巡检系统负责提升稳定性。
+
+Hive支持的文件类型有：TextFile, SequenceFile, RCFile, ORCFile, Parquet, Avro。
+---------------------------
+create table student_text_lzo(id string, name string)
+row format delimited 
+	fields terminated by ',' 
+	lines terminated by '\n'
+stored as textfile;
+-- 设置为LZO压缩
+set hive.exec.compress.output=true;
+set mapred.output.compress=true;
+set mapred.output.compression.codec=com.hadoop.comresssion.lzo.LzopCodec;
+-- 导入数据
+insert overwrite table student_text_lzo select * from student;
+-- 查询数据
+select * from student_text_lzo;
+---------------------------
+Hive中的视图和RDBMS中视图的概念一致，都是一组数据的逻辑表示，本质上就是一条select语句的结果集。视图是纯粹的逻辑对象，没有管理的存储(Hive 3.0.0引入的物化视图除外)，当查询引用视图时，Hive可以将视图的定义与查询结合起来，例如将查询中的过滤器推送到视图中。
+---------------------------------------------
+Apache-servicecomb-pack：
+	目前Omega支持以下形式的隐式事务上下文传递：
+	1. omega-transport-{dubbo, feign, resttemplate, servicecomb}。需要将相关的传输组件添加到class path中，否则相关的全局事务ID是无法在服务调用过程中传递。
+	2. 同线程内调用(基于OmegaContext的ThreadLocal字段)；
+	3. 标注了@OmegaContextAware的java.util.concurrent.Executor{Service}。
+如果无法隐式传递事务上下文怎么办？比如Service A使用某种RPC机制来调用Service B，无法注入或提取事务上下文信息。这个时候只能采用显式的方式把事务上下文传递出去。ServiceComb Pack从0.5.0开始提供了两个类来实现这一点。
+---------------------------------------------
+MyBatis允许在映射语句执行过程中的某一点进行拦截调用。默认情况下，MyBatis允许使用插件来拦截方法调用包括：
+	1. Executor(update, query, flushStatement, commit, rollback, getTransaction, close, isClosed);
+	2. ParameterHandler(getParameterObject, setParameters);
+	3. ResultSetHandler(handleResultSets, handleOutputParameters);
+	4. StatementHandler(prepare, parameterize, batch, update, query);
+
+Hive中的窗口函数:NTILE,用于将分组数据按照顺序切分成n片，并返回当前切片值。如果切片不均匀，默认增加第一个切片的分布。
+
+-------------------------------------
+JDK中所有的BlockingQueue的实现如下:
+public interface BlockingQueue<E> extends Queue<E> {...}
+
+public class ArrayBlockingQueue<E> extends AbstractQueue<E> 
+		implements BlockingQueue<E>, java.io.Serializable {...}
+
+public class DelayQueue<E extends Delayed> extends AbstractQueue<E> 
+		implements BlockingQueue<E> {...}
+
+ScheduledThreadPoolExecutor的内部类:
+public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
+			implements ScheduledExecutorService {
+	...
+	static class DelayedWorkQueue extends AbstractQueue<Runnable> 
+			implements BlockingQueue<Runnable> {
+		...
+	}
+	...
+}
+
+public class LinkedBlockingQueue<E> extends AbstractQueue<E>
+		implements BlockingQueue<E>, java.io.Serializable {...}
+
+public class PriorityBlockingQueue<E> extends AbstractQueue<E> 
+		implements BlockingQueue<E>, java.io.Serializable {...}
+
+public class SynchronousQueue<E> extends AbstractQueue<E>
+		implements BlockingQueue<E>, java.io.Serializable {...}
+
+public interface BlockingDeque<E> extends BlockingQueue<E>, Deque<E> {...}
+
+public class LinkedBlockingDeque<E> extends AbstractQueu<E> 
+		implements BlockingQueue<E>, java.io.Serializable {...}
+
+public interface TransferQueue<E> extends BlockingQueue<E> {...}
+
+public class LinkedTransferQueue<E> extends AbstractQueue<E> 
+	implements TransferQueue<E>, java.io.Serializable {...}
+-------------------------------------
+Reidis中的ZSet的实现数据结构：可以是ziplist或者skiplist。同时满足以下条件时使用ziplist编码：
+	1. 元素数量小于128个；
+	2. 所有member的长度都小于64子节；
+不能满足上面两个条件使用skiplist编码。以上两个条件也可以通过Redis配置文件zset-max-ziplist-entries选项和zset-max-ziplist-value进行修改。
+对于一个REDIS_ENCODING_ZIPLIST编码的ZSet，只要不满足以上任一条件，则会转换为REDIS_ENCODING_SKIPLIST编码。
+
+虚拟机规范定义的属性有很多，比如Code, LineNumberTable, LocalVariableTable, SourceFile等等。
+
+本地缓存怎么优化空间:
+	1. 对于地理位置信息，可使用专门的优化存储；
+	2. 如果存储内容重复比较多，可以考虑用哈夫曼编码；
+	3. 压缩存储；
+	4. 在保证不影响语义的前提下，尽量简化存储内容；
+	5. 对于某些二值的场景，可以考虑用BitSet;
+	6. 某些场景下的布隆过滤器；
+
+ParNew收集器是垃圾收集器的一种，它是Serial收集器的多线程版本，除了使用多线程进行垃圾收集之外，其余行为包括Serial收集器可用的所有控制参数(例如：-XX:SurivivorRatio, -XX:PretenureSizeThreshold,-XX:HandlePromotiionFailure等)、收集算法、STW、对象分配规则、回收策略等都有Serial收集器一致。
+ParNew是许多运行在Server模式下的虚拟机中首选的新生代收集器，除了Serial收集器外，只有它能CMS收集器配合工作。
+
+如何减少full gc
+	1. 元空间增大；
+	2. 老年代空间增大；
+	3. 禁止或者少使用System.gc()；
+	4. 使用标记-整理算法，尽量让连续空间保持最大；
+	5. 排查代码中的无用大对象(内存泄漏)；
+	6. 其他实际的措施；
+
+服务提供方不稳定，频繁变动如何提升自身稳定性:
+	1. 强依赖->弱依赖->不依赖；
+	2. 在不影响业务的前提下，从实时交易，异步交易，批量交易；
+	3. 同步交易改成异步交易；
+	4. 流控/降级/兜底方案；
+
+---------------
+使用方法：hadoop fs -setrep [R] <path>
+说明：改变一个副本的复制份数；
+示例：hadoop fs -setrep -w 3 -R /user/file 
+---------------
+数据加工链路的业界的分层理念，包括操作数据层(Operational Data Store, ODS)、明细数据层(Data Warehouse Detail, DWD)、汇总数据层(Data WareHouse Summary, DWS)和应用数据层(Application Data Store, ADS)。通过数据仓库不同层次之间的加工过程实现从数据资产向信息资产的转化，并且对整个过程进行有效的元数据管理及数据质量处理。
+
+public class ApringApplication {
+	public static final String DEFAULT_CONTEXT_CLASS = "org.springframework.context."
+			+ "annotation.AnnotationConfigApplicationContext";
+	public static final String DEFAULT_SERVELET_WEB_CONTEXT_CLASS = "org.springframework."
+		+ "boot.web.servlet.context.AnnotationConfigServletWebServerApplicationContext";
+	public static final String DEFAULT_REACTIVE_WEB_CONTEXT_CLASS = "org.springframework."
+		+ "boot.web.reactive.context.AnnotationConfigReactiveWebServerApplicationContext";
+	public static final String BANNER_LOCATION_PROPERTY_VALUE 
+			= SpringApplicationBannerPrinter.DEFAULT_BANNER_LOCATION;;
+	public static final String BANNER_LOCATION_PROPERTY 
+			= SpringApplicationBannerPrinter.BANNER_LOCATION_PROPERTY;
+	private static final String SYSTEM_PROPERTY_JAVA_AWT_HEADLESS = "java.awt.headless";
+	...
+	private Set<Class<?>> primarySources;
+	private Set<String> sources = new LinkedHashSet<>();
+	private Class<?> mainApplicationClass;
+	private Banner.Mode bannerMode = Banner.Mode.CONSOLE;
+	private boolean logStartupInfo = true;
+	private boolean addCommandLineProperties = true;
+	private boolean addConversionService = true;
+	private Banner banner;
+	private ResourceLoader resourceLoader;
+	private BeanNameGenerator beanNameGenerator;
+	private ConfigurableEnvironment environment;
+	private Class <? extends ConfigurableApplicationContext> applicationContextClass;
+	private WebApplicationType webApplicationType;
+	private boolean headless = true;
+	private boolean registerShutdownHook = true;
+	private List<ApplicationContextInitializer<?>> initializers;
+	private List<ApplicationListener<?>> listeners;
+	private Map<String, Object> defaultProperties;
+	private Set<String> additionalProfiles = new HashSet<>();
+	private boolean allowBeanDefinitionOverriding;
+	private boolean isCustomEnvironment = false;
+	...
+}
+
+由于数据切分后数据join难度很大，可参考以下最佳实践：
+	第一原则：能不切分尽量不要切分；
+	第二原则：如果要切分一定要选择合适的切分规则，提前规划好。
+	第三原则：数据切分尽量通过数据冗余或者表分组(Table Group)来降低跨库join的可能；
+	第四原则：由于数据库中间件对join实现的优劣难以把握，而且实现高性能难度极大，业务读取尽量少使用多表join。
+
+The ResouceManager has two main components: Scheduler and ApplicationManager.
+
+Yarn被设计成可以允许应用程序(通过ApplicationMaster)以共享的、安全的以及多租户的方式使用集群资源。它也会感知集群的网络拓扑，以便可以有效地调度以及优化数据访问(即尽可能地为应用减少数据移动)。为了达成这些目标，位于ResourceManager内的中心调度器保存了应用程序的资源需求信息，以帮助它为集群中的所有应用作出更优的调度决策。由此引出了ResouceRequest以及由此产生的Container概念。
+
+Yarn依赖于三个主要组件来实现所有功能。第一个组件是ResourceManager(RM)，是集群资源的仲裁者，它有两部分：一个可插拔的调度器和一个ApplicationManager，用于管理集群中的用户作业。第二个组件是位于每个节点上的NodeManager(NM)，管理该节点上的用户作业和工作流。中央的ResourceManager和所有NodeManager创建了集群统一的计算基础设施。第三个组件是ApplicationMaster，用户作业生命周期的管理者。ApplicationMaster是用户应用程序驻留的地方。这三个组件共同提供了一个可扩展的、灵活的、高效的环境，来运行各种类型的大数据处理作业。
+
+MySQL崩溃恢复：用户修改了数据，并且收到了成功的消息，然而对数据库来说，可能这个时候修改后的数据还没有落盘，如果这个时候数据库挂了，重启后，数据库需要从日志中把这些修改后的数据给捞出来，重新写入磁盘，保证用户的数据不丢。这个从日志中捞数据的过程就是崩溃恢复的主要任务，也可以称为数据库前滚。当然，在崩溃恢复中还需要回滚没有提交的事务，提交没有提交的事务。由于回滚操作需要undo日志的支持，undo日志的完整性和可靠性需要redo日志来保证，所以崩溃恢复先做redo前滚，然后做undo回滚。
+-----------------------------------------------------
+A:Atomicity
+C:Consistency
+I:Isolation
+D:Durability
+在MySQL中是怎么实现ACID的：
+1. 一致性：从两个层面来说，从数据库层面，数据库通过原子性、隔离性、持久性来保证一致性。也就是说ACID四大特性之中，C(一致性)是目的，AID(原子性、隔离性、持久性)是手段，是为了保证一致性数据库提供的手段。数据库必须要实现AID三大特性，才有可能实现一致性。例如，原子性无法保证，显然一致性也无法保证。
+但是，如果在业务里故意写违反约束的代码，一致性还是无法保证的。例如，在转账代码里，故意不给B账户加钱，那一致性还是无法保证。因此，还必须从应用层角度考虑。
+从应用层面，通过代码判断数据库数据是否有效，然后决定回滚还是提交数据。
+2. 原子性：利用InnoDB的undo log。
+3. 持久性：利用InnoDB的redo log。 
+4. 隔离性：锁和MVCC。
+-----------------------------------------------------
+Spark中的reduceByKey和groupByKey:
+reduceByKey(func, [numPartitions]): 
+	When called on a dataset of (K, V) pairs, returns a dataset of (K, V) pairs where the values for each key are aggregated using the given reduce function func, which must be of type (V, V) => V. Like in groupByKey, the number of reduce tasks is configurable is configurable through an optional second argument.
+
+groupByKey([numPartitions]):
+	When called on a dataset of (K, V) pairs, return a dataset of (K, Iterable<V>) pairs. Note: If you are grouping in order to perform an aggregation (such as a sum of or average) over each key, using reduceByKey or aggregateByKey will yield much better performance. Note: By default, the level of parallelism in the output depends on the number of partitions of the parent RDD. You can pass an optional numPartitions argument to set a different number of tasks. 
+-----------------------------------------------------
+String类为什么是final:
+	1. 为了实现字符串池；
+	2. 为了线程安全；
+	3. 为了实现String可以创建HashCode不可变性；
+------------------------------------------
+Class#forName和ClassLoader#loadClass的区别:
+Class#forName执行了类加载阶段的下面几个阶段：加载(Loading)->验证(Verification)->准备(Preparation)->解析(Resolution)->初始化(Initialization)；
+ClassLoader#loadClass执行了类加载阶段的下面几个阶段：加载(Loading)->验证(Verification)->准备(Preparation)；
+
+Class#forName得到的Class是经过加载、链接和初始化三个阶段。执行类中的static块，给静态变量和静态代码块赋值。
+ClassLoader#loadClass得到的Class只进行了加载，并没有进行链接和初始化。不会执行类中的静态变量和静态代码块的赋值。

@@ -1,0 +1,380 @@
+Nested Loop Join算法：将驱动表/外部表的结果集作为循环基础数据，然后循环该结果集，每次获取一条数据作为下一个表的过滤条件查询数据，然后合并结果，获取结果集返回给客户端。Nested-Loop一次只将一行传入内层循环，所以外层循环(的结果集)有多少行，内部循环便要执行多少次，效率非常差。
+Block Nested-Loop Join算法：将外层循环的行/结果集存入join buffer，内存循环的每一行与整个buffer中的记录做比较，从而减少内存循环的次数，主要用于当被join的表上无索引。
+Batched Key Access算法：当被join的表能够使用索引时，就先排序，然后再去检索被join的表。对这些行按照索引字段进行排序，因此减少了随机IO。如果被join的表上没有索引，则使用老版本的BNL策略(Block Nested-Loop)。
+
+Java提供4种引用类型的目的：
+	1. 可以通过代码的方式决定某些对象的生命周期；
+	2. 有利于JVM进行垃圾回收。
+
+强引用。特点：我们平常典型编码Object obj = new Object()中的obj就是强引用。通过关键字new创建的对象所关联的引用就是强引用。 当JVM内存空间不足，JVM宁愿抛出OutOfMemoryError运行时错误（OOM），使程序异常终止，也不会靠随意回收具有强引用的“存活”对象来解决内存不足的问题。对于一个普通的对象，如果没有其他的引用关系，只要超过了引用的作用域或者显式地将相应（强）引用赋值为 null，就是可以被垃圾收集的了，具体回收时机还是要看垃圾收集策略。
+
+软引用：通过SoftReference类实现。软引用的生命周期比强引用短一些。只有当JVM认为内存不足时，才会试图回收软引用指向的对象：即JVM会确保在抛出OOM之前，清理软引用指向的对象。软引用可以和一个引用队列ReferenceQueue联合使用，如果软引用所引用的对象被垃圾回收器回收，JVM就会把这个软引用加入到与之关联的引用队列中。后续，可以调用ReferenceQueue的poll()方法来检查是否有所关心的对象被回收。如果队列为空，将返回一个null，否则该方法返回队列中前面的一个Reference对象。
+软引用的应用场景：软引用通常用来实现内存敏感的缓存。如果还有空闲内存，就可以暂时保留缓存，当内存不足时清理掉，这样就保证了使用缓存的同时，不会耗尽内存。
+
+弱引用：弱引用通过WeakReference类实现，弱引用的生命周期比软引用短。在垃圾回收器线程扫描它所管辖的内存区域的过程中，一旦发现了具有弱引用的对象，不管当前内存空间足够与否，都会回收它的内存。由于垃圾回收器是一个优先级很低的线程，因此不一定会很快回收弱引用的对象。弱引用可以和一个引用队列ReferenceQueue联合使用，如果弱引用所引用的对象被垃圾回收，JVM就会把这个弱引用加入到与之关联的引用队列中。
+弱引用应用场景：弱引用同样可用于内存敏感的缓存。
+
+虚引用的应用场景：可用来跟踪对象被垃圾回收器回收的活动，当一个虚引用关联的对象被垃圾收集器回收之前会收到一条系统通知。
+
+虚引用和软引用/弱引用不同，它并不影响对象的生命周期。用PhantomReference类表示。如果一个对象与虚引用关联，则跟没有引用与之关联一样，在任何时候都可能被垃圾回收器回收。虚引用主要用来跟踪对象被垃圾回收的活动。
+虚引用必须和引用队列关联使用，当垃圾回收器准备回收一个对象时，如果发现它还有虚引用，就会把这个虚引用加入到与之关联的引用队列中。程序可以通过判断引用队列中是否已经加入了虚引用，来了解被引用的对象是否将要被垃圾回收。如果程序发现某个虚引用已经被加入到引用队列，那么就可以在所引用的对象的内存被回收之前采取必要的行动。
+
+concurrent包用过哪些类：
+java.uti.concurrent包下：
+AbstractExecutorService, ArrayBlockingQueue,BlockingDeque,BlockingQueue,
+BrokenBarrierException,Callable,CancellationException,CompletableFuture,
+CompletionException,CompletionService,CompletionStage,ConcurrentHashMap,
+ConcurrentLinkedDeque,ConcurrentLinkedQueue,ConcurrentMap,ConcurrentNavigableMap,
+ConcurrentSkipListMap,ConcurrentSkipListSet,CopyOnWriteArrayList,CopyOnWriteArraySet,
+CountDownLatch,CounterCompleter,CyclicBarrier,Delayed,DelayQueue,Exchanger,
+ExecutionException,Executor,ExecutorCompletionService,Executors,ExecutorService,
+ForkJoinPool,ForkJoinTask,ForkJoinWorkerThread,Future,FutureTask,LinkedBlockingDeque,
+LinkedBlockingQueue,LinkedTransferQueue,Phaser,PriorityBlockingQueue,RecursiveAction,
+RecursiveTask,RejectedExecutionException,RejectedExecutionHandler,RunnableFuture,
+RunnableScheduledFuture,ScheduledExecutorService,ScheduledThreadPoolExecutor,
+Semaphore,SynchronousQueue,ThreadFactory,ThreadLocalRandom,ThreadPoolExecutor,
+TimeoutException,TimeUnit,TransferQueue
+java.util.concurrent.atomic包下：
+AtomicBoolean,AtomicInteger,AtomicIntegerArray,AtomicIntegerFieldUpdater,
+AtomicLong,AtomicLongArray,AtomicLongFieldUpdater,AtomicMarkableReference,
+AtomicReference,AtomicReferenceArray,AtomicReferenceFieldUpdater,
+AtomicStampedReference,DoubleAccumulator,DoubleAdder,LongAccumulator,
+LongAdder,Striped64
+java.util.concurrent.locks包下：
+AbstractOwnableSynchronizer,AbstractQueuedLongSynchronizer,
+AbstractQueuedSynchronizer,Condition,Lock,LockSupport,ReadWriteLock,
+ReentrantLock,ReentrantReadWrtieLock,StampedLock
+
+public class ConcurrentHashMap<K, V> extends AbstractMap<K, V> 
+	implements ConcurrentMap<K, V>, Serializable {
+	...
+	//Encodings for Node hash fields. 
+	static final int MOVED     = -1; //hash for forwarding nodes 
+	static final int TREEBIN   = -2; //hash for roots of trees
+	static final int RESERVED  = -3; //hash for transient reservations
+	static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash 
+	...
+	/* ----------------- Table element access -------------- */
+	/* Volatile access methods are used for table elements as well as 
+		elements of in-process next table while resizing. All uses of 
+		the tab arguments must be null checked by callers. All callers 
+		also paranoically precheck that tab's length is not zero (or an 
+		equivalent check), thus ensuring that any index argument taking 
+		the form of a hash value anded with (length-1) is a valid 
+		index. Note that, to be correct write arbitrary concurrency 
+		errors by users, these checks must operate on local variables,
+		which accounts for some odd-looking inline assignments below.
+		Note that calls to setTabAt always occur within locked regions,
+		and so in principle require only release ordering, not full volatile 
+		semantics, but are currently coded as volatile writes to be conservative.
+	*/
+	
+	@SuppressWarnings("unchecked")
+	static final <K, V> Node<K, V> tabAt(Node<K,V>[] tab, int i) {
+		return (Node<K,V>) U.getObjectVolatile(tab, ((long)i << ASHIFT) + ABASE);
+	}
+	static final <K,V> boolean casTabAt(Node<K,V>[] tab, int i, 
+									Node<K,V> c, Node<K,V> v) {
+		return U.compareAndSwapObject(tab, ((long)i << ASHIFT) + ABASE, c, v);
+	}
+	static final <K,V> void setTabAt(Node<K,V> tab, int i, Node<K,V> v) {
+		U.putObjectVolatile(tab, ((long)i << ASHIFT) + ABASE, v);
+	}
+	
+	/* The array of bins. Lazily initialized upon first insertion.
+		Size always a power of two. Accessed directly by iterators.
+	*/
+	transient volatile Node<K,V>[] table;
+	// The next table to use; non-null only while resizing.
+	private transient volatile Node<K,V>[] nextTable;
+	/* Base counter value, used mainly when there is no contention,
+	 but also as a fallback during table initialization races. 
+	 Updated via CAS.
+	*/
+	private transient volatile long baseCount;
+	/* Table initialization and resizing control. When negative, the 
+		table is being initialized or resized: -1 for initialization, 
+		else -(1 + the number of active resizing threads). Otherwise,
+		when table is null, holds the initial table size to use upon 
+		creation, or 0 for default. After initialization, holds the 
+		next element count value upon which to resize the table.
+	*/
+	private transient volatile int sizeCtl;
+	// The next table index(plus one) to split while resizing.
+	private transient volatile int transferIndex;
+	//Spinlock(locked via CAS) used when resizing and/or creating CounterCells.
+	private transient volatile int cellsBusy;
+	//Table of counter cells. When non-null, size is a power of 2.
+	private transient volatile CounterCell[] counterCells;
+	//views
+	private transient KeySetView<K,V> keySet;
+	private transient ValuesView<K,V> values;
+	private transient EntrySetView<K,V> entrySet;
+	...
+	/* Spends (XORs) higher bits of hash to lower and also forces top 
+		bit to 0. Because the table uses a power-of-two masking, sets of 
+		hashes that vary only in bits above the current mask will always collide.
+		(Among known examples are sets of Float keys holding consecutive whole
+		numbers in small tables.) So we apply a transform that spreads the impact 
+		of higher bits downward. There is a tradeoff between speed, utility, and 
+		quality of bit-spreading. Because many common sets of hashes are already 
+		reasonably distributed (so don't benefit from spreading), and because 
+		we trees to handle large sets of collisions in bins, we just XOR some 
+		shifted bits in the cheapest possible way to reduce systematic lossage, 
+		as well as to incorporate impact of the highest bits that would otherwise 
+		never be used in index calculations because for table bounds.
+	*/
+	static final int spread(int h) {
+		return (h ^ (h >>> 16)) & HASH_BITS;
+	}
+	// Initializes table, using the size recorded in sizeCtl.
+	private final Node<K,V>[] initTable() {
+		Node<K,V>[] tab; int sc;
+		while ((tab = table) == null || tab.length == 0) {
+			if ((sc = sizeCtl) < 0) 
+				Thread.yield();  //lost initialization race; just spin
+			else if (U.compareAndSwapInt(this, SIZECTL, sc, -1) {
+				try {
+					if ((tab = table) == null || tab.length == 0) {
+						int n = (sc > 0) ? sc : DEFAULT_CAPACITY;
+						@SuppressWarnings("unchecked")
+                        Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
+                        table = tab = nt;
+                        sc = n - (n >>> 2);
+					}
+				} finally {
+					sizeCtl = sc;
+				}
+				break;
+			}
+		}
+		return tab;
+	}
+	
+	//Helps transfer if a resize is in process.
+	final Node<K,V> helpTransfer(Node<K,V> tab, Node<K,V> f) {
+		Node<K,V>[] nextTab; int sc;
+		if (tab != null && (f instanceof ForwardingNode) && 
+			(nextTab = ((ForwardingNode<K,V>)f).nextTable) != null) {
+			int rs = resizeStamp(tab.length);
+			while (nextTab == nextTable && table == tab && (sc = sizeCtl) < 0) {
+				if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 || 
+					sc == rs + MAX_RESIZERS || transferIndex <= 0) {
+					break;
+				}
+				if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1)) {
+					transfer(tab, nextTab);
+					break;
+				}
+			}
+		}
+		return table;
+	}
+	
+	/* Adds to count, and if table is too small and not already resizing, 
+		initiates transfer. If already resizing, helps perform transfer 
+		if work is available. Rechecks occupancy after a transfer to see 
+		if another resize is already needed because resizings are lagging additions.
+	*/
+    private final void addCount(long x, int check) {
+        CounterCell[] as; long b, s;
+        if ((as = counterCells) != null ||
+            !U.compareAndSwapLong(this, BASECOUNT, b = baseCount, s = b + x)) {
+            CounterCell a; long v; int m;
+            boolean uncontended = true;
+            if (as == null || (m = as.length - 1) < 0 ||
+                (a = as[ThreadLocalRandom.getProbe() & m]) == null ||
+                !(uncontended =
+                  U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))) {
+                fullAddCount(x, uncontended);
+                return;
+            }
+            if (check <= 1)
+                return;
+            s = sumCount();
+        }
+        if (check >= 0) {
+            Node<K,V>[] tab, nt; int n, sc;
+            while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
+                   (n = tab.length) < MAXIMUM_CAPACITY) {
+                int rs = resizeStamp(n);
+                if (sc < 0) {
+                    if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
+                        sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
+                        transferIndex <= 0)
+                        break;
+                    if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+                        transfer(tab, nt);
+                }
+                else if (U.compareAndSwapInt(this, SIZECTL, sc,
+                                             (rs << RESIZE_STAMP_SHIFT) + 2))
+                    transfer(tab, null);
+                s = sumCount();
+            }
+        }
+    }
+	...
+	    /**
+     * Maps the specified key to the specified value in this table.
+     * Neither the key nor the value can be null.
+     *
+     * <p>The value can be retrieved by calling the {@code get} method
+     * with a key that is equal to the original key.
+     *
+     * @param key key with which the specified value is to be associated
+     * @param value value to be associated with the specified key
+     * @return the previous value associated with {@code key}, or
+     *         {@code null} if there was no mapping for {@code key}
+     * @throws NullPointerException if the specified key or value is null
+     */
+    public V put(K key, V value) {
+        return putVal(key, value, false);
+    }
+
+    /** Implementation for put and putIfAbsent */
+    final V putVal(K key, V value, boolean onlyIfAbsent) {
+        if (key == null || value == null) throw new NullPointerException();
+        int hash = spread(key.hashCode());
+        int binCount = 0;
+        for (Node<K,V>[] tab = table;;) {
+            Node<K,V> f; int n, i, fh;
+            if (tab == null || (n = tab.length) == 0)
+                tab = initTable();
+            else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
+                if (casTabAt(tab, i, null,
+                             new Node<K,V>(hash, key, value, null)))
+                    break;                   // no lock when adding to empty bin
+            }
+            else if ((fh = f.hash) == MOVED)
+                tab = helpTransfer(tab, f);
+            else {
+                V oldVal = null;
+                synchronized (f) {
+                    if (tabAt(tab, i) == f) {
+                        if (fh >= 0) {
+                            binCount = 1;
+                            for (Node<K,V> e = f;; ++binCount) {
+                                K ek;
+                                if (e.hash == hash &&
+                                    ((ek = e.key) == key ||
+                                     (ek != null && key.equals(ek)))) {
+                                    oldVal = e.val;
+                                    if (!onlyIfAbsent)
+                                        e.val = value;
+                                    break;
+                                }
+                                Node<K,V> pred = e;
+                                if ((e = e.next) == null) {
+                                    pred.next = new Node<K,V>(hash, key,
+                                                              value, null);
+                                    break;
+                                }
+                            }
+                        }
+                        else if (f instanceof TreeBin) {
+                            Node<K,V> p;
+                            binCount = 2;
+                            if ((p = ((TreeBin<K,V>)f).putTreeVal(hash, key,
+                                                           value)) != null) {
+                                oldVal = p.val;
+                                if (!onlyIfAbsent)
+                                    p.val = value;
+                            }
+                        }
+                    }
+                }
+                if (binCount != 0) {
+                    if (binCount >= TREEIFY_THRESHOLD)
+                        treeifyBin(tab, i);
+                    if (oldVal != null)
+                        return oldVal;
+                    break;
+                }
+            }
+        }
+        addCount(1L, binCount);
+        return null;
+    }
+	...
+	/* Minimum number of rebinnings per transfer step. Ranges are 
+		subdivided to allow multiple resizer threads. This value 
+		servers as a low bound to avoid resizers encountering 
+		execssive memory contention. The value should be at least DEFAULT_CAPACITY.
+	*/
+	private static final int MIN_TRANSFER_STRIDE = 16;
+	/* The smallest table capacity for which bins may be treeified.
+		(Otherwise the table is resized if too many nodes in a bin.)
+		The value should be at 4 * TREEIFY_THRESHOLD to avoid conflicts 
+		between resizing and treeification thresholds.
+	*/
+	static final int MIN_TREEIFY_CAPACITY = 64;
+	...
+	
+}
+
+可以发现JDK8中ConcurrentHashMap的实现使用的是锁分离思想，只是锁住一个Node，而锁住Node之前的操作是基于volatile和CAS之上无锁并且线程安全的。
+
+什么条件下会进行技术桶的扩容？
+答：在CAS操作递增计数桶失败了3次之后，会进行扩容计数桶操作，注意此时同时进行了两次随机定位计数桶来进行CAS递增的，所以此时可以保证大概率是因为计数桶不够用了，才会进行计数桶扩容。
+计数桶扩容操作是怎么样的？
+答：计数桶长度增加到两倍长度，数据直接遍历迁移过来，由于计数桶不像HashMap数据结构那么复杂，有hash算法的影响，加上计数桶只是存放long类型的计数值而已，所以直接赋值引用即可。
+
+ConcurrentHashMap中计数用到的并发技巧：	
+	1. 利用CAS递增baseCount值来感知是否存在线程竞争，若竞争不大直接CAS递增baseCount值即可，性能和baseCount++差不多。
+	2. 若存在线程竞争，则初始化计数桶，若此时初始化计数桶的过程中也存在竞争，多个线程同时初始化计数桶，则没有强盗初始化资格的线程直接尝试CAS递增baseCount值的方式完成计数，最大化利用线程的并行。此时使用计数桶计数，分而治之的方式计数，此时两个计数桶最大可提供两个线程同时计数，同时使用CAS操作来感知线程竞争，若两个桶情况下CAS操作还是频繁失败(失败3次)，则直接扩容计数桶，变成4个计数桶，支持最大4个线程并发计数，以此类推...同时使用位运算和随机数的方式"负载均衡"一样的将线程计数请求接近平均的落在每个计数桶中。
+对于ConcurrentHashMap#get()，其实没有线程安全问题，只有可见性的问题，只需要确保get()的数据是线程之间可见的即可。
+
+其中1.7的实现也同样采用了分段锁的技术，只不过多个一个segment，一个segment里对应一个小HashMap，其中segment继承了ReentrantLock，充当了锁的角色，一把锁锁一个小HashMap（相当于多个Node），从1.8的实现来看， 锁的粒度从多个Node级别又减小到一个Node级别，再度减小锁竞争，减小程序同步的部分。
+
+
+Redis作者曾想改进LRU算法，但发现Redis的LRU算法受制于随机采样数maxmemory_samples, 在maxmemory_samples等于10的情况下已经很接近理想的LRU算法性能，即LRU算法本身已经很难再进一步了。
+Redis中的LFU思路(Least Frequently Used):
+在LFU算法中，可以为每个key维护一个计数器。每次key被访问的时候，计数器增大。计数器越大，可以约等于访问越频繁。
+上述简单算法存在两个问题:
+	1. 在LRU算法中可以维护一个双向链表，然后简单的把被访问的结点移到链表开头，但是LFU中是不行的，节点要严格按照计数器进行排序，新增节点或者更新节点位置时，时间复杂度可能达到O(N).
+	2. 只是简单的增加计数器的方法并不完美。访问模式是会频繁变化的，一段时间内频繁访问的key一段时间之后可能会很少被访问到，只增加计数器并不能体现这种趋势。
+第一个问题很好解决，可以借鉴LRU实现的经验，维护一个待淘汰key的pool。第二个问题的解决办法是，记录key最后一个被访问的时间，然后随着时间推移，降低计数器。
+
+在LRU算法中，24bits的lru用来记录LRU time的。在LFU中也可以使用这个字段，不过分成16bits与8bits使用：高16bits用来记录最近一次计数器降低的时间ldt(last decr time)，单位是分钟，低8bits记录计数器数值counter。
+
+Redis4.0之后为maxmemory_policy淘汰策略添加了两个LFU模式:
+	1. volatile-lfu:对有过期时间的key采用LFU淘汰算法
+	2. allkeys-lfu: 对全部key采用LFU淘汰算法
+还有2个配置可以调整LFU算法:
+	lfu-log-factor 10
+	lfu-decay-time 1
+lfu-log-factor: 可以调整计数器counter的增长速度，lfu-log-factor越大，counter增长的越慢；
+lfu-decay-time: 是一个以分钟为单位的数值，可以调整counter的减少速度。
+---------------------------------------------------
+原则:
+	1.同一个对象（没有发生过修改）无论何时调用hashCode()得到的返回值必须一样。
+	如果一个key对象在put的时候调用hashCode()决定了存放的位置，而在get的时候调用hashCode()得到了不一样的返回值，这个值映射到了一个和原来不一样的地方，那么肯定就找不到原来那个键值对了。
+	2.hashCode()的返回值相等的对象不一定相等，通过hashCode()和equals()必须能唯一确定一个对象。不相等的对象的hashCode()的结果可以相等。hashCode()在注意关注碰撞问题的时候，也要关注生成速度问题，完美hash不现实。
+	3.一旦重写了equals()函数（重写equals的时候还要注意要满足自反性、对称性、传递性、一致性），就必须重写hashCode()函数。而且hashCode()的生成哈希值的依据应该是equals()中用来比较是否相等的字段。
+	如果两个由equals()规定相等的对象生成的hashCode不等，对于HashMap来说，它们很可能分别映射到不同位置，没有调用equals()比较是否相等的机会，两个实际上相等的对象可能被插入不同位置，出现错误。其他一些基于哈希方法的集合类可能也会有这个问题。
+--------------------------------------------------
+Redis使用的并不是完全LRU算法。不使用LRU算法，是为了节省内存，Redis采用的随机LRU算法，Redis为每一个key增加了一个24bit的字段，用来记录这个key最后一次被访问的时间戳。
+注意Redis的LRU淘汰策略是懒惰处理，也就是不会主动执行淘汰策略，当Redis执行写操作时，发现内存超过maxmemory，就会执行LRU淘汰算法。这个算法就是随机采样5(默认值)个key，然后移除最旧的key，如果移除后还是超过maxmemory，那就继续随机采样淘汰，直到内存低于maxmemory位置。
+如何采样就是看maxmemory-policy的配置，如果是allkeys就是从所有的key字典中随机，如果是volatile就从带过期时间的key字典中随机。每次采样多少个key是通过maxmemory_samples配置，默认是5.
+--------------------------------------------------
+Redis的LRU模式：
+在LRU模式下，lru字段存储的是Redis时钟server.lruclock，Redis时钟是一个24bit的整数，默认是Unix时间戳对2^24取模的结果，大约97天清零一次。当某个key被访问一次，它的对象头的lru字段值就会被更新为server.lruclock。
+Redis的LFU模式：
+在LFU模式下，lru字段24个bit用来存储两个值，分别是ldt(last decrement time)和logc(logistic counter)。
+logc是8个bit，用来存储访问频次，因为8个bit能表示的最大整数值为255，存储频次肯定远远不够，所以这8个bit存储的是频次的对数值，并且这个值还会随着时间衰减。如果它的值比较小，那么就很容易被回收。为了确保新创建的对象不被回收，新对象的这8个bit会初始化为一个大于零的值，默认是LFU_INIT_VAL=5.
+ldt是16个bit，用来存储上一次logc的更新时间，因为只有16位，所以精度不可能很高。它取的是分钟时间戳对2^16进行取模，大约每隔45天就会折返。
+同LRU模式一样，可以使用这个逻辑计算出对象的空闲时间，只不过精度是分钟级别的。
+--------------------------------------------------
+进程与线程的区别：
+	1. 进程是资源分配最小单位，线程是程序执行的最小单位；
+	2. 进程有自己独立的地址空间，每启动一个进程，系统都会为其分配地址空间，建立数据表来维护代码段、堆栈段和数据段，线程没有独立的地址空间，它使用相同的地址空间共享数据；
+	3. CPU切换一个线程比切换进程代价小；
+	4. 创建一个线程比进程开销小；
+	5. 线程占用资源要比进程小很多；
+	6. 线程之间通信更方便，同一个进程下，线程共享全局变量、静态变量等数据，进程之间的通信需要以通信的方式IPC进行；
+	7. 多进程程序更安全，生命力更强，一个进程死掉不会对另外一个进程造成影响(源于独立的地址空间)，多线程程序更不易维护，一个线程死掉，整个进程就死掉(因为共享地址空间)；
+	8. 进程对资源保护要求高，开销大，效率相对比较低，线程资源保护要求不高，但开销小，效率高，可频繁切换。
+
+	
+
+ 

@@ -1,0 +1,311 @@
+整个类的生命周期：加载(Loading)->验证(Verification)->准备(Preparation)->解析(Resolution)->初始化(Initialization)->使用(Using)->卸载(Unloading)，其中验证/准备/解析统称为链接(Linking)。
+
+"加载"是"类加载"过程中的一个阶段，两个是不同的概念。
+	1. 加载(Loading)：在加载阶段，虚拟机需要完成三件事情：
+		1. 通过类的全限定名获取定义此类的二进制字节流(并没有指明要从一个Class文件中获取，可以从其他渠道，譬如：网络、动态生成、数据库等);
+		2. 将二进制字节流所代表的静态存储结构转换成方法区中的运行时数据结构；
+		3. 在内存中生成一个代表这个类的java.lang.Class对象，作为方法区这个类的各种数据的访问入口。
+		
+加载阶段和链接阶段(Linking)的部分内容是交叉进行的，加载阶段尚未完成，链接阶段可能已经开始，但这些夹在加载阶段之中进行的动作，仍然属于链接阶段的内容，这两个阶段的开始时间仍然保持着固定的先后顺序。
+
+	2. 链接(Linking)
+		a. 验证(Verification)：验证是链接阶段的第一步，这一阶段的目的是为了确保Class文件的字节流中包含的信息符合当前虚拟机的要求，并且不会危害虚拟机自身的安全。
+		验证阶段大致会完成4个校验动作：
+		1. 文件格式验证；
+		2. 元数据验证；
+		3. 字节码验证：通过数据流和控制流分析，确定程序语义是合法的、符合逻辑的；
+		4. 符号引用验证：确保解析动作能正确执行。
+		验证阶段是非常重要的，但不是必须的，它对程序运行期没有影响，如果所引用的类经过反复验证，那么可以考虑采用-Xverifynone参数来关闭大部分的类验证措施，以缩短虚拟机类加载的时间。
+		
+		b. 准备(Preparation)：
+			准备阶段是正式为类变量分配内存并设置变量初始值的阶段，这些变量所使用的内存都将在方法区中进行分配。这时候进行内存分配的仅包括类变量(被static修饰的变量)，而不包括实例变量，实例变量将会在对象实例化时随着对象一起分配在堆中。其次，这里所说的初始值"通常情况"下是数据类型的零值。假设一个类变量的定义为：
+			public static int value = 123;
+			那变量value在准备阶段过后的初始值是0而不是123。因为这时候尚未开始执行任何java方法，而把value赋值为123的putstatic指令是程序被编译后，存放在类构造器()方法之中，所以把value赋值为123的动作将在初始化阶段才会执行。
+			至于"特殊情况"是指：public static final int value2 = 456;即当类字段标注为final之后，value2的值在准备阶段阶段初始化为456而非0。
+		总结：final是在准备阶段时就赋值了，static准备阶段数据是零值，在初始化阶段才会赋值。
+		
+		c. 解析(Resolution): 解析阶段是虚拟机将常量池内的符号引用替换为直接引用的过程。解析动作主要针对类或接口、字段、类方法、方法类型、方法句柄和调用点限定符7类符号引用进行。
+	
+	3. 初始化(Initialization): 静态(static)变量的初始化和静态Java代码块，并初始化程序设置的变量值。
+
+类依赖分析器：jdeps。在jdk8中添加，是一个命令行工具，可以展示包层级和类层级的Java类依赖关系，以.class文件、目录或者jar文件为输入，会把依赖关系输出到控制台。
+------------------------
+Arrays#sort(int[]),Arrays#sort(int[], int, int),Arrays#sort(long[]),Arrays#sort(long[],int,int),Arrays#sort(short[]),Arrays#sort(short[],int,int),Arrays#sort(char[]),Arrays#sort(char[],int,int),Arrays#sort(byte[]),Arrays#sort(byte[],int,int),Arrays#sort(float[]),Arrays#sort(float[],int,int),Arrays#sort(double[]),Arrays#sort(double[],int,int)最终都会调用：DualPivotQuiksort#sort(...);
+
+public static void sort(Object[] a) {
+	if (LegacyMergeSort.userRequested)
+		legacyMergeSort(a);
+	else
+		ComparableTimSort.sort(a, 0, a.length, null, 0, 0);
+}
+另外还有各种类型的parallelSort
+比如:
+public static void parallelSort(int[] a) {
+	int n = a.length, p, g;
+	if (n <= MIN_ARRAY_SORT_GRAN || 
+		(p = ForkJoinPool.getCommonPoolParallelism()) == 1)
+		DualPivotQuiksort.sort(a, 0, n - 1, null, 0, 0);
+	else 
+		new ArrayParallelSortHelpers.FJInt.Sorter(null, a, 
+			new int[n], 0, n, 0, 
+			((g = n / (p << 2)) <= MIN_ARRAY_SORT_GRAN) ? 
+			MIN_ARRAY_SORT_GRAN : g).invoke();
+}
+
+Implementation note: The sorting algorithm is a Dual-Pivot Quicksort by Vladimir Yaroslavskiy, Jon Bentley, and Joshua Bloch. This algorithm offers O(n log(n)) performance on many data sets that cause other quicksorts to degrade to quadratic performance, and is typically faster than traditional (one-pivot) Quicksort implementations.
+------------------------
+TimSort是一个归并排序做了大量优化的版本。对归并排序排在已经反向排好序的输入时做了特别优化。对已经正向排好序的输入减少回溯。对两种情况混合(一会升序，一会降序)的输入处理比较好。
+
+org.springframework.util.ListenableFuture;
+/* Extend #Future with the capability to accept completion callbacks.
+If the future has completed when the callback is added, the callback is 
+triggered immediately.
+Inspired by #com.google.common.util.concurrent.ListenableFuture.
+*/
+public interface ListenableFuture<T> extends Future<T> {
+	void addCallback(ListenableFutureCallback<? super T> callback);
+	void addCallback(SuccessCallback<? superT> sucessCallback, FailureCallback failureCallback);
+	
+	default CompletableFuture<T> completable() {
+		CompletableFuture<T> completable = new DelegatingCompletableFuture<>(this);
+		addCallback(completable::complete, completable::completeExceptionally);
+		return completable;
+	}
+}
+
+
+public class LinkedBlockingQueue<E> extends AbstractQueue<E> 
+	implements BlockingQueue<E>, java.io.Serializable {
+	...
+	/* A variant of the "two lock queue" algorithm. The putLock gates
+		entry to put (and offer), and has an associated condition for 
+		waiting puts. Similarly for the takeLock. The "count" field 
+		that they both rely on is maintained as an atomic to avoid 
+		needing to get both locks in most cases. Also, to minimize need 
+		for puts to get takeLock and vice-versa, cascading notifies are 
+		used. When a put notices that it has enabled at least one take,
+		it signals taker. That taker in turn signals others if more 
+		items have been entered since the signal. And symmetrically for 
+		takes signalling puts. Operations such as remove(Object) and 
+		iterators acquire both locks.
+		
+		Visibility between writers and readers is provided as follows:
+		
+		Whenever an element is enqueued, the putLock is acquired and 
+		count updated. A subsequent reader guarantees visibility to the 
+		enqueued Node by either acquiring the putLock (via fullyLock)
+		or by acquiring the takeLock, and then reading n = count.get();
+		this gives visibility to the first n items.
+		
+		To implement weakly consistent iterators, it appears we need to 
+		keep all Nodes GC-reachable from a predecessor dequeued Node.
+		That would cause two problems:
+		- allow a rogue Iterator to cause unbounded memory retention
+		- cause cross-generational linking of old Nodes to new Nodes if 
+			a Node was tenured while live, which generational GCs have a
+			hard time dealing with, causing repeated major collections.
+		However, only non-deleted Nodes need to be reachable from 
+		dequeued Nodes, and reachability does not necessarily have to 
+		be of the king understood by the GC. We use the trick of 
+		linking a Node that has just been dequeued to itself. Such a 
+		self-link implicitly means to advance to head.next.
+	*/
+	
+	static class Node<E> {
+		E item;
+		Node<E> next;
+		Node(E x) { item = x;}
+	}
+	private final int capacity;
+	private final AtomicInteger count = new AtomicInteger();
+	transient Node<E> head;
+	private transient Node<E> last;
+	private final ReentrantLock takeLock = new ReentrantLock();
+	private final Condition notEmpty = takeLock.newCondition();
+	private final ReentrantLock putLock = new ReentrantLock();
+	private final Condition notFull = putLock.newCondition();
+	...
+}
+
+NameNode包含哪些组件：
+	1. Namespace: 维护整个文件系统的目录树结构及目录树上的状态变化；
+	2. BlockManager: 维护整个文件系统中与数据块相关的信息及数据块的状态变化；
+	3. NetworkTopolgy: 维护机架及DataNode信息，机架感知的基础；
+	4. LeaseManager: 读写的互斥同步就是靠Lease实现，支持HDFS的write-once-read-many的核心数据结构；
+	5. CacheManager: Hadoop2.3.0引入的集中式缓存新特性，支持集中式缓存的管理，实现memory-locality提升读性能；
+	6. SnapshotManager: Hadoop2.1.0引入的Snapshot新特性，用于数据备份、回滚，以防止因用户误操作导致集群出现数据问题；
+	7. DelegationTokenSecretManager:管理HDFS的安全访问；
+	8. 其他还有临时数据信息、统计信息metrics等等；
+NameNode常驻内存主要被Namespace和BlockManager使用，两者使用占比分别接近50%，其他部分内存开销较小且相对固定，与Namespace和BlockManager相比基本可以忽略。
+
+HDFS无法高效存储大量小文件，如何处理好小文件：
+	HDFS本身提供了几个解决方案：Hadoop Archive, SequenceFile和CombineFileInputFormat。
+
+public class LinkedBlockingDeque<E> extends AbstractQueue<E> 
+		implements BlockingQueue<E>, java.io.Serializable {
+	...
+	static final class Node<E> {
+		E item;
+		Node<E> prev;
+		Node<E> next;
+		Node(E x) {
+			item = x;
+		}
+	}
+	
+	transient Node<E> first;
+	transient Node<E> last;
+	private transient int count;
+	private final int capacity;
+	/* Main lock guarding all access */
+	final ReentrantLock lock = new ReentrantLock();
+	private final Condition notEmpty = lock.newCondition();
+	private final Condition notFull = lock.newCondition();
+	...
+}
+
+在存储结构上，SequenceFile主要由一个Header后跟多条Record组成，Header主要包括了Key ClassName，Value ClassName，存储压缩算法，用户自定义元数据等信息。此外，还包含了一些同步标识，用于快速定位到记录的边界。每条Record以键值对的方式进行存储，用来表示它的字符数组可以解析成：记录的长度、Key的长度、Key值和Value值，并且Value值的结构取决于该记录是否被压缩。
+
+The Guava project contains several Google's core libraries that we relay on in our Java-based projects: collections, caching, primitives support, concurrency libraries, common annotations, string processing, I/O, and so forth. 
+
+Lateral View和表生成函数(例如Split,Explode等函数)结合使用，它能够将一行数据拆成多行数据，并对拆分后的数据进行聚合。
+
+输入ping IP后敲回车，发包前会发生什么:
+首先根据目的IP和路由表决定走哪个网卡，再根据网卡的子网掩码地址判断目的IP是否在子网内。如果不在则会通过arp缓存查询IP的网卡地址，不存在的话会通过广播询问目的IP的mac地址，得到后就开始发包，同时mac地址也会被arp缓存起来。
+
+如何保障产品/功能的质量：
+	从代码开发、测试保障、线上质量三个方面来保障。
+	1. 在代码开发阶段，有单元测试、代码Review、静态代码扫描等；
+	2. 测试保障阶段，有功能测试、性能测试、高可用测试、稳定性测试、兼容性测试等；
+	3. 在线上质量方面，有灰度发布、紧急回滚、故障演练、线上监控和巡检等。
+
+public class PriorityBlockingQueue<E> extends AbstractQueu<E>
+		implements BlockingQueue<E>, java.io.Serializable {
+	...
+	private static final int DEFAULT_INITIAL_CAPACITY = 11;
+	private static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8;
+	private transient Object[] queue;
+	private transient int size;
+	private transient Comparator<? super E> comparator;
+	private final ReentrantLock lock;
+	private final Condition notEmpty;
+	/*Spinlock for allocation, acquired via CAS*/
+	private transient volatile int allocationSpinLock;
+	/*
+		A plain PriorityQueue used only for serialization,
+		to maintain compatibility with previous versions of this class.
+		Non-null only during serialization/deserialization.
+	*/
+	private PriorityQueue<E> q;
+	...
+}
+
+越权(或者说权限提升，Privilege Escalation)是指攻击者能够执行其本身没有资格执行的一些操作，属于访问控制的问题。越权访问分为垂直越权访问和水平越权访问。垂直越权是指不同用户级别之间的越权，如普通用户执行管理员的权限。水平越权是指相同级别用户之间的越权操作。
+
+Docker网络架构源自一种叫做容器网络模型(CNM)的方案，该方案是开源的并且支持插接式连接。
+Libnetwork是Docker对CNM的一种实现，提供了Docker核心网络架构的全部功能。不同的驱动可以通过插拔的方式接入Libnetwork来提供定制化的网络拓扑。
+为了实现开箱即用的效果，Docker封装了一系列本地驱动，覆盖了大部分常见的网络需求。其中包括单机桥接网络(Single-Host Bridge Network)、多机覆盖网络(Multi-Host Overlay)，并且支持接入现有VLAN。
+
+OAuth2.0具体来说，一共分为四种授权类型(authorization grant)，即四种颁发令牌的方式，适用于不同的场景。四种授权方式如下：
+	1. 授权码(authorization-code);
+	2. 隐藏式(implicit)；
+	3. 密码式(password)；
+	4. 客户端凭证(client credentials)；
+
+Feign原理简述：
+	1. Spring启动时，会扫描包下所有@FeignClient注解的类，并将这些类注入到Spring的IOC容器中。并通过JDK动态代理来生成RequestTemplate。
+	2. RequestTemplate中包含请求的所有信息，如请求参数，请求URL等。
+	3. RequestTemplate生成Request，然后将Request交给client处理，这个client默认是JDK的HttpUrlConnection，也可以是OKHttp、Apache的HttpClient等；
+	4. 最后client封装成LoadBalanceClient，结合Ribbon负载均衡发起调用。
+
+雪花算法是三个缺点：
+	1. 时间回拨问题；
+	2. 机器ID的分配和回收问题；
+	3. 机器ID的上限问题。
+
+VSS: Virtual Set Size, 虚拟耗用内存。它是一个进程能访问的所有内存空间地址的大小。这个大小包含了一些没有驻留在RAM种的内存,就像malloc已经被分配，但还没有写入。VSS很少用来测量程序的实际使用内存。
+
+RSS: Resident Set Size，实际使用物理内存。RSS是一个进程在RAM中实际持有的内存大小。RSS可能会产生误导，因为它包含了所有该进程使用的共享库所占用的内存，一个被加载到内存中的共享库可能有很多进程会使用它。RSS不是单个进程使用内存量的精确表示。
+
+PSS: Proportional Set Size，实际使用的物理内存，它与RSS不同，它会按比例分配共享库所占用的内存。PSS是一个非常有用的数值，如果系统中所有进程的PSS相加，所得和即为系统占用内存的总和。当一个进程被杀死后，它所占用的共享库内存将会被其他仍然使用该共享库的进程所分担。在这种方式下，PSS也会带来误导，因为当一个进程被杀后，PSS并不代表系统回收的内存大小。
+
+USS：Unique Set Size, 进程独自占用的物理内存。这部分完全是该进程独享的。USS是一个非常有用的数值，因为它表明了运行一个特定进程所需的真正内存成本。当一个进程被杀死，USS就是所有系统回收的内存。USS是用来检查进程是否有内存泄漏的最好选择。
+
+HBase中系统故障恢复以及主从复制都基于HLog实现。默认情况下，所有写入操作(写入、更新以及删除)的数据都先以追加形式写入HLog，再写入MemStore。大多数情况下，HLog并不会被读取，但如果RegioinServer在某些异常情况下发生宕机，此时已经写入MemStroe中但尚未flush到磁盘的数据就会丢失，需要回放HLog补救丢失的数据。此外，HBase主从复制需要主集群将HLog日志发送给从集群，从集群在本地执行回放操作，完成集群之间的数据复制。
+
+如果不关心RocketMQ Broker的启动时间，有一种更好的选择，就是通过"预触摸"Java堆以确保在JVM初始化期间每个页面都将被分配。不关心启动时间的可以启用: -XX:+AlwaysPreTouch，禁用偏置锁可能会减少JVM暂停：-XX:-UseBiaseLocking。
+
+从MongoDB 3.2版本开始，MongoDB支持多数据存储引擎，MongoDB支持的存储引擎有：WiredTiger，MMAPv1和In-Memory。
+从MongoDB 3.2开始默认的存储引擎是WiredTiger，3.3版本之前的默认存储引擎是MMAPv1，MongoDB4.x版本不再支持MMAPv1存储引擎。
+MongoDB不仅能将数据持久化存储到硬盘文件中，而且还能将数据只保存到内存中；In-Memory存储引擎用于将数据只存储在内存中，只将少量的元数据和诊断日志(Diagnostic)存储到硬盘文件中，由于不需要Disk的IO操作，就能获取索取的数据，In-Memory存储引擎大幅度降低了数据查询的延迟(Latency)。
+
+RxJava有四个基本概念：Observer(观察者)，Observable(被观察者)，subscribe(订阅)，事件。Oberver和Observable通过subscribe()实现订阅关系，从而Obervable可以在需要的时候发出事件通知Oberver。
+
+ObservableEmitter是事件发射器，定义并且向观察者发送需要发送的事件。
+
+如何建设数仓：
+	1. 在线数仓和离线数仓；
+	2. 数仓建设整体流程：
+		2.1 业务建模；
+		2.2 领域建模；
+		2.3 逻辑建模；
+		2.4 物理建模；
+		2.5 规范治理；
+	3. 领域建模主要指选用何种模型：Kimball模型(常用)、Inmon模型、Data Valut模型、Anchor模型。
+	4. Kimball模型: 面向分析/由下往上建设，适用于快速交付建设。
+		4.1 星型模型：一个事实表+多个维度表，不存在二级维度表；
+		4.2 雪花模型：星型模型扩展，维表扩展，可以连接多个子维表；
+		4.3 星座模型：星型模型扩展，多个事实表共用一个维表；
+	5. Inmon模型：面向业务/由上往下建设，全面支撑、分步实施。
+		1NF:列原子性，属性值唯一，不具有多义性；
+		2NF:基于1NF，非主键属性必须依赖于主键，而不能依赖于主键的一部分；
+		3NF:基于2NF，非主键列必须直接依赖于主键，不能存在传递依赖；
+	6. Data Valut模型：面向细节、追踪历史；
+		Hub：中心表/记录业务主键；
+		Link：链接表/记录业务关系；
+		Satellite:附属表/记录业务描述；
+		PIT:辅助表/解决多个附属表统一时点的问题；
+	7. Anchor模型：6NF,KV结构，只做添加扩展，不做修改；
+		Anchors:类似于中心表/记录业务主键；
+		Attributes:类似于Satellite/全部KV结构化，一个表只有一个Anchors描述；
+		Ties: 类似于Link表/记录Anchors之间的描述；
+		Knots: 公共属性表/记录共用属性信息。
+----------------------------------------------
+如何构建主题域：
+	主题是在较高层次上将企业信息系统中的数据进行综合、归类和分析利用的一个抽象概念，每一个主题基本对应一个宏观的分析领域。在逻辑意义上，它是对应企业中某一宏观分析领域所涉及的分析对象。
+划分主题域方法：
+	在业务调研之后，可以进行主题域的划分。划分主题域，需要分析各个业务模块中有哪些业务活动。通过按照以下方法划分主题域，可以按照用户企业的部门划分，也可以按照业务过程或者业务板块中的功能模块划分。
+1. 按照系统划分:业务系统有几种，就划分为几类；
+2. 按业务过程划分：比如业务系统中有商品、交易、物流等；
+3. 按部门规划：比如公司内的生产、供应链、研发、销售等；
+为保障整个体系的生命力，主题域需要抽象提炼，并长期维护更新，但不轻易变动。划分数据域时，需满足以下两点：
+	1. 能涵盖当前所有的业务需求；
+	2. 能在新业务进入时，无影响地被包含进已有的主题域和扩展新的主题域。
+----------------------------------------------
+HDFS的写流程：
+	1. 首先客户端调用DistributedFileSystem对象的create方法，指明要创建的文件名；
+	2. 通过DistributedFileSystem对象与Hadoop集群的NameNode进行一次RPC远程调用，在HDFS的Namespace中创建一个全新的文件。在创建之前，NameNode会执行各种检查以确认文件没有重名(该文件名下没有关联的块)以及客户端具有创建文件的权限。若检查通过，NameNode会为新文件生成一条记录，文件创建成功后会向客户端返回一个FSDataOutputStream中封装了一个DFSOutputStream对象，用于DataNode和NameNode的通信。
+	3. 当客户端开始写数据，DFSOutputStream将文件分割成很多很小的数据，然后将每个小块放进一个个包(Packet, 包中除了数据还有描述数据用的标识)，Packet会被写进一个数据队列(data queue)。
+		3.1 当数据流入DFSOutputStream时，DFSOutputStream内会有一个chunk(512B)大小的buf,当数据写满这个buf(或遇到强制flush)，会计算checksum(4B)值，然后填塞进packet;
+		3.2 当一个chunk填塞进入packet后，仍然不会立即发送，而是将数据累积一个packet填满后，将这个packet放入dataqueue队列，等待DataStreamer线程取出并发送到DataNode节点；
+	4. DataStreamer线程从dataQueue中获取数据包(packet)，发送该数据包给pipeline中的第一个DataNode，然后取出该数据包添加到ackQueue。(第一个DataNode将一个packet写入成功，则传递给下一个)。DataStreamer会要求NameNode挑选出合适存储块(block,默认128M)备份的DataNode列表，这个列表会构成一个pipeline(若备份数为3，则pipeline中有3个DataNode)。
+	5. ResponseProcessor线程会从各个DataNode中接收ack确认消息，若从所有的DataNode中收到了ack消息。则表示一个packet发送成功，ResponseProcessor线程会将ackQueue队列中对应的Packet删除。若发生错误，ackQueue中未完成的packet将被移除(被添加到data queue首部重新发送)，并建立一个新的不包含错误DataNode的pipeline，DataStreamer重新开始从data queue中获取packet进行发送。
+	失败情况详解：
+		1). pipeline被关闭，ackQueue中未完成的packet将被移除，被添加到data queue首部重新发送；
+		2). NameNode会在失败DataNode上还未写完的block上生成一个新的标识ID，宕机的DataNode重新启动以后，NameNode将该DataNode上的失败的block删除，并将该DataNode从pipeline中移除；
+		3). 然后将其他几个正常运行的DataNode生成一个新的pipeline，继续写入packet(不会重复写)；
+		4). NameNode注意到块备份数小于规定的备份数，会安排另一个节点上创建完成备份(直接从已有的块中复制即可)，一直到满足备份数(dfs.replication)。
+		5). 若多个节点写入失败，只要满足最小备份数(dfs.NameNode.replication.min)设置，也会写入成功，剩下的备份会被集群异步的执行，直到满足备份数(dfs.replication)。
+	6. 当客户端将所有的数据写入完成，会调用close()方法，该方法会将所有的packet刷新flush进pipeline中的DataNode，等这些packet都确认成，客户端告知NameNode，此时NameNode是知道文件被分成的哪些block的(因为DataStreamer向NameNode申请了block)，等待最少的备份数(replica)被创建(dfs.NameNode.replication.min，前面可能会发生失败而不是满足dfs.replicaiton)，然后成功返回。
+
+ES的写流程(简化版)：
+	1. 客户端选择一个node发送请求过去，这个node就是coordinating node(协调节点)。
+	2. coordinating node对document进行路由，将请求转发给对应的node(有primary shard)。
+	3. 实际的node上的primary shard处理请求，然后将数据同步到replica node。
+	4. coordinating node如果发现primary node和replica node都成功后，就返回响应结果给客户端。
+
+Lucene存在的问题：
+	1. 没有并发设计；Lucene只是一个搜索引擎库，并没有涉及到分布式相关的设计，因此要想使用Lucene来处理海量数据，并利用分布式的能力，就必须在其之上进行分布式的相关设计。
+	2. 非实时；将文件写入Lucene后并不能立即被检索，需要等待Lucene生成一个完整的segment才能被检索。
+	3. 数据存储不可靠；写入Lucene的数据不会立即被持久化到磁盘，如果服务器宕机，那存储在内存中的数据就会丢失。
+	4. 不支持部分更新；Lucene中提供的updateDocument仅支持对文档的全量更新，对部分更新不支持。

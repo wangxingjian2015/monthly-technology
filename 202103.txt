@@ -1,0 +1,297 @@
+
+Java中如果想要try代码之后，不允许再执行finally中的代码块，有两种方式：
+	1. 使用System.exit(1)直接退出虚拟机；
+	2. 把当前执行try catch finally代码的线程设置为守护线程。
+
+在Java NIO中，运用了虚引用管理堆外内存。
+
+业务系统(CRM、OA等)往往并不会保留历史数据。但在分析角度，我们是一定要保留这些改变的痕迹。这种随着时间可能会缓慢变化的维度，就是缓慢变化维、也就是SCD(Slowly Changing Dimensions)。在Kimball整理的处理方法一共有8种，但往往只有3种被详细使用。
+
+缓慢变化维的几种处理方式：
+	1. 重写；与业务数据保持一致，直接update为最新的数据。
+		这种方法主要应用于以下两种情况：
+			1. 数据必须正确-例如用户的身份证号，如需要更新则说明之前录入错误。
+			2. 无需考虑历史变化的维度-例如用户的头像URL，这种数据并没有分析的价值。因此不做保留。
+		优点：简化ETL-直接update即可；节省存储空间-其他存储方法都占用更多空间。
+		缺点：无法保留历史痕迹-万一后续要分析，却没有保留数据。
+	2. 增加新行；更新历史数据时间戳，新增新行记录新值。这种方法主要用于仅需要保存历史数据的业务场景。具体的ETL规则如下：
+		1. 自然键第一次出现时，新增一行数据，created为业务系统的创建时间，updated为9999-12-31。数据规范不允许数据存在NULL值的情况，因此用9999-12-31代替。
+		2. 维度发生变化时。将自然键当前记录的updated更新为最新时间。新增一行记录，created为最新时间，updated为9999-12-31。
+	3. 增加当前值属性。在大部分的维度模式中，很多的源数据变化将产生类型1和类型2变化。有时两种技术都不能满足需求-当需要分析所有伴随着新值或旧值的变化前后记录的事实时，需要采用类型3变化。
+	剩下的几种处理方式基本不会采用。。
+	4. 不做调整。
+	5. 微型维度。当变化频率加快时候，并且维度表包含几百万的维度表。如果对变化的跟踪采用可靠的SCD2技术对查询性能具有负面影响-太多行且无必要。采用新的独立的维度表消除频繁分析或者频繁变化的属性，这一维度技术叫做微型维度。
+	6. 重写+微型维度；
+	7. 重写+增加新行+增加当前值属性。三者联合使用。
+	8. 双更新+增加新行。
+			
+维度建模：
+	是Kimball最先提出的，其最简单的描述就是，按照事实表、维度表来构建数据仓库、数据集市。在维度建模方法体系中，维度是描述事实的角度，如日期、客户、供应商等，事实是要度量的指标，如客户数、销售额等。维度建模还会分为星型模型、雪花模型等。维度建模以分析决策的需求出发构建模型，构建的数据模型为分析需求服务，因此它重点解决用户如何更快速完成分析需求，同时还有较好的大规模复杂查询的响应性能。
+
+数仓分层从关系型在线交易到面向主题的数据仓库系统，从范式建模到维度建模的必经之路。
+数据分层是一套让数据体系更有序的行之有效的数据组织和管理方法。
+数仓分层的优点：
+	1. 数据结构化更清晰：每个分层都有它的作用域和职责，在使用表的时候能更方便地定位和理解。
+	2. 数据血缘追踪：提供给外部使用的是一张业务表，但是这张业务表可能来源很多张表。如果一张来源表出问题了，可以快速准确的定位到问题，并清楚每张表的作用范围。
+	3. 增强数据复用能力：减少重复开发，通过数据分层规范化，开发一些通用的中间层数据，能够减少重复计算，提高单张业务表的使用率，提升系统的执行效率。
+	4. 简化复杂的问题：把一个复杂的业务分成多个步骤实现，每一层只处理单一的步骤，比较简单和容易理解。而且便于维护数据的准确性，当数据出现问题之后，可以不用修复所有的数据，只需要从有问题的步骤开始修复。
+	5. 减少业务的影响：业务可能会经常变化，这样做就不必一次业务就需要重新接入数据。
+	6. 统一数据口径：通过数据分层，提供统一的数据出口，统一对外输出的数据口径。
+
+怎么做数据质量：
+	1. 一致性；
+	2. 准确性；
+	3. 完整性；
+	4. 可审核性；
+	5. 整齐有序；
+	6. 唯一性；
+	7. 及时性；
+
+什么是维度，什么是度量：
+维度用来描述事实，从不同角度描述事实，也就是说维度是描述事实的角度。
+度量是业务流程节点上的一个数值。比如销量、价格、成本等。
+
+MongoDB的多key索引(Multikey Index)：当索引的字段为数组时，创建出的索引称为多key索引，多key索引会为数组的每个元素建立一条索引。
+MongoDB除了支持多种不同类型的索引，还能对索引定制一些特殊的属性。
+	1. 唯一索引(unique index)：保证索引对应的字段不会出现相同的值，比如_id索引就是唯一索引；
+	2. TTL索引：可以针对某个时间段，指定文档的过期时间(经过指定时间后过期或在某个时间点过期)；
+	3. 部分索引(partial index):只针对某个特定条件的文档建立索引，3.2版本才支持该特性；
+	4. 稀疏索引(sparse index)：只针对存在索引字段的文档建立索引，可看作是部分索引的一种特殊情况。
+
+Class字节码文件10个主要组成部分：一个标准的ClassFile结构如下：
+ClassFile {
+	u4				magic;   //魔数，识别class文件格式
+	u2				minor_version;   //副版本号
+	u2				major_version;   //主版本号
+	u2				constant_pool_count;   //常量池计数器
+	cp_info			constant_pool[constant_pool_count - 1];   //常量池
+	u2				access_flags;   //访问标志
+	u2				this_class;   //类索引
+	u2				super_class;   //父类索引
+	u2				interfaces_count;   //接口计数器
+	u2				interfaces[interfaces_count];   //接口索引集合
+	u2				fields_count;   //字段个数
+	field_info		fields[fields_count];   //字段集合
+	u2				methods_count;   //方法个数
+	method_info		methods[methods_count];   //方法集合
+	u2				attributes_count;   //附加属性个数
+	attribute_info	attributes[attributes_count];   //附加属性集合
+}
+
+对于方法区，Java8之后的变化：
+	1. 移除了永久代(PermGen)，替换为元空间(Metaspace)；
+	2. 永久代中的class metadata(类元信息)转移到了native memory(本地内存，而不是虚拟机)；
+	3. 永久代中的interned Strings(字符串常量池)和class static variables(类静态变量)转移到了Java heap；
+	4. 永久代参数(PermSize MaxPermSize)->元空间参数(MetadataspaceSize MaxMetadataspaceSize)；
+
+Java8为什么要将永久代替换为Metaspace:
+	1. 字符串在永久代中，容易出现性能问题和内存溢出；
+	2. 类及方法等比较难确定其大小，因此对于永久代的大小指定比较困难，太小容易出现永久代溢出，太大则容易导致老年代溢出；
+	3. 永久代会为GC带来不必要的复杂度，并且回收效率偏低；
+	4. Oracle可能会将HotSpot与JRockit合二为一，JRockit没有所谓的永久代。
+
+-XX:+PrintGCApplicationStoppedTime
+-XX:+PrintSafepointStatistics
+-XX:PrintSafepointStatisticsCount=1
+
+内存屏障是对CPU的一种特殊锁定指令，它禁止指令在该屏障上重新排序。
+在内存-多级缓存的今天，一定存在一个层次，在这个层次下，数据的变化是同步的，即所有CPU看到的都是相同的状态，任意一个CPU的修改其他CPU都能看到。在这个层次之上，每个CPU有自己独享的缓存，这些缓存对其他CPU是不可见的。内存屏障的目的是通知CPU让其将自己的缓存和共享的缓存/内存做一次同步，以便其他CPU可以感知到这些变化。
+内存屏障控制是本CPU独享缓存和共享缓存/内存的同步工作，而不关心和其他的CPU是否同步。如果其他CPU也想和共享内存同步，需要自己来触发内存屏障。
+
+在执行程序时，为了提高性能，编译器和处理器常常会对指令做重排序。重排序分3种类型，分别为编译器优化重排序、指令级并行重排序和内存系统重排序。
+
+编译器优化的重排序：编译器在不改变单线程程序语义的前提下，可以重新安排语句的执行顺序。
+指令级并行的重排序：现在处理器采用了指令级并行技术(Instruction-Level Parallelism, ILP)来将多条指令重叠执行。如果不存在数据依赖性，处理器可以改变语句对应机器指令的执行顺序。
+内存系统的重排序：由于处理器采用缓存和读写缓冲区，这使得加载和存储操作看上其可能是在乱序执行。
+
+mapreduce.map.memory.mb:一个Map Task可使用的内存上限，默认为1024。如果Map Task实际使用的内存超过该值，则会被强制杀死。
+mapreduce.task.io.sort.mb:map输出的环形缓冲区的大小，默认是100M，应尽量调大该值。
+mapreduce.map.sort.spill.percent:环形缓冲区中的值占比达到多少就溢出到磁盘，默认80%。
+mapreduce.task.io.sort.factor:一次合并溢出文件的数量，可以调大这个值，减少磁盘IO
+mapreduce.map.output.compress:是否对map端的输出进行压缩，默认关闭
+mapreduce.map.output.compress.codec:map端进行压缩默认使用的压缩器
+mapreduce.reduce.memory.mb : 
+mapreduce.reduce.shuffle.palallelcopies: reduce去map拿数据时，默认开启的线程数
+mapreduce.reduce.shuffle.merge.percent: reduce的buffer中数据达到多少比例开始写入磁盘
+mapreduce.reduce.shuffle.input.buffer.percent: buffer大小占reducer可用内存的比例
+mapreduce.reduce.input.buffer.percent:指定多少比例的内存用来存放buffer中的数据，默认值是0，也就是默认从map端复制过来的数据都会持久化到reduce的磁盘上。
+
+Spark支持所有类型的join, 包括：
+	1. inner join;
+	2. left outer join;
+	3. right outer join;
+	4. full outer join;
+	5. left semi join;
+	6. left anti join;
+
+Hive调优措施：
+	1. hive.limit.optimize.enable=true; --开启对数据源进行采样的功能
+		hive.limit.row.max.size --设置最小的采样容量
+		hive.limit.optimize.limit.file --设置最大的采样样本数
+	2. join优化
+		2.1 将大表放在后头
+		2.2 使用相同的连接键：当对三个或者更多个表进行join连接时，如果每个on子句都使用相同的连接键的话，那么只会产生一个MapReduce Job。
+		2.3 尽量尽早地过滤数据：减少每个阶段的数据量，对于分区表要加分区，同时只选择使用到的字段。
+		2.4 尽量原子化操作：尽量避免一个SQL包含复杂逻辑，可以使用中间表来完成复杂的逻辑。
+	3. 本地模式； set hive.exec.mode.local.auto=true;
+		当一个job满足
+	4. 并行执行；Hive会将一个查询转化为一个或多个阶段，包括：MapReduce阶段、抽样阶段、合并阶段、limit阶段等。默认情况下，一次只执行一个阶段。不过，如果某些阶段不是互相依赖，是可以并行执行的。
+		set hive.exec.parallel=true;可以开启并发执行
+		set hive.exec.parallel.thread.number=16;同一个sql允许最大并行度，默认为8.会比较消耗系统资源
+	5. strict模式；对分区表进行查询，在where子句中没有加分区过滤的话，将禁止提交任务(默认：nonstrict).
+		set hive.mapred.mode=strict;
+		注：使用严格模式可以禁止三种类型的查询：
+			(1). 对于分区表，不加分区字段过滤条件，禁止执行；
+			(2). 对于order by语句，必须使用limit语句；
+			(3). 限制笛卡尔积的查询(join的时候不使用on,而使用where)
+	6. 调整mapper和reducer个数
+		set hive.input.format=org.apache.hadoop.hive.ql.io.CombineHiveInputFormat;这个参数表示执行前进行小文件合并。
+		
+	7. JVM重用;用于避免小文件的场景或者task特别多的场景，这类场景大多数执行时间都很短，因为hive调起mapreduce任务，JVM的启动过程会造成很大的开销，尤其是job有成千上万个task任务时，JVM重用可以使得JVM实例在同一个job中重新使用N次。
+		set mapred.job.reuse.jvm.num.tasks=10; --10为重用个数；
+	8. 动态分区调整；hive.exec.dynamic.partition=true;表示开启动态分区功能；
+	9. 推测执行；通过加快获取单个task的结果以及进行侦测将执行慢的TaskTracker加入到黑名单的方式来提高整体的任务执行效率。
+		set hive.mapred.reduce.tasks.speculative.execution=true;
+	10. 数据倾斜；
+	11. 其他参数调优；
+		set hive.cli.print.current.db=true;
+		set hive.cli.print.header=true;
+		set mapred.job.name=***; 设置任务名称，方便查找监控
+		set hive.map.aggr=true; 设置map端聚合操作
+		set hive.groupby.skewindata=true; 有数据倾斜时，进行负载均衡
+		set hive.fetch.task.conversion=true;对于简单不需要聚合，类似select * from t limit n语句，不需要发起MapReduce，直接通过Fetch task获取数据。
+	12. 小文件问题。
+		12.1 使用Sequencefile作为存储格式，不用textfile，在一定程度上减少小文件；
+		12.2 减少reduce的数量(可以使用参数控制);
+		12.3 少用动态分区，用时记得按distribute by分区；
+		对于已有的小文件，可以通过下面方案解决：
+			1. 使用hadoop archive命令对小文件进行归档；
+			2. 重建表，建表时减少reduce数量。
+			3. 通过参数进行调节，设置map/reduce端的相关参数。
+
+Hive数据倾斜解决方案：
+	1. 常规处理：将热点key进行单独处理，然后将结果进行合并；
+	2. map join;
+	3. Reduce阶段最容易出现数据倾斜的两个场景:join和count distinct。调整下列参数可有效缓解：
+		set hive.map.aggr=true;  --map端的Combiner
+		set hive.groupby.skewindata=true;
+		解决数据倾斜首先要进行负载均衡，将上面两个参数设置为true，而MapReduce会生成两个额外的MR Job,这两个任务的主要操作如下：
+		第一步：MR Job中Map输出的结果集首先会随机分配到Reduce中，然后每个Reduce做局部聚合操作并输出结果，这样处理的原因是相同的group by key有可能被分发到不同的reduce job中，从而达到负载均衡的目的；
+		第二步：MR Job再根据处理的数据结果按照group by key分布到reduce中(这个过程可以保证相同的group by key被分布到一个reduce中)，最后完成聚合操作。
+	4. 将小表放入子查询；
+	5. 关联字段去重。把字段为null的记录，在子查询中直接过滤。
+	6. count distinct的优化。比如select day, count(distinct id) as id_cnt from tb group by day;用如下方法替换：
+		select day, count(1) as id_cnt from (
+			select day, id from tb group by day, id 
+		) t group by day.
+	7. 将热点数据导入到一个临时表，每条数据都放大N倍。
+
+Hive存储文件格式：
+	1. TextFile;
+	2. RCFile;
+	3. ORCFile; 存储方式：数据按行分块，每块按照列存储。压缩块，可切分，快速列存取。
+	4. SequenceFile;
+	5. Parquet；
+	6. ORC;
+	7. Avro
+	8. 自定义格式; inputformat outputformat
+
+Hive在执行一条HQL的时候，会经过以下步骤：
+	1. 语法解析：Antlr定义SQL的语法规则，完成SQL词法、语法解析，将SQL转化成抽象语法树AST;
+	2. 语义解析：遍历AST，抽象出查询的基本组成单元QueryBlock;
+	3. 生成逻辑执行计划：遍历QueryBlock，翻译为执行操作树OperatorTree；
+	4. 优化逻辑执行计划：逻辑层优化器进行OperatorTree变换，合并不必要的ReduceSinkOperator,减少shuffle数据量；
+	5. 生成物理执行计划：遍历OperatorTree，翻译为MapReduce任务；
+	6. 优化物理执行计划：物理层优化器进行MapReduce任务的变化，生成最终的执行计划。
+
+怎么优化websocket之间的交互数据量很大:
+	1. 数据压缩;
+	2. 本地缓存(注意数据有效期和数据一致性);
+	3. 如果是每次数据都在客户端和服务器来回无效的传输，可以参考Http2，使用编码节省带宽；
+	4. CDN;
+	5. 使用Http2/Http3/quic协议代替；
+
+Spark SQL中支持的Join类型主要包括Inner, FullOuter, LeftOuter, RightOuter, LeftSemi, LeftAnti和Cross共7种。对应的查询关键字如下：
+查询关键字				Join类型
+inner					Inner
+outer|full|fullouter	FullOuter
+leftouter|left			LeftOuter
+rightouter|right		RightOuter
+leftsemi				LeftSemi
+leftanti				LeftAnti
+cross					Cross
+
+目前在Spark SQL中，Join的执行方式主要有BroadcastHashJoinExec, ShuffledHashJoinExec, SortMergeJoinExec, BroadcastNestedLoopJoinExec和CartesianProductExec这五种。
+
+Spark的shuffle的实现方式有两种：Hash Shuffle和Sort-based Shuffle.
+---------------------------------------------
+在划分stage时，最后一个stage称为FinalStage，它本质上是一个ResultStage对象，前面的所有stage被称为ShuffleMapStage。
+ShuffleMapStage的结束伴随着shuffle文件的写磁盘。
+ResultStage基本上对应代码中的action算子，即将一个函数应用在RDD的各个partition的数据集上，意味着一个job的运行结束。
+---------------------------------------------
+对于Shuffle Write, Spark当前有三种实现，具体分别为BypassMergeSortShuffleWriter, UnsafeShuffleWriter和SortShuffleWriter。
+
+---------------------------------------------
+Spark内存模型：
+在Spark 1.5及之前版本中，内存管理默认实现是StaticMemoryManager，称为静态内存管理。
+从Spark 1.6.0版本开始，Spark默认采用一种新的内存管理模型UnifiedMemoryManager，称为统一内存管理，其特点是可以动态调整Execution和Storage的内存，因此又称为动态内存管理。
+
+Spark的内存使用主要分为两类：Execution Memory和Storage Memory。其中Execution Memory主要用于计算，比如shuffles, joins, sorts以及aggregations等操作。Storage Memory主要用于cache数据和在集群内部传输数据。
+Executor默认只使用堆内内存(On-heap Memory)。为了进一步优化内存的使用，Spark引入了堆外内存(Off-heap Memory)，默认是关闭状态。
+
+Spark Executor通过spark.executor.memory或--executor-memory配置的内存为堆内内存，可以分为以下四块区域：
+	1. Execution Memory：主要用于shuffles、joins、sorts及aggregations等计算操作，又称为Shuffle Memory。
+	2. Storage Memory：主要用于cache数据、unroll数据，有时也被称为Cache Memory。
+	3. User Memory：用户内存，主要用于存储内部元数据、用户自定义的数据结构等，根据用户实际定义进行使用。
+	4. Reserved Memory：默认300M的系统预留内存，主要用于程序运行。
+---------------------------------------------
+RDD特性：
+	1. A list of partitions;
+	2. A function for computing each split;
+	3. A list of dependencies on other RDDs;
+	4. Optionally, a Partitioner for key-value RDDs (e.g. to say that the RDD is hash-partitioned);
+	5. Optionally, a list of preferred locations to compute each split on (e.g.block locations for an HDFS file);
+
+Java中对象地址操作主要使用Unsafe调用了C的allocate和free两个方法，分配方法有两种：
+	1. 空闲链表(free list): 通过额外的存储记录空闲的地址，将随机IO变为顺序IO，但带来了额外的空间消耗。
+	2. 碰撞指针(bump pointer): 通过一个指针作为分界，需要分配内存时，仅需把指针往空闲的一端移动与对象大小相等的距离，分配效率较高，但使用场景有限。
+
+-XX:+PrintReferenceGC:观察系统的软引用，弱引用，虚引用等回收情况。
+
+Spark中RDD的高效与DAG图有着很大关系，在DAG调度中需要对计算过程划分stage，而划分依据就是RDD之间的依赖关系。
+针对不同的转换函数，RDD之间的依赖分为窄依赖(narrow dependency)和宽依赖(wide dependency，也称为shuffle dependency)。
+	窄依赖是指父RDD的每个分区只被子RDD的一个分区使用，子RDD分区通常对应常数个父RDD分区(O(1)，与数据规模无关)。
+	宽依赖是指父RDD的每个分区都可能被多个子RDD分区所使用，子RDD分区通常对应所有的父RDD分区(O(n),与数据规模有关)
+
+相比于宽依赖，窄依赖对优化很有利，主要基于以下两点：
+	1. 宽依赖往往对应着shuffle操作，需要在运行过程中将同一个父RDD的分区传入到不同的子RDD分区中，中间可能涉及多个节点之间的数据传输；而窄依赖的每个父RDD的分区只会传入到一个子RDD分区中，通常可以在一个节点内完成转换。
+	2. 当RDD分区丢失时(某个节点故障)，Spark会对数据进行重算。
+		- 对于窄依赖，由于父RDD的一个分区只对应一个子RDD分区，这样只需要重算和子RDD分区对应的父RDD分区即可，所以这个重算对数据的利用率是100%的；
+		- 对于宽依赖，重算的父RDD分区对应多个子RDD分区，这样实际上父RDD 中只有一部分的数据是被用于恢复这个丢失的子RDD分区的，另一部分对应子RDD的其它未丢失分区，这就造成了多余的计算；更一般的，宽依赖中子RDD分区通常来自多个父RDD分区，极端情况下，所有的父RDD分区都要进行重新计算。
+
+首先，窄依赖允许在一个集群节点上以流水线的方式（pipeline）计算所有父分区。例如，逐个元素地执行map、然后filter操作；而宽依赖则需要首先计算好所有父分区数据，然后在节点之间进行Shuffle，这与MapReduce类似。
+第二，窄依赖能够更有效地进行失效节点的恢复，即只需重新计算丢失RDD分区的父分区，而且不同节点之间可以并行计算；而对于一个宽依赖关系的Lineage图，单个节点失效可能导致这个RDD的所有祖先丢失部分分区，因而需要整体重新计算。
+
+Spark比Hive快的原因：
+	1. Spark的Job输出结果保存在内存中，而MapReduce输出结果保存在磁盘中；
+	2. Spark以多线程模式运行，而MapReduce以进程模式运行，进程的申请释放需要消耗更多资源；
+	3. Spark提供了更多算子，便于DAG，特别是窄依赖，形成pipeline。
+	4. MapReduce通常需要将计算的结果写入磁盘，然后还需要读取磁盘，从而导致频繁的磁盘IO。
+
+Spark SQL原理流程：
+	第一步: 原始的DataFrame, Dataset, SQL;
+	第二步: 经过Parser后，形成Unresolved Logical Plan;
+	第三步: 经过Analyzer/Catalog后，形成Resolved Logical Plan;
+	第四步: 经过基于RBO和CBO的Optimizer后，形成Optimized Logical Plan;
+	第五步: 经过Query Planner后，形成Physical Plan;
+	第六步: Cost Model;
+	第七步: Selected Physical Plan;
+	第八步: 经过AE之后，形成RDDs和DAG;
+
+一条SQL提交之后会被Parser解析并转化为Unresolved Logical Plan。它的重点是Logical Plan即逻辑计划，它描述了希望做什么样的查询。Unresolved是指该查询相关的一些信息未知，比如不知道查询的目标表的Schema以及数据位置。
+上述信息存于Catalog内。在生产环境中，一般由Hive Metastore提供Catalog服务。Analyzer会结合Catalog将Unresolved Logical Plan转换为 Resolved Logical Plan。
+到这里还不够。不同的人写出来的SQL不一样，生成的Resolved Logical Plan也就不一样，执行效率也不一样。为了保证无论用户如何写SQL 都可以高效的执行，Spark SQL需要对Resolved Logical Plan进行优化，这个优化由Optimizer完成。Optimizer包含了一系列规则，对Resolved Logical Plan进行等价转换，最终生成Optimized Logical Plan。该Optimized Logical Plan不能保证是全局最优的，但至少是接近最优的。
+上述过程只与SQL有关，与查询有关，但是与Spark无关，因此无法直接提交给Spark执行。Query Planner负责将Optimized Logical Plan转换为 Physical Plan，进而可以直接由Spark执行。
+由于同一种逻辑算子可以有多种物理实现。如Join 有多种实现，ShuffledHashJoin、BroadcastHashJoin、BroadcastNestedLoopJoin、SortMergeJoin等。因此Optimized Logical Plan可被Query Planner转换为多个Physical Plan。如何选择最优的Physical Plan成为一件非常影响最终执行性能的事情。一种比较好的方式是，构建一个Cost Model，并对所有候选的Physical Plan应用该Model并挑选Cost最小的Physical Plan作为最终的Selected Physical Plan。
+Physical Plan可直接转换成RDD由Spark执行。我们经常说“计划赶不上变化”，在执行过程中，可能发现原计划不是最优的，后续执行计划如果能根据运行时的统计信息进行调整可能提升整体执行效率。这部分动态调整由Adaptive Execution完成。
+
